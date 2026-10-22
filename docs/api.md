@@ -1,0 +1,142 @@
+# API 说明
+
+本文按实际 FastAPI OpenAPI 路由核对，当前共 **55 个 HTTP 操作**。完整输入及响应模型以运行后的 `http://localhost:8000/openapi.json` 为准；Swagger 位于 `http://localhost:8000/docs`。
+
+Web 代理将 `/api` 原样转发至 API 服务。业务路由统一使用 `/api` 前缀；OpenAPI 和 Swagger 使用上面的 API 直连地址。
+
+## 身份、错误与并发
+
+- 本地免登录身份由后端固定 `demo_user` 上下文取得；不接受浏览器提供的 `user_id`。权限角色预留 owner/editor/viewer，所有知识库资源访问经过服务层检查。
+- API 与 Compose 默认只用于回环访问；Origin 与 Host 有严格限制。
+- JSON 错误示例：`{"code":"version_conflict","message":"数据已被修改，请刷新后重新操作","details":null,"request_id":"..."}`。常用状态：400 输入/范围错误、403 权限拒绝、404 不存在或已删除、409 状态/版本冲突、422 Pydantic 输入校验、503 模型未配置、502 模型服务错误。
+- 可编辑实体返回 `version`；PATCH 可以携带当前版本，避免覆盖后续更改。Agent 计划编辑必须提供 `version`，批准必须提供 `plan_version`。
+- 元数据写入先取得知识库 namespace 锁，再锁定实体；目录树循环、同级重名、标签归一化与别名冲突在事务中校验。
+- 数据库依赖使用 FastAPI `scope="function"`，提交在响应发出前完成，提交失败不会先向浏览器报告成功。SSE 使用独立短会话逐次鉴权，避免占用请求事务。
+
+## 知识库、文件夹与标签
+
+| 方法 | 路径 | 请求 / 行为 |
+| --- | --- | --- |
+| GET | `/api/knowledge-bases` | 可选 `include_deleted=true`；返回可访问知识库数组 |
+| POST | `/api/knowledge-bases` | `{name, description?}`；201 |
+| GET | `/api/knowledge-bases/{kb_id}` | 读取可访问的未删除知识库 |
+| PATCH | `/api/knowledge-bases/{kb_id}` | `{name?, description?, version?}`；owner |
+| DELETE | `/api/knowledge-bases/{kb_id}` | 软删除知识库；owner |
+| POST | `/api/knowledge-bases/{kb_id}/restore` | 恢复知识库；owner |
+| GET | `/api/knowledge-bases/{kb_id}/folders` | 可选 `include_deleted=true` |
+| POST | `/api/knowledge-bases/{kb_id}/folders` | `{name, parent_id?}`；201 |
+| PATCH | `/api/folders/{folder_id}` | `{name?, parent_id?, version?}`；`parent_id:null` 移到根目录 |
+| DELETE | `/api/folders/{folder_id}` | 软删除子树及当前子树内未删除文档 |
+| POST | `/api/folders/{folder_id}/restore` | 恢复该文件夹；先恢复父目录，文档单独恢复 |
+| GET | `/api/knowledge-bases/{kb_id}/tags` | 返回本库标签数组 |
+| POST | `/api/knowledge-bases/{kb_id}/tags` | `{name, color?, aliases?}`；201；颜色为 `#RRGGBB` |
+| PATCH | `/api/tags/{tag_id}` | `{name?, color?, aliases?, version?}` |
+| DELETE | `/api/tags/{tag_id}` | 删除标签及关联，递增受影响文档版本 |
+
+文件夹同级名称按 Unicode NFKC、大小写和空白归一化检查。标签名称及别名使用同样的归一化策略。跨库文件夹/标签引用被拒绝。
+
+## 文档与上传
+
+| 方法 | 路径 | 请求 / 行为 |
+| --- | --- | --- |
+| GET | `/api/knowledge-bases/{kb_id}/documents` | 分页列表，见下文 |
+| POST | `/api/knowledge-bases/{kb_id}/uploads` | multipart 多文件上传；返回逐文件结果及数据库作业 |
+| POST | `/api/documents/batch` | `{kb_id, document_ids, action, folder_id?, tag_ids?, tag_mode?}` |
+| GET | `/api/documents/{doc_id}` | 元数据、各阶段状态、摘要、版本和 `tag_ids` |
+| PATCH | `/api/documents/{doc_id}` | `{display_name?, folder_id?, tag_ids?, version?}` |
+| DELETE | `/api/documents/{doc_id}` | 软删除，保留原文件 |
+| POST | `/api/documents/{doc_id}/restore` | 恢复文档，原目录必须可用 |
+| GET | `/api/documents/{doc_id}/sections` | 顺序章节，包含真实来源 `anchors` |
+| GET | `/api/documents/{doc_id}/content` | `{text, sections}` |
+| GET | `/api/documents/{doc_id}/download` | 鉴权下载；`inline=true` 仅对 PDF 内嵌生效 |
+| GET | `/api/documents/{doc_id}/suggestion` | 持久化分类建议或 `null` |
+| POST | `/api/documents/{doc_id}/suggestion` | `{action:"apply"|"reject", payload?}`；应用前再次检查文档版本及目标归属 |
+
+列表参数：`folder_id=root` 表示未分类；也可指定实际文件夹及 `include_descendants=true`。`tag_ids` 是逗号分隔 ID，按交集筛选；另支持 `ext`、`status`（解析状态）、`trash=true`、`sort=name|date|type`、`page`（默认 1）、`page_size`（默认 50，最大 200）。响应为 `{items,total,page,page_size}`。
+
+上传字段为重复的 `files`、可选 `folder_id`、`duplicate_policy=skip|copy`。同库 SHA-256 相同的文件默认返回 `duplicate`，不会静默再次解析/向量化；使用 `copy` 明确保留副本。响应 `{items,jobs}` 中每项状态为 `queued|duplicate|error`。单文件失败不会伪装整批成功，调用方应逐项展示结果。默认单文件 50 MiB、整批 200 MiB、最多 20 个文件，可配置。
+
+批量 `action` 为 `move|tags|trash|restore`；标签 `tag_mode=set|add|remove`。整个批次通过同一事务应用，跨库 ID 被拒绝。
+
+## 运行状态、模型与入库任务
+
+| 方法 | 路径 | 请求 / 行为 |
+| --- | --- | --- |
+| GET | `/api/health` | 进程存活 `{status,version}` |
+| GET | `/api/ready` | 检查数据库及 demo 身份初始化 |
+| GET | `/api/settings/model-status` | 两个独立模型配置状态、维度、重建提示、工具能力配置；不返回密钥 |
+| POST | `/api/settings/test-models` | 分别真实测试聊天、Embedding、Tool Calling；返回可理解错误 |
+| POST | `/api/settings/rebuild-embeddings` | `{kb_id}`；为已解析文档创建 reindex 后台任务 |
+| GET | `/api/ingestion/jobs` | 可选 `kb_id`，返回可访问库最新 200 个任务 |
+| GET | `/api/ingestion/jobs/{job_id}` | 持久状态、阶段、进度、尝试次数、错误 |
+| POST | `/api/ingestion/jobs/{job_id}/retry` | 重试终态任务；运行中的任务返回 409；已有计划的 Agent 任务应打开计划或新建整理 |
+| POST | `/api/ingestion/jobs/{job_id}/cancel` | 取消 queued/running 任务；聊天解除会话忙状态，Agent 同步运行状态并阻止计划落库及审批 |
+| GET | `/api/ingestion/jobs/{job_id}/events` | 持久化 SSE，支持游标 |
+
+未配置模型时解析、阅读、管理及关键词检索仍可使用；AI 阶段显示 `unconfigured`/`partial_ready`，不会返回假摘要或假向量。Embedding 重建仅处理向量，目录/标签/改名不会触发重新解析。
+
+## 搜索与问答
+
+`POST /api/search` 请求示例：
+
+```json
+{
+  "query": "中文知识检索",
+  "kb_ids": ["knowledge-base-uuid"],
+  "folder_ids": [],
+  "include_descendants": true,
+  "tag_ids": [],
+  "tag_match": "all",
+  "document_ids": [],
+  "exts": ["md", "pdf"],
+  "mode": "hybrid",
+  "limit": 30,
+  "offset": 0
+}
+```
+
+另支持 ISO 8601 `date_from/date_to`。未传 KB ID 时使用当前 actor 可访问知识库；指定不可访问 KB 返回 403。权限、未删除状态、文件夹及标签范围都在候选 SQL 中限定。`mode=keyword|hybrid`；无 Embedding 或模型不兼容时返回真实的 `mode=keyword` 和 `notice`。响应 `{items,total,mode,notice,elapsed_ms,kb_ids}`；每项包含真实 `document_id/chunk_id/section_id/anchors/snippet/content/score`。`total` 是本次最多 500 个融合候选的数量，并非全库穷举计数；`limit` 最大 100。
+
+| 方法 | 路径 | 请求 / 行为 |
+| --- | --- | --- |
+| GET | `/api/conversations` | 当前用户未删除会话 |
+| POST | `/api/conversations` | `{title?,scope?}`；scope 使用搜索过滤字段，保存实际 KB 范围；201 |
+| GET | `/api/conversations/{conversation_id}` | 持久化范围及元数据 |
+| PATCH | `/api/conversations/{conversation_id}` | `{title}` |
+| DELETE | `/api/conversations/{conversation_id}` | 软删除会话，停止进行中的生成 |
+| GET | `/api/conversations/{conversation_id}/messages` | 消息及经过权限/删除状态校验的真实 `citations` |
+| POST | `/api/conversations/{conversation_id}/messages` | `{content}`；202；创建 assistant 消息和独立后台任务 |
+| GET | `/api/conversations/{conversation_id}/events` | token、检索状态、citation、完成/错误 SSE |
+
+同一会话只允许一个 queued/processing 回复；后续提交返回 409。无任何可访问知识库时创建会话返回 `empty_scope`。答案引用仅从检索上下文 `[S1]` 等白名单标记构造；无效来源标记会被替换。PDF 使用页码锚点，MD/TXT 使用行号，DOCX 使用段落，不虚构 DOCX 页码。不可访问来源返回 `available=false`，不会继续返回其 snippet。
+
+## 智能整理与整批审批
+
+| 方法 | 路径 | 请求 / 行为 |
+| --- | --- | --- |
+| GET | `/api/agent/runs?kb_id=...` | 当前用户本库最近 50 次整理 |
+| POST | `/api/agent/runs` | `{kb_id,goal}`；201；仅排队，未配置聊天模型时 503 |
+| GET | `/api/agent/runs/{run_id}` | 运行状态、完整计划、事件及操作审计 |
+| GET | `/api/agent/plans/{plan_id}` | `{id,version,status,payload,result,...}` |
+| PATCH | `/api/agent/plans/{plan_id}` | `{version,operations,summary?}`；保存完整编辑后的操作列表 |
+| POST | `/api/agent/plans/{plan_id}/approve` | `{plan_version,confirm_high_risk:false}`；一次批准最终版本 |
+| POST | `/api/agent/plans/{plan_id}/reject` | 拒绝计划，零业务副作用 |
+| POST | `/api/agent/runs/{run_id}/undo` | 检查版本与后续变更后撤销整次整理 |
+| GET | `/api/agent/runs/{run_id}/events` | 活动、计划等待审批、执行结果 SSE |
+
+计划操作含稳定 `operation_id`、`type`、`target_ids`、`params`、`description`、`dependencies`、`enabled`、`reversible`。支持 `create_folder`、`move_documents`、`update_document_tags`、`rename_document`、`rename_folder`、`trash_documents`。临时文件夹使用 `ref:<创建操作ID>`，并显式依赖创建操作。编辑可以取消操作及调整目录/标签等参数；操作类型和身份不可替换。
+
+软删除风险由后端重新计算；必须额外提交 `confirm_high_risk=true`。跨库操作、审批期间版本变化、重复/非法依赖被拒绝。重复批准已完成的同一版本返回持久结果，不会再次修改实体。撤销遇到后续人工修改返回 `undo_conflict`，不覆盖新工作。
+
+## SSE 恢复
+
+创建聊天/Agent 后使用 GET SSE 订阅，不能用 EventSource 发送 POST JSON。所有事件含 `id`（持久 sequence）及 JSON `timestamp`。示例：
+
+```text
+id: 12
+event: token
+data: {"sequence":12,"timestamp":"2026-10-22T10:00:00+00:00","message_id":"...","token":"知识"}
+
+```
+
+首次订阅可用 `?after=12`；重连也支持 `Last-Event-ID: 12`。事件有 `status/progress/token/tool_start/tool_end/plan_ready/approval_required/citation/completed/error`，具体按资源类型使用。连接断开不会取消 worker；应重新读取任务/消息/计划状态，再继续订阅。订阅过程中每次轮询重新验证资源权限，权限变化后发送 error 并关闭。聊天来源事件重放会再次遮蔽已删除/不可访问文档的 snippet。
