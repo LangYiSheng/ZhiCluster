@@ -8,8 +8,10 @@ x-backend: &backend
     DATABASE_URL: postgresql+psycopg://zhicluster:local_password@db:5432/zhicluster
     UPLOAD_ROOT: /data/uploads
     APP_ENV: local
+    RUNTIME_CONFIG_DIR: /app/runtime
   volumes:
     - uploads:/data/uploads
+    - runtime:/app/runtime
   depends_on:
     migrate:
       condition: service_completed_successfully
@@ -62,3 +64,4 @@ services:
 volumes:
   postgres:
   uploads:
+  runtime:

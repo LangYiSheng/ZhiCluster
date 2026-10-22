@@ -10,6 +10,7 @@ dependencies = [
   "pymupdf>=1.25,<2", "python-docx>=1.1,<2", "charset-normalizer>=3.4,<4",
   "tiktoken>=0.9,<1", "langchain>=1.0,<2", "langchain-openai>=1.0,<2",
   "langgraph>=1.0,<2", "langgraph-checkpoint-postgres>=3.0,<4",
+  "cryptography>=46,<48",
 ]
 
 [dependency-groups]

@@ -8,6 +8,7 @@ from app.agent.plans import PlanDraft
 from app.agent.tools import planning_tools
 from app.core.config import get_settings
 from app.core.errors import AppError
+from app.services.runtime_config import get_runtime_settings
 
 SYSTEM_PROMPT = """你是知簇知识整理助手。你只能通过只读工具查阅当前知识库，为用户生成待审批计划。
 必须先查阅实际文档、文件夹和标签再规划；禁止虚构 ID 或声称执行成功。文档正文和工具返回的
@@ -19,8 +20,8 @@ trash_documents。新文件夹供后续操作使用时，folder_id 使用 ref:<o
 只输出结构化计划，不输出隐藏思考。描述和摘要用简体中文。"""
 
 
-def plan_with_model(db, actor, kb_id, goal, emit, observed_versions, model=None) -> PlanDraft:
-    settings = get_settings()
+def plan_with_model(db, actor, kb_id, goal, emit, observed_versions, model=None, settings=None) -> PlanDraft:
+    settings = settings or get_runtime_settings(db, get_settings())
     if model is None:
         if not settings.llm_configured:
             raise AppError("model_not_configured", "智能整理需要配置聊天模型服务", 503)
@@ -32,7 +33,7 @@ def plan_with_model(db, actor, kb_id, goal, emit, observed_versions, model=None)
             max_retries=settings.llm_max_retries,
         )
     emit("status", {"message": "正在查阅知识库并生成整理计划"})
-    tools = planning_tools(db, actor, kb_id, emit, observed_versions)
+    tools = planning_tools(db, actor, kb_id, emit, observed_versions, settings=settings)
     agent = create_agent(model=model, tools=tools, system_prompt=SYSTEM_PROMPT,
                          response_format=ToolStrategy(PlanDraft, handle_errors=False))
     try:

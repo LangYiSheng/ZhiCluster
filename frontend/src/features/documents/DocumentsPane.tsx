@@ -427,24 +427,30 @@ export function DocumentsPane({
         />
       </div>
       {trash && !!deletedKbs.data?.some((k) => k.deleted_at) && (
-        <div className="deleted-kbs">
-          <div className="section-heading">已删除知识库</div>
-          {deletedKbs.data
-            .filter((k) => k.deleted_at)
-            .map((k) => (
-              <div className="row spread" key={k.id}>
-                <span>{k.name}</span>
-                <Button
-                  size="sm"
-                  onClick={() =>
-                    action.mutate({ path: `/knowledge-bases/${k.id}/restore` })
-                  }
-                >
-                  恢复
-                </Button>
-              </div>
-            ))}
-        </div>
+        <details className="deleted-kbs">
+          <summary>
+            已删除知识库 · {deletedKbs.data.filter((k) => k.deleted_at).length}
+          </summary>
+          <div className="deleted-kb-list">
+            {deletedKbs.data
+              .filter((k) => k.deleted_at)
+              .map((k) => (
+                <div className="row spread" key={k.id}>
+                  <span>{k.name}</span>
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      action.mutate({
+                        path: `/knowledge-bases/${k.id}/restore`,
+                      })
+                    }
+                  >
+                    恢复
+                  </Button>
+                </div>
+              ))}
+          </div>
+        </details>
       )}
       <div className="document-list-heading">
         <span>

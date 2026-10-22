@@ -1,11 +1,12 @@
 # 数据模型
 
-业务 schema 共 24 张表，见 `backend/app/db/models.py`。主键使用 UUID 字符串；除关联表 `document_tags` 外，业务实体统一包含 `id`、`created_at`、`updated_at`。数据库由 Alembic 迁移创建，初始化任务可重复执行；运行期不依赖 `create_all()`。
+业务 schema 共 25 张表，见 `backend/app/db/models.py`。资源主键使用 UUID 字符串；除关联表 `document_tags` 和单例配置表 `app_configurations` 外，业务实体统一包含 `id`、`created_at`、`updated_at`。数据库由 Alembic 迁移创建，初始化任务可重复执行；运行期不依赖 `create_all()`。
 
 ## 表与职责
 
 | 表 | 主要字段与约束 | 职责 |
 | --- | --- | --- |
+| app_configurations | id=`runtime` 单例主键、revision、values JSON、secrets JSON、updated_at | 当前有效运行配置；提供方密钥只保存 Fernet 密文 |
 | users | email unique、display_name | 固定本地 demo actor，预留未来真实用户 |
 | knowledge_bases | owner_id、name、description、visibility、version、deleted_at | 知识库与软删除 |
 | knowledge_base_members | kb_id/user_id unique、role check | owner/editor/viewer 权限角色 |
@@ -30,6 +31,20 @@
 | agent_events | run_id、sequence、type、data | 用户可读工具活动与审批时间线 |
 | audit_logs | actor/kb/run/plan/operation IDs、action、entity_id、before/after、result | 手动/Agent 业务变更可追溯 |
 | undo_records | run_id、entity_type/id、before、after_version、status | Agent 撤销快照及版本冲突检查 |
+
+## 运行配置与密钥
+
+迁移 `04_runtime_configuration` 创建 `app_configurations`。没有记录时，公开配置 revision 为 0，运行参数来自后端启动环境；首次保存建立 `id=runtime,revision=1` 的单例，持久化当时完整的模型及 processing 配置。`values` 采用后端扁平字段名，如 `llm_model`、`embedding_dimension`、`chunk_size_tokens`；不包含 API Key，也不能通过设置 API 写入数据库连接或存储路径等基础设施参数。
+
+`secrets` 仅包含 `llm_api_key` 与 `embedding_api_key` 的 Fernet 密文。保留的环境密钥也会在保存时加密；显式清除保存空字符串的密文，保证后来读取时不会重新启用环境旧密钥。公开 DTO 只有 `api_key_configured` 布尔值，不返回原文或密文。
+
+更新通过 `UPDATE ... WHERE id='runtime' AND revision=<读取版本>` 进行条件写入，成功后 revision 加一；并发修改仅有一个请求成功。首次并发创建由单例主键唯一性阻止重复。revision 用于乐观并发控制，表中只保留当前配置；没有历史版本、配置变更审计或自动密钥轮换记录。
+
+加密主密钥位于 `RUNTIME_CONFIG_DIR/master.key`，默认本地为 `.data/runtime/master.key`，Compose 为共享 `runtime` 私有卷的 `/app/runtime/master.key`。初始化先以 `O_EXCL` 创建私有临时文件、写入并同步，再用原子硬链接发布完整主密钥；并发初始化不会覆盖已存在主密钥。Linux 文件权限为 0600；Windows 由宿主账户及目录 ACL 管理访问。API 和 worker 必须使用同一数据库及同一份 master.key，前端不挂载此卷。
+
+备份恢复必须配对保留数据库和 runtime 卷；仅数据库备份无法解密设置密钥，仅 runtime 卷也不包含配置记录。主密钥缺失或损坏时，系统明确报错并停止相关运行配置读取，不自动创建替代密钥或退回环境凭据。恢复匹配的原 master.key 后可继续读取；永久丢失时无法恢复既有密钥，需要管理员明确重置配置记录后重新配置提供方，不能用新的随机 key 覆盖原文件来恢复。
+
+任务不持久化配置原文、密钥或历史配置快照到 `ingestion_jobs.payload`、事件表或 Agent checkpoint。每次任务领取的运行配置只在该执行尝试的内存中持有，重试/租约恢复会读取当时最新配置；具体生命周期见 [architecture.md](architecture.md)。
 
 ## 关联与隔离
 
@@ -66,4 +81,4 @@ fingerprint 由 Embedding base URL、模型名称和配置维度生成，排除 
 
 `agent_checkpoints` 由 `langgraph-checkpoint-postgres` 安装版本的 `PostgresSaver.setup()` 幂等管理，连接 search_path 指向 `agent_checkpoints,public`。checkpoint 保存 LangGraph 的 interrupt/resume 状态；业务计划和消息不依赖 checkpoint 表结构，审计/撤销也独立于 checkpoint。
 
-数据库备份需要同时包含 public 业务 schema 与 agent_checkpoints schema，文件备份还需另行保存 uploads 卷。仅备份数据库不会包含原始附件。
+数据库备份需要同时包含 public 业务 schema 与 agent_checkpoints schema，文件备份还需另行保存 uploads 和 runtime 卷。仅备份数据库不会包含原始附件，也不能独立恢复加密的提供方密钥。

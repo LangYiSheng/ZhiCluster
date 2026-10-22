@@ -19,17 +19,18 @@
 PowerShell，从 `backend` 目录执行。测试数据库为本地容器中的独立 `zhicluster_agent_test`，没有清空或修改主数据库的数据。
 
 ```powershell
-$env:DATABASE_URL='postgresql+psycopg://zhicluster:local_password@127.0.0.1:55432/zhicluster_agent_test'
-.venv\Scripts\python.exe -m alembic upgrade head
-.venv\Scripts\python.exe -m app.agent.graph --setup
-
-$env:ZHICLUSTER_TEST_DATABASE_URL=$env:DATABASE_URL
+$env:DATABASE_URL='sqlite://'
+$env:ZHICLUSTER_TEST_DATABASE_URL='postgresql+psycopg://zhicluster:local_password@127.0.0.1:55432/zhicluster_agent_test'
 New-Item -ItemType Directory -Force -Path '..\.test-tmp' | Out-Null
 .venv\Scripts\python.exe -m pytest tests/test_agent_workflow.py tests/test_agent_postgres.py tests/test_agent_api.py -q -p no:cacheprovider --basetemp ..\.test-tmp\agent-final
 .venv\Scripts\python.exe -m ruff check app/agent app/api/agent.py tests/test_agent_workflow.py tests/test_agent_postgres.py tests/test_agent_api.py
 ```
 
-数据库核验：首次迁移版本 `14703c2af5e7`，public schema 有 24 张业务表及 `alembic_version`，checkpoint schema 有 4 张官方 saver 表。后续项目迁移以 `alembic upgrade head` 为准。
+当前 PostgreSQL 测试模块会先严格检查 URL 的数据库名称为 `zhicluster_agent_test`，再以独立子进程执行 `alembic upgrade head`。目标专库必须已存在；其他数据库名会被拒绝，避免把测试迁移施加到应用主库。官方 checkpoint 的幂等初始化由模块内测试覆盖。未启用 PostgreSQL 时普通 API/工作流测试仍使用 SQLite。
+
+历史数据库核验：首次迁移版本 `14703c2af5e7`，当时 public schema 有 24 张业务表及 `alembic_version`，checkpoint schema 有 4 张官方 saver 表。本次运行配置迁移 `04_runtime_configuration` 后为 25 张业务表；新增迁移无需再依赖人工预先升级旧测试库。
+
+本次自动迁移补充验收：在仍停留于旧迁移的 Agent 专库上运行 `tests/test_agent_postgres.py`，模块先升级到 head，再完成 **`9 passed in 13.34s`**；相关 Ruff 检查通过。该结果覆盖真实 PostgreSQL 工作流和事务，不涉及真实云端模型。
 
 首轮 Agent 定向测试输出：`18 passed in 11.02s`。追加并发目录和取消/租约保护后，最终 Agent 定向测试输出为 **`24 passed in 13.83s`**，Ruff：`All checks passed!`。早期一次 HTTP 测试因缺失 `.test-tmp` 父目录出现 2 个环境 setup error；创建父目录后重跑全部通过。
 

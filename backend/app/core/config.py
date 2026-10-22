@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     app_port: int = 8000
     database_url: str = "postgresql+psycopg://zhicluster:local_password@localhost:5432/zhicluster"
     upload_root: Path = Path("../.data/uploads")
+    runtime_config_dir: Path = Path("../.data/runtime")
     max_upload_size_mb: int = 50
     max_upload_batch_mb: int = 200
     max_upload_batch_files: int = 20

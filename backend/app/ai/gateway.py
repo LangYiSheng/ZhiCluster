@@ -75,7 +75,7 @@ class ModelGateway:
                     if not isinstance(result, dict):
                         raise ProviderError("模型服务返回了无效的数据结构")
                     return result
-                except (httpx.TimeoutException, httpx.NetworkError) as error:
+                except httpx.TransportError as error:
                     if attempt < retries:
                         time.sleep(min(2 ** attempt, 8))
                         continue
@@ -166,23 +166,40 @@ class ModelGateway:
         except (KeyError, TypeError, ValueError, IndexError) as error:
             raise ProviderError("Embedding 返回数量、维度或数值不合法；请校验 EMBEDDING_DIMENSION 并重建索引") from error
 
-    def test_models(self) -> dict:
+    def test_models(self, scope: str | None = None) -> dict:
         status: dict = {}
-        try:
+
+        def probe(name, callback):
+            started = time.monotonic()
+            try:
+                value = callback()
+            except (AIUnavailable, ProviderError) as error:
+                value = {"ok": False, "message": str(error)}
+            value["elapsed_ms"] = round((time.monotonic() - started) * 1000, 1)
+            if name == "tool_calling":
+                value.setdefault("supported", False)
+            else:
+                value["configured"] = self.llm_configured if name == "llm" else self.embeddings_configured
+            status[name] = value
+
+        def llm():
             self.chat([{"role": "user", "content": "Reply with OK."}], max_tokens=8)
-            status["llm"] = {"configured": True, "ok": True, "message": "聊天模型连接成功"}
-        except (AIUnavailable, ProviderError) as error:
-            status["llm"] = {"configured": self.llm_configured, "ok": False, "message": str(error)}
-        try:
+            return {"ok": True, "message": "聊天模型连接成功"}
+
+        def embedding():
             vectors = self.embed(["模型连接测试"])
-            status["embedding"] = {"configured": True, "ok": True, "dimension": len(vectors[0]), "message": "Embedding 连接与维度校验成功"}
-        except (AIUnavailable, ProviderError) as error:
-            status["embedding"] = {"configured": self.embeddings_configured, "ok": False, "message": str(error)}
-        try:
+            return {"ok": True, "dimension": len(vectors[0]), "message": "Embedding 连接与维度校验成功"}
+
+        def tool_calling():
             result = self._request("llm", "chat/completions", {"messages": [{"role": "user", "content": "Call capability_probe with value=OK."}], "max_tokens": 64, "tools": [{"type": "function", "function": {"name": "capability_probe", "description": "Test tool calling support; no side effects.", "parameters": {"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]}}}], "tool_choice": {"type": "function", "function": {"name": "capability_probe"}}})
-            calls = result.get("choices", [{}])[0].get("message", {}).get("tool_calls", [])
-            supported = any(call.get("function", {}).get("name") == "capability_probe" for call in calls)
-            status["tool_calling"] = {"ok": supported, "supported": supported, "message": "支持工具调用" if supported else "提供方未返回工具调用，Agent 不可用；知识问答仍可使用"}
-        except (AIUnavailable, ProviderError, IndexError) as error:
-            status["tool_calling"] = {"ok": False, "supported": False, "message": str(error)}
+            try:
+                calls = result["choices"][0]["message"].get("tool_calls", [])
+                supported = any(call.get("function", {}).get("name") == "capability_probe" for call in calls)
+            except (KeyError, IndexError, TypeError, AttributeError) as error:
+                raise ProviderError("模型服务返回了无效的工具调用数据") from error
+            return {"ok": supported, "supported": supported, "message": "支持工具调用" if supported else "提供方未返回工具调用，Agent 不可用；知识问答仍可使用"}
+
+        for name, callback in (("llm", llm), ("embedding", embedding), ("tool_calling", tool_calling)):
+            if scope is None or scope == name:
+                probe(name, callback)
         return status

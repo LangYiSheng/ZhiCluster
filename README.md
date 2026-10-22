@@ -16,9 +16,15 @@ docker compose ps
 
 全部宿主机端口绑定 `127.0.0.1`。数据库默认端口 `55432`（可在 `.env` 修改 `POSTGRES_PORT`）。这是免登录单用户 Demo；`APP_ENV` 使用非 local/test 值会拒绝启动。公开部署前必须实现认证，不应直接改端口到公网。
 
-## 配置两个独立的模型服务
+## 网页设置与模型连接
 
-在 `.env` 填写：
+打开左侧「设置」，按「外观与布局 / 模型连接 / 知识处理 / 索引维护」配置。外观保存于当前浏览器，模型连接和处理参数保存于后端数据库。聊天和向量服务分别填写地址、模型与密钥；先用对应的连接测试检查草稿，再点「保存修改」。测试不会自动保存，也不会同时调用其它模型。
+
+密钥输入框始终为空：留空保留已保存的密钥，填写新值替换，勾选「保存时清除现有密钥」才会清除。后端加密保存密钥，不向浏览器返回原值。多窗口编辑发生冲突时会保留草稿并提示重新读取。离开未保存的设置会询问是否放弃；返回工作区会保留聊天草稿和正在运行的对话。
+
+保存后，API 的后续请求和 worker 下一次领取的任务自动采用新配置，**无需重启服务**；执行中的任务使用开始时的快照，任务重试时重新读取配置。更改向量模型、服务地址或维度后，到「索引维护」选择知识库并重建已有索引。
+
+也可在首次启动前用 `.env` 提供初始默认值：
 
 ```dotenv
 LLM_BASE_URL=https://your-provider.example/v1
@@ -32,7 +38,7 @@ EMBEDDING_DIMENSION=实际返回维度
 
 BASE_URL 包含兼容 API 前缀 `/v1`，不包含 `/chat/completions` 或 `/embeddings`。两个服务可来自不同提供方。`EMBEDDING_DIMENSION` 必须与真实返回长度一致，示例 1024 不代表任何厂商默认值。密钥仅在后端，不能写入前端环境变量。
 
-修改后执行 `docker compose up -d --force-recreate api worker`，在设置页分别测试聊天、Embedding、Tool Calling。Agent 要求真实工具调用能力；`LLM_SUPPORTS_TOOLS=true` 可用于已经确认支持该能力的服务，规划时也会实际探测。没有该能力的聊天模型仍可用于 RAG。
+网页保存的配置优先于 `.env` 默认值。只有修改数据库、存储目录等基础设施配置，或尚未保存网页配置时调整环境默认值，才需要 `docker compose up -d --force-recreate api worker`。Agent 要求真实工具调用能力；在高级连接选项启用工具调用并单独测试，规划时也会实际探测。没有该能力的聊天模型仍可用于 RAG。无认证的本地兼容服务也需要按服务说明填写占位密钥，才能启用连接。
 
 旧文档可以通过任务“重试”补做未配置阶段。更换 Embedding 服务/模型/维度后，在设置里为当前库“重建向量索引”，或调用 `POST /api/settings/rebuild-embeddings`，请求体 `{"kb_id":"..."}`。旧 profile 与新 profile 隔离；查询只用当前指纹，不混用不同维度。默认精确 cosine 检索，适合小规模本地知识库。超长摘要可通过 `SUMMARY_INPUT_TOKENS` 和 `SUMMARY_MAX_CALLS` 限制单次上下文与总请求预算；预算耗尽明确报错并保留已生成的章节摘要。
 
@@ -59,13 +65,14 @@ docker compose -f compose.yaml -f compose.dev.yaml up --build
 docker compose up db -d
 $env:DATABASE_URL='postgresql+psycopg://zhicluster:local_password@127.0.0.1:55432/zhicluster'
 $env:UPLOAD_ROOT="$PWD/.data/uploads"
+$env:RUNTIME_CONFIG_DIR="$PWD/.data/runtime"
 cd backend
 uv sync --frozen --python 3.12
 uv run alembic upgrade head
 uv run python -m app.db.seed
 uv run python -m app.agent.graph --setup
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-# 另一个终端，使用相同 DATABASE_URL/UPLOAD_ROOT 并进入 backend：
+# 另一个终端，使用相同 DATABASE_URL/UPLOAD_ROOT/RUNTIME_CONFIG_DIR 并进入 backend：
 uv run python -m app.worker.main
 # 第三个终端：
 cd frontend
@@ -95,7 +102,7 @@ docker compose restart api worker db
 backend/.venv/Scripts/python scripts/smoke.py --verify
 ```
 
-离线 Pytest 使用真实解析器及确定性 fake provider（仅测试）；PostgreSQL 专项测试默认跳过，显式设置 `PG_INGESTION_TEST_URL`（入库）与 `ZHICLUSTER_TEST_DATABASE_URL`（Agent）为专用测试库连接后运行。它们会创建、修改或清理验收数据，不要指向日常数据库；入库专项仅接受名为 `zhicluster_ingestion_test` 的专库并保留记录供检查。实际命令与结果见 [验收报告](docs/acceptance.md)。
+离线 Pytest 使用真实解析器及确定性 fake provider（仅测试）；PostgreSQL 专项测试默认跳过，显式设置 `PG_INGESTION_TEST_URL`（入库）、`ZHICLUSTER_TEST_DATABASE_URL`（Agent）与 `PG_SETTINGS_TEST_URL`（配置）为专用测试库连接后运行。它们会创建、修改或清理验收数据，不要指向日常数据库；专库分别使用 `zhicluster_ingestion_test`、`zhicluster_agent_test`、`zhicluster_settings_test`。配置写入的浏览器专项默认跳过，只有在专用隔离站点设置 `E2E_BASE_URL` 与 `E2E_CONFIG_WRITES=1` 才启用，使用本地 HTTP 测试服务和合成密钥，不调用真实云模型。实际命令与结果见 [初版验收](docs/acceptance.md) 与 [界面和配置验收](docs/ui-redesign-validation.md)。
 
 ## 运维、持久化和备份
 
@@ -106,9 +113,9 @@ docker compose start
 docker compose down
 ```
 
-`down` 保留数据库和上传卷；**`docker compose down -v` 会删除全部本项目数据**。PostgreSQL 在 `zhicluster_postgres` 卷，原件在 `zhicluster_uploads` 卷的 `/data/uploads/<kb>/<document>/original`，不作为 web 静态资源发布。
+`down` 保留数据库、上传和运行密钥卷；**`docker compose down -v` 会删除全部本项目数据**。PostgreSQL 在 `zhicluster_postgres` 卷，原件在 `zhicluster_uploads` 卷的 `/data/uploads/<kb>/<document>/original`，不作为 web 静态资源发布。网页配置的加密主密钥在私有 `zhicluster_runtime` 卷 `/app/runtime/master.key`，API 与 worker 必须挂载同一份；主机开发使用相同的 `RUNTIME_CONFIG_DIR`。主密钥丢失或不匹配时相关请求会明确报错，worker 暂停领取任务，需要恢复原密钥。
 
-数据库备份可用 `docker compose exec -T db pg_dump -U zhicluster -d zhicluster -Fc -f /tmp/zhicluster.dump`，再用 `docker compose cp db:/tmp/zhicluster.dump ./zhicluster.dump` 导出（避免旧版 PowerShell 重定向破坏二进制）。上传卷可用 `docker run --rm -v zhicluster_uploads:/source:ro -v "${PWD}:/backup" alpine tar -czf /backup/zhicluster-uploads.tar.gz -C /source .` 备份。恢复前停 API/worker，使用 `pg_restore` 到明确的目标库，同时恢复对应上传卷。应同时保留 DB 快照和原件。迁移执行 `docker compose run --rm migrate`，含幂等 seed 和 checkpoint setup。
+数据库备份可用 `docker compose exec -T db pg_dump -U zhicluster -d zhicluster -Fc -f /tmp/zhicluster.dump`，再用 `docker compose cp db:/tmp/zhicluster.dump ./zhicluster.dump` 导出（避免旧版 PowerShell 重定向破坏二进制）。上传卷可用 `docker run --rm -v zhicluster_uploads:/source:ro -v "${PWD}:/backup" alpine tar -czf /backup/zhicluster-uploads.tar.gz -C /source .` 备份；运行密钥卷同理将源改为 `zhicluster_runtime` 并输出独立私有归档。密钥备份应按凭证保管，不提交仓库。恢复前停 API/worker，使用 `pg_restore` 到明确的目标库，同时恢复对应上传卷和原运行密钥卷。应同时保留 DB 快照、原件和解密密钥。迁移执行 `docker compose run --rm migrate`，含幂等 seed 和 checkpoint setup。
 
 常见问题：任务排队不动检查 worker 日志；扫描 PDF 无文字层不能解析；模型 401/429/超时在设置与任务错误中可见；变更模型后重建向量；代理 SSE 要禁用缓存（仓库 Nginx 已配置）；取消订阅或关闭网页不会取消后台任务。
 

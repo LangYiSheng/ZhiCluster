@@ -1286,16 +1286,93 @@
         }
       }
     },
-    "/api/settings/test-models": {
-      "post": {
-        "summary": "Test Models",
-        "operationId": "test_models_api_settings_test_models_post",
+    "/api/settings/config": {
+      "get": {
+        "summary": "Configuration",
+        "operationId": "configuration_api_settings_config_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Configuration",
+        "operationId": "update_configuration_api_settings_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigurationSave"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/test-models": {
+      "post": {
+        "summary": "Test Models",
+        "operationId": "test_models_api_settings_test_models_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ModelTestRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2461,6 +2538,88 @@
         ],
         "title": "ChatMessage"
       },
+      "ConfigurationDraft": {
+        "properties": {
+          "llm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LlmPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "embedding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EmbeddingPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "processing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ConfigurationDraft"
+      },
+      "ConfigurationSave": {
+        "properties": {
+          "llm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LlmPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "embedding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EmbeddingPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "processing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessingPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "title": "ConfigurationSave"
+      },
       "ConversationCreate": {
         "properties": {
           "title": {
@@ -2873,6 +3032,108 @@
         "type": "object",
         "title": "DocumentUpdate"
       },
+      "EmbeddingPatch": {
+        "properties": {
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4096,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "clear_api_key": {
+            "type": "boolean",
+            "title": "Clear Api Key",
+            "default": false
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 600.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Seconds"
+          },
+          "max_retries": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 4.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Retries"
+          },
+          "dimension": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 16000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dimension"
+          },
+          "batch_size": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 256.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Size"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "EmbeddingPatch"
+      },
       "EmptyParams": {
         "properties": {},
         "additionalProperties": false,
@@ -3251,6 +3512,126 @@
         ],
         "title": "KnowledgeBaseOut"
       },
+      "LlmPatch": {
+        "properties": {
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4096,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "clear_api_key": {
+            "type": "boolean",
+            "title": "Clear Api Key",
+            "default": false
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 600.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Seconds"
+          },
+          "max_retries": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 4.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Retries"
+          },
+          "supports_tools": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supports Tools"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "LlmPatch"
+      },
+      "ModelTestRequest": {
+        "properties": {
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "llm",
+                  "embedding",
+                  "tool_calling"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "draft": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationDraft"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ModelTestRequest"
+      },
       "MoveDocuments": {
         "properties": {
           "operation_id": {
@@ -3394,6 +3775,91 @@
           "operations"
         ],
         "title": "PlanEdit"
+      },
+      "ProcessingPatch": {
+        "properties": {
+          "chunk_size_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 8192.0,
+                "minimum": 128.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Size Tokens"
+          },
+          "chunk_overlap_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2048.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Overlap Tokens"
+          },
+          "max_ingestion_attempts": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 10.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Ingestion Attempts"
+          },
+          "max_concurrent_model_calls": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 16.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Concurrent Model Calls"
+          },
+          "summary_input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 200000.0,
+                "minimum": 1024.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary Input Tokens"
+          },
+          "summary_max_calls": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary Max Calls"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ProcessingPatch"
       },
       "Rebuild": {
         "properties": {

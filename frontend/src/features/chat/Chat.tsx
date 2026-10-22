@@ -22,6 +22,7 @@ import type {
   Tag,
 } from "../../lib/api";
 import { useEvents } from "../../lib/events";
+import { useSessionDraft } from "../../lib/useSessionDraft";
 import { Button } from "../../components/ui/button";
 import { Dialog } from "../../components/ui/dialog";
 import { Menu, MenuItem } from "../../components/ui/menu";
@@ -43,7 +44,8 @@ export function Chat({
   const [conversationId, setConversationId] = useState(
     () => localStorage.getItem(`conversation:${kb.id}`) || "",
   );
-  const [text, setText] = useState("");
+  const draftKey = `zhicluster:draft:v1:chat:${kb.id}:${conversationId || "new"}`;
+  const [text, setText, clearDraft] = useSessionDraft(draftKey);
   const [scopeIds, setScopeIds] = useState([kb.id]);
   const [scopeTags, setScopeTags] = useState<string[]>([]);
   const [scopeFolders, setScopeFolders] = useState<string[]>([]);
@@ -112,15 +114,16 @@ export function Chat({
           }),
         );
         id = c.id;
-        setConversationId(id);
       }
-      return api<Message>(
+      const message = await api<Message>(
         `/conversations/${id}/messages`,
         json("POST", { content: text }),
       );
+      return { message, conversationId: id, draftKey };
     },
-    onSuccess: () => {
-      setText("");
+    onSuccess: (result) => {
+      clearDraft(result.draftKey);
+      setConversationId(result.conversationId);
       setStream("");
       void qc.invalidateQueries({ queryKey: ["messages"] });
       void qc.invalidateQueries({ queryKey: ["conversations"] });
@@ -168,6 +171,7 @@ export function Chat({
       <div className="conversation-toolbar">
         <select
           aria-label="切换对话"
+          disabled={send.isPending || create.isPending}
           value={conversationId}
           onChange={(e) => setConversationId(e.target.value)}
         >
@@ -182,7 +186,7 @@ export function Chat({
           size="icon"
           variant="ghost"
           aria-label="新建对话"
-          disabled={create.isPending || !scopeIds.length}
+          disabled={create.isPending || send.isPending || !scopeIds.length}
           onClick={() => create.mutate()}
         >
           <Plus size={16} />
@@ -190,7 +194,12 @@ export function Chat({
         {conversationId && (
           <Menu
             trigger={
-              <Button size="icon" variant="ghost" aria-label="对话菜单">
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label="对话菜单"
+                disabled={send.isPending}
+              >
                 <MoreHorizontal size={16} />
               </Button>
             }
@@ -433,6 +442,7 @@ export function Chat({
             aria-label="知识库问题"
             placeholder="向你的知识库提问…"
             value={text}
+            disabled={send.isPending}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (

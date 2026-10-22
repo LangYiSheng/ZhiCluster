@@ -186,43 +186,50 @@ export function Reader({
                 打开阅读器
               </Button>
             </div>
-            <div className="document-properties">
-              <div>
-                <span>解析状态</span>
-                <Status value={d.parse_status} />
-              </div>
-              <div>
-                <span>向量索引</span>
-                <Status value={d.index_status} />
-              </div>
-              <div>
-                <span>AI 摘要</span>
-                <Status value={d.summary_status} />
-              </div>
-              <div>
-                <span>分类建议</span>
-                <Status value={d.classification_status} />
-              </div>
-              <div>
-                <span>文件夹</span>
-                <strong>
-                  {folders.find((f) => f.id === d.folder_id)?.name || "未分类"}
-                </strong>
-              </div>
-              <div>
-                <span>标签</span>
-                <div className="row gap">
-                  {d.tag_ids?.map((id) => (
-                    <span className="tag-pill" key={id}>
-                      {tags.find((t) => t.id === id)?.name || id}
-                    </span>
-                  ))}
-                  {!d.tag_ids?.length && (
-                    <span className="muted">尚未添加</span>
-                  )}
+            <details
+              className="detail-section detail-disclosure"
+              open={d.parse_status !== "ready"}
+            >
+              <summary>文档属性与处理状态</summary>
+              <div className="document-properties">
+                <div>
+                  <span>解析状态</span>
+                  <Status value={d.parse_status} />
+                </div>
+                <div>
+                  <span>向量索引</span>
+                  <Status value={d.index_status} />
+                </div>
+                <div>
+                  <span>AI 摘要</span>
+                  <Status value={d.summary_status} />
+                </div>
+                <div>
+                  <span>分类建议</span>
+                  <Status value={d.classification_status} />
+                </div>
+                <div>
+                  <span>文件夹</span>
+                  <strong>
+                    {folders.find((f) => f.id === d.folder_id)?.name ||
+                      "未分类"}
+                  </strong>
+                </div>
+                <div>
+                  <span>标签</span>
+                  <div className="row gap">
+                    {d.tag_ids?.map((id) => (
+                      <span className="tag-pill" key={id}>
+                        {tags.find((t) => t.id === id)?.name || id}
+                      </span>
+                    ))}
+                    {!d.tag_ids?.length && (
+                      <span className="muted">尚未添加</span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
+            </details>
             <section className="detail-section">
               <h3>
                 <Sparkles size={16} />
@@ -372,8 +379,13 @@ export function Reader({
               </section>
             )}
             {!!relatedJobs.length && (
-              <section className="detail-section">
-                <h3>处理任务</h3>
+              <details
+                className="detail-section detail-disclosure"
+                open={relatedJobs.some((job) =>
+                  ["queued", "running", "failed"].includes(job.status),
+                )}
+              >
+                <summary>处理任务 · {relatedJobs.length} 项</summary>
                 {relatedJobs.map((j) => (
                   <div className="job-row" key={j.id}>
                     <div className="row spread">
@@ -419,7 +431,7 @@ export function Reader({
                     </div>
                   </div>
                 ))}
-              </section>
+              </details>
             )}
           </div>
         ) : (

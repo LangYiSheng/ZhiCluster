@@ -9,6 +9,7 @@ from uuid import uuid4
 from app.core.config import get_settings
 from app.db.models import IngestionJob
 from app.db.session import SessionLocal
+from app.services.runtime_config import get_runtime_settings
 from app.worker.pipeline import process_ingestion_job
 from app.worker.queue import claim_job, emit, heartbeat
 
@@ -31,7 +32,8 @@ def dispatch(job_id: str, kind: str, owner: str, settings, session_factory=Sessi
 
 
 def run_worker() -> None:
-    settings = get_settings()
+    base_settings = get_settings()
+    settings = base_settings
     stop = threading.Event()
     owner = f"{socket.gethostname()}:{uuid4().hex[:12]}"
     for signum in (signal.SIGTERM, signal.SIGINT):
@@ -40,6 +42,7 @@ def run_worker() -> None:
     while not stop.is_set():
         try:
             with SessionLocal() as db:
+                settings = get_runtime_settings(db, base_settings)
                 job = claim_job(db, owner, settings.job_lease_seconds, settings.max_ingestion_attempts)
                 if job is None:
                     stop.wait(settings.worker_poll_seconds)
@@ -47,7 +50,7 @@ def run_worker() -> None:
                 job_id, kind = job.id, job.kind
             pulse_stop = threading.Event()
 
-            def pulse(pulse_stop=pulse_stop, job_id=job_id) -> None:
+            def pulse(pulse_stop=pulse_stop, job_id=job_id, settings=settings) -> None:
                 while not pulse_stop.wait(max(1, settings.job_lease_seconds / 3)):
                     try:
                         with SessionLocal() as pulse_db:

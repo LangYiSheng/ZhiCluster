@@ -12,7 +12,7 @@ from app.db.models import Document, DocumentSection, DocumentTag, Folder, Knowle
 from app.services.permissions import accessible_kb_ids, assert_can_read_kb
 
 
-def planning_tools(db: Session, actor, kb_id: str, emit: Callable, observed_versions: dict[str, int]):
+def planning_tools(db: Session, actor, kb_id: str, emit: Callable, observed_versions: dict[str, int], settings=None):
     lock = threading.RLock()
 
     def check_scope():
@@ -97,7 +97,7 @@ def planning_tools(db: Session, actor, kb_id: str, emit: Callable, observed_vers
             check_scope()
             from app.retrieval.search import search_knowledge as search
 
-            return search(db, actor, {"query": query, "kb_ids": [kb_id], "limit": min(20, max(1, limit))})
+            return search(db, actor, {"query": query, "kb_ids": [kb_id], "limit": min(20, max(1, limit))}, settings=settings)
 
     return [StructuredTool.from_function(fn) for fn in (
         list_knowledge_bases, list_folders, list_tags, list_documents, get_document,

@@ -2,4 +2,5 @@
 *.pdf binary
 *.docx binary
 *.png binary
+*.woff2 binary
 *.md whitespace=-blank-at-eol

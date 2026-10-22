@@ -1,0 +1,171 @@
+.agent-container {
+  max-width: 980px;
+  margin: 0 auto;
+}
+.agent-heading h1 {
+  margin-top: 11px;
+  font-size: 28px;
+}
+.agent-prompt {
+  margin-top: 25px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--panel-subtle);
+  padding: 18px;
+}
+.agent-prompt textarea {
+  min-height: 72px;
+  border: 0;
+  resize: none;
+  background: transparent;
+  outline: none;
+  padding: 2px;
+  font-size: var(--text-control);
+  line-height: 1.8;
+}
+.agent-prompt textarea:focus {
+  outline: none;
+}
+.agent-prompt > .row {
+  margin-top: 10px;
+}
+.agent-prompt .tiny {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-caption);
+}
+.workflow-steps {
+  display: flex;
+  justify-content: center;
+  gap: 26px;
+  margin: 28px 0;
+  color: var(--muted);
+}
+.workflow-steps > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-caption);
+}
+.workflow-steps > div > span {
+  height: 20px;
+  width: 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font-size: var(--text-caption);
+}
+.workflow-steps > div.done {
+  color: var(--primary);
+}
+.workflow-steps > div.done > span {
+  background: var(--primary-soft);
+  border-color: var(--primary-soft);
+}
+.agent-run {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 19px;
+  margin-bottom: 22px;
+}
+.agent-run > .row h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-body);
+  max-width: 80%;
+}
+.agent-run > .muted {
+  font-size: var(--text-caption);
+  margin: 13px 0;
+}
+.plan-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--border);
+  padding: 15px 0;
+  font-size: var(--text-caption);
+}
+.plan-header small {
+  font-size: var(--text-caption);
+  color: var(--muted);
+}
+.plan-operation {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  margin-bottom: 10px;
+  background: var(--panel-subtle);
+  padding: 18px;
+}
+.plan-operation > .row strong {
+  font-size: var(--text-caption);
+}
+.operation-number {
+  height: 19px;
+  min-width: 19px;
+  display: grid;
+  place-items: center;
+  font-size: var(--text-caption);
+  background: var(--hover);
+  border-radius: 4px;
+  color: var(--muted);
+}
+.plan-operation > p {
+  font-size: var(--text-caption);
+  margin: 10px 0 4px;
+  line-height: 1.9;
+}
+.plan-operation > small {
+  font-size: var(--text-caption);
+  overflow-wrap: anywhere;
+}
+.plan-operation label {
+  font-size: var(--text-caption);
+  margin: 10px 0 0;
+}
+.plan-operation input:not([type="checkbox"]),
+.plan-operation select {
+  font-size: var(--text-caption);
+}
+.operation-disabled {
+  opacity: 0.5;
+}
+.plan-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 17px;
+  flex-wrap: wrap;
+}
+.plan-actions > .success {
+  margin-right: auto;
+  font-size: var(--text-caption);
+}
+.agent-timeline {
+  margin-top: 26px;
+}
+.timeline-row {
+  display: flex;
+  gap: 12px;
+  position: relative;
+  margin: 17px 0;
+  align-items: flex-start;
+  font-size: var(--text-caption);
+}
+.timeline-row > svg {
+  margin-top: 5px;
+  color: var(--primary);
+  fill: var(--primary-soft);
+}
+.timeline-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.timeline-row small {
+  font-size: var(--text-caption);
+  color: var(--muted);
+}

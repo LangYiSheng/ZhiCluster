@@ -20,6 +20,7 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
     await expect(
       page.getByRole("heading", { name: "让知识产生连接" }),
     ).toBeVisible();
+    await page.getByRole("button", { name: "浏览资料", exact: true }).click();
     await page.getByRole("button", { name: "新建文件夹", exact: true }).click();
     await page
       .getByRole("dialog")
@@ -117,6 +118,7 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       path: "test-results/workspace-light-1440.png",
       fullPage: true,
     });
+    await page.getByRole("button", { name: "浏览资料", exact: true }).click();
     await row.click({ button: "right" });
     await expect(
       page.getByRole("menuitem", { name: "移到回收站", exact: true }),
@@ -130,6 +132,14 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       .click();
     await expect(row).toHaveCount(0);
     await page.getByRole("button", { name: "回收站", exact: true }).click();
+    const deletedBases = page.locator(".deleted-kbs");
+    if (await deletedBases.count()) {
+      await expect(deletedBases).not.toHaveAttribute("open");
+      await deletedBases.locator("summary").click();
+      const list = await page.locator(".deleted-kb-list").boundingBox();
+      expect(list!.height).toBeLessThanOrEqual(160);
+      await deletedBases.locator("summary").click();
+    }
     const trashed = page.locator(".document-row").filter({ hasText: filename });
     await expect(trashed).toBeVisible();
     await trashed
@@ -152,6 +162,12 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       ),
     ).toBeTruthy();
     await page.setViewportSize({ width: 390, height: 844 });
+    await page
+      .getByRole("button", { name: "关闭资料浏览", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "展开知识库栏", exact: true })
+      .click();
     await page.getByRole("button", { name: "知识对话", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "让知识产生连接" }),
@@ -165,19 +181,18 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBeTruthy();
-    await page.getByRole("button", { name: "知识库", exact: true }).click();
+    await page
+      .getByRole("button", { name: "展开知识库栏", exact: true })
+      .click();
     await expect(
       page.getByRole("button", { name: "新建知识库", exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "关闭侧栏", exact: true }).click();
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "让知识与模型连接" }),
+      page.getByRole("heading", { name: "外观与布局" }),
     ).toBeVisible();
-    await page
-      .getByRole("button", { name: "测试聊天、向量与工具调用" })
-      .click();
-    await expect(page.getByText("实际连接测试结果")).toBeVisible();
+    await page.getByRole("button", { name: "模型连接", exact: true }).click();
+    await expect(page.getByLabel("服务地址", { exact: true })).toBeVisible();
     expect(errors).toEqual([]);
   } finally {
     await request
@@ -193,6 +208,7 @@ test("真实PDF页码与DOCX段落来源定位", async ({ page, request }) => {
   const kb = (await response.json()) as { id: string };
   try {
     await page.goto(`/chat?kb=${kb.id}`);
+    await page.getByRole("button", { name: "浏览资料", exact: true }).click();
     await page
       .getByLabel("上传文档", { exact: true })
       .setInputFiles([
@@ -288,6 +304,7 @@ test("真实拖放上传、复选批量标签与移动、文件夹子树循环�
     await expect(
       page.getByRole("heading", { name: "让知识产生连接" }),
     ).toBeVisible();
+    await page.getByRole("button", { name: "浏览资料", exact: true }).click();
     for (const name of ["资料归档", "研究主题"]) {
       await page
         .getByRole("button", { name: "新建文件夹", exact: true })

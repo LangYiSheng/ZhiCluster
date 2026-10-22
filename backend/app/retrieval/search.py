@@ -11,6 +11,7 @@ from app.core.errors import AppError
 from app.db.models import ChunkEmbedding, Document, DocumentChunk, DocumentTag, EmbeddingProfile, Folder, Tag
 from app.services.library import descendants
 from app.services.permissions import accessible_kb_ids, assert_can_read_kb
+from app.services.runtime_config import get_runtime_settings
 
 
 def rrf(rankings, k=60):
@@ -71,7 +72,7 @@ def scoped_query(db, actor, request):
 
 def search_knowledge(db, actor, request: dict, settings=None):
     started = time.monotonic()
-    settings = settings or get_settings()
+    settings = settings or get_runtime_settings(db, get_settings())
     query = request.get("query", "").strip()
     if not query:
         raise AppError("invalid_query", "请输入检索内容")

@@ -20,7 +20,7 @@ if settings.app_env not in {"local", "test"}:
 
 app = FastAPI(title="知簇 · ZhiCluster", version="0.1.0")
 app.add_middleware(UploadLimitMiddleware)
-app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Content-Type", "Last-Event-ID"], allow_credentials=False)
+app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Content-Type", "Last-Event-ID"], allow_credentials=False)
 
 
 @app.middleware("http")

@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { api, errorText, json } from "../../lib/api";
 import type { Folder, Operation, StreamEvent, Tag } from "../../lib/api";
 import { useEvents } from "../../lib/events";
+import { useSessionDraft } from "../../lib/useSessionDraft";
 import { Button } from "../../components/ui/button";
 import { Dialog } from "../../components/ui/dialog";
 import { ErrorState, Status } from "../../components/common";
@@ -60,7 +61,7 @@ export function Agent({
   tags: Tag[];
 }) {
   const qc = useQueryClient();
-  const [goal, setGoal] = useState("");
+  const [goal, setGoal] = useSessionDraft(`zhicluster:draft:v1:agent:${kbId}`);
   const [runId, setRunId] = useState(
     () => localStorage.getItem(`agent:${kbId}`) || "",
   );
@@ -87,6 +88,7 @@ export function Agent({
       api<Run>("/agent/runs", json("POST", { kb_id: kbId, goal })),
     onSuccess: (r) => {
       setRunId(r.id);
+      setGoal("");
       setEdited(null);
       void qc.invalidateQueries({ queryKey: ["agent"] });
     },
@@ -174,6 +176,7 @@ export function Agent({
           aria-label="智能整理目标"
           placeholder="例如：整理未分类的论文，按研究方向建立文件夹，并建议标签。"
           value={goal}
+          disabled={create.isPending}
           onChange={(e) => setGoal(e.target.value)}
         />
         <div className="row spread">
@@ -476,11 +479,11 @@ export function Agent({
             )}
           </section>
           {!!run.data.events?.length && (
-            <section className="agent-timeline">
-              <h3>
+            <details className="agent-timeline detail-disclosure">
+              <summary>
                 <History size={16} />
-                活动记录
-              </h3>
+                活动记录 · {run.data.events.length} 条
+              </summary>
               {run.data.events.map((e, i) => (
                 <div className="timeline-row" key={e.sequence || i}>
                   <Circle size={8} />
@@ -498,7 +501,7 @@ export function Agent({
                   </div>
                 </div>
               ))}
-            </section>
+            </details>
           )}
         </>
       )}

@@ -1,0 +1,264 @@
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  color: var(--color-text);
+  background: var(--color-background);
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+button {
+  cursor: pointer;
+  color: inherit;
+  border: 0;
+  background: transparent;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+input,
+textarea,
+select {
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 8px 10px;
+  max-width: 100%;
+}
+input:not([type="checkbox"]):not([type="color"]),
+textarea,
+select {
+  width: 100%;
+}
+input[type="checkbox"] {
+  accent-color: var(--primary);
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+input[type="color"] {
+  width: 70px;
+  height: 36px;
+  padding: 3px;
+}
+textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  outline: 2px solid color-mix(in srgb, var(--primary) 36%, transparent);
+  outline-offset: 1px;
+}
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1 {
+  font-size: 27px;
+  font-weight: 650;
+  letter-spacing: -0.8px;
+  line-height: 1.4;
+}
+h2 {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.3px;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 600;
+}
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--text-body);
+  font-weight: 500;
+  margin: 14px 0;
+}
+label.checkbox-label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  margin: 4px 0;
+  font-weight: 400;
+}
+svg {
+  flex-shrink: 0;
+}
+kbd {
+  font: var(--text-caption) var(--font-ui);
+  padding: 1px 5px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+}
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  white-space: nowrap;
+  border-radius: var(--radius-control);
+  padding: 7px 12px;
+  font-size: var(--text-body);
+  font-weight: 500;
+  transition:
+    background 0.15s,
+    color 0.15s;
+  border: 1px solid transparent;
+  line-height: 1.5;
+  min-height: 36px;
+}
+.button-primary {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  box-shadow: 0 1px 2px var(--color-shadow);
+}
+.button-primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+.button-secondary {
+  background: var(--background);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+.button-secondary:hover:not(:disabled),
+.button-ghost:hover:not(:disabled) {
+  background: var(--hover);
+}
+.button-ghost {
+  color: var(--muted);
+}
+.button-danger {
+  background: var(--color-danger);
+  color: #fff;
+}
+.button-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 86%, black);
+}
+.button-icon {
+  height: 32px;
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  min-height: 32px;
+}
+.button-sm {
+  min-height: 32px;
+  font-size: var(--text-caption);
+  padding: 4px 9px;
+}
+.row {
+  display: flex;
+  align-items: center;
+}
+.spread {
+  justify-content: space-between;
+}
+.gap {
+  gap: 8px;
+}
+.muted {
+  color: var(--muted);
+}
+.tiny {
+  font-size: var(--text-caption);
+}
+.danger {
+  color: var(--danger) !important;
+}
+.success {
+  color: var(--color-success);
+}
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 17px 0;
+}
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-caption);
+  letter-spacing: 1.3px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+h1,
+h2 {
+  font-family: var(--font-title);
+  font-weight: var(--font-title-weight);
+  font-kerning: normal;
+}
+code,
+kbd,
+samp,
+pre {
+  font-family: Consolas, "SFMono-Regular", monospace;
+}
+[hidden] {
+  display: none !important;
+}
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-width: 320px;
+}
+::selection {
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}

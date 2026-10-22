@@ -26,6 +26,7 @@ from app.db.session import SessionLocal
 from app.ingestion.chunking import chunk_sections
 from app.ingestion.enrichment import classify_document, summarize_sections
 from app.ingestion.parsers import ParseError, parse_document
+from app.services.runtime_config import get_runtime_settings
 from app.worker.queue import emit
 
 
@@ -42,9 +43,9 @@ def _safe_path(root: Path, key: str) -> Path:
 
 
 def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: Any = None, gateway: ModelGateway | None = None, owner: str | None = None) -> None:
-    settings = settings or get_settings()
-    gateway = gateway or ModelGateway(settings)
     with session_factory() as db:
+        settings = settings or get_runtime_settings(db, get_settings())
+        gateway = gateway or ModelGateway(settings)
         job = db.get(IngestionJob, job_id)
         if job is None or job.status in {"cancelled", "completed"}:
             return

@@ -3,9 +3,11 @@ import type { CSSProperties, PointerEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
+  ArrowLeft,
   BookOpen,
   ChevronRight,
   FileText,
+  FolderOpen,
   GitBranch,
   Menu as MenuIcon,
   MessageSquare,
@@ -15,6 +17,7 @@ import {
   Search,
   Settings2,
   Sun,
+  X,
 } from "lucide-react";
 import { api, errorText } from "../lib/api";
 import { toast } from "sonner";
@@ -25,12 +28,14 @@ import type {
   KnowledgeBase,
   Tag,
 } from "../lib/api";
+import { applyAppearance } from "../lib/appearance";
 import { useUI } from "../stores/ui";
 import { Library } from "../features/kb/Library";
 import { DocumentsPane } from "../features/documents/DocumentsPane";
 import { SearchDialog } from "../features/search/SearchDialog";
 import { Button } from "../components/ui/button";
 import { Empty, ErrorState, Loading } from "../components/common";
+
 const Reader = lazy(() =>
   import("../features/documents/Reader").then((m) => ({ default: m.Reader })),
 );
@@ -45,6 +50,7 @@ const Settings = lazy(() =>
     default: m.Settings,
   })),
 );
+
 export function App() {
   const ui = useUI();
   const navigate = useNavigate();
@@ -56,7 +62,7 @@ export function App() {
   const [tagId, setTagId] = useState("");
   const [trash, setTrash] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [mobileFiles, setMobileFiles] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(location.pathname === "/document");
   const [mobileLibrary, setMobileLibrary] = useState(false);
   const [reader, setReader] = useState(false);
   const [citation, setCitation] = useState<Citation | undefined>();
@@ -89,10 +95,28 @@ export function App() {
         : location.pathname === "/document"
           ? "document"
           : "chat";
+  const viewName =
+    view === "chat"
+      ? "知识对话"
+      : view === "agent"
+        ? "智能整理"
+        : view === "settings"
+          ? "设置"
+          : "文档管理";
+
   useEffect(() => {
-    document.documentElement.dataset.theme = ui.theme;
-    document.documentElement.style.colorScheme = ui.theme;
-  }, [ui.theme]);
+    const system = window.matchMedia("(prefers-color-scheme: dark)");
+    const appearance = {
+      theme: ui.theme,
+      palette: ui.palette,
+      fontPairing: ui.fontPairing,
+      readingScale: ui.readingScale,
+    };
+    const apply = () => applyAppearance(appearance, system.matches);
+    apply();
+    system.addEventListener("change", apply);
+    return () => system.removeEventListener("change", apply);
+  }, [ui.theme, ui.palette, ui.fontPairing, ui.readingScale]);
   useEffect(() => {
     function key(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -100,7 +124,7 @@ export function App() {
         setSearchOpen((v) => !v);
       }
       if (e.key === "Escape") {
-        setMobileFiles(false);
+        setFilesOpen(false);
         setMobileLibrary(false);
       }
     }
@@ -113,15 +137,14 @@ export function App() {
     setTagId("");
     setTrash(false);
     setMobileLibrary(false);
-    setMobileFiles(false);
     setParams({ kb: id });
     setCitation(undefined);
-    if (view === "document") navigate(`/chat?kb=${id}`);
+    if (view === "document") setFilesOpen(true);
   }
   function openDoc(doc: Document, read = false) {
     setReader(read);
     setCitation(undefined);
-    setMobileFiles(false);
+    if (window.innerWidth <= 1023) setFilesOpen(false);
     navigate(`/document?kb=${actualKbId}&document=${doc.id}`);
   }
   function openCitation(c: Citation) {
@@ -129,7 +152,7 @@ export function App() {
       .then((doc) => {
         setCitation(c);
         setReader(true);
-        setMobileFiles(false);
+        setFilesOpen(false);
         setSavedKb(doc.kb_id);
         localStorage.setItem("zhicluster-kb", doc.kb_id);
         setTagId("");
@@ -139,11 +162,21 @@ export function App() {
       .catch((e) => toast.error(errorText(e)));
   }
   function to(path: string) {
-    setMobileFiles(false);
     setMobileLibrary(false);
+    setFilesOpen(path === "document");
     navigate(
       `/${path}?kb=${actualKbId}${selectedId ? `&document=${selectedId}` : ""}`,
     );
+  }
+  function toggleLibrary() {
+    if (window.innerWidth <= 1023) {
+      setFilesOpen(false);
+      setMobileLibrary((v) => !v);
+    } else ui.toggleSidebar();
+  }
+  function toggleFiles() {
+    setMobileLibrary(false);
+    setFilesOpen((v) => !v);
   }
   function resize(
     kind: "library" | "files",
@@ -168,279 +201,331 @@ export function App() {
   }
   const layoutStyle = {
     "--library-width": `${ui.sidebarOpen ? ui.libraryWidth : 0}px`,
-    "--files-width": `${ui.filesWidth}px`,
+    "--files-width": `${filesOpen ? ui.filesWidth : 0}px`,
   } as CSSProperties;
   return (
     <div
-      className={`app-shell ${!ui.sidebarOpen ? "sidebar-collapsed" : ""} ${mobileFiles ? "mobile-files-open" : ""} ${mobileLibrary ? "mobile-library-open" : ""}`}
+      className={`app-shell ${!ui.sidebarOpen ? "sidebar-collapsed" : ""} ${filesOpen ? "files-open" : ""} ${mobileLibrary ? "mobile-library-open" : ""} ${view === "settings" ? "settings-mode" : ""}`}
       style={layoutStyle}
     >
-      <nav className="nav-rail" aria-label="主导航">
-        <img className="rail-logo" src="/favicon.svg" alt="知簇 ZhiCluster" />
-        <div className="rail-top">
+      <aside
+        className="library-slot"
+        aria-label="知识库与主导航"
+        hidden={view === "settings"}
+      >
+        <div className="sidebar-brand">
+          <img src="/favicon.svg" alt="" />
+          <div>
+            <strong>知簇</strong>
+            <small>你的知识，自成一簇</small>
+          </div>
           <Button
-            title="知识库"
-            aria-label="知识库"
-            size="icon"
+            className="sidebar-close"
             variant="ghost"
-            className={view === "document" ? "active" : ""}
-            onClick={() => {
-              if (window.innerWidth <= 1023) {
-                setMobileFiles(false);
-                setMobileLibrary((v) => !v);
-              } else ui.toggleSidebar();
-            }}
-          >
-            <BookOpen size={20} />
-          </Button>
-          <Button
-            title="搜索知识 Ctrl+K"
-            aria-label="搜索知识"
             size="icon"
-            variant="ghost"
-            onClick={() => setSearchOpen(true)}
+            aria-label="关闭知识库栏"
+            onClick={() => setMobileLibrary(false)}
           >
-            <Search size={20} />
-          </Button>
-          <Button
-            title="知识对话"
-            aria-label="知识对话"
-            size="icon"
-            variant="ghost"
-            className={view === "chat" ? "active" : ""}
-            onClick={() => to("chat")}
-          >
-            <MessageSquare size={20} />
-          </Button>
-          <Button
-            title="智能整理"
-            aria-label="智能整理"
-            size="icon"
-            variant="ghost"
-            className={view === "agent" ? "active" : ""}
-            onClick={() => to("agent")}
-          >
-            <GitBranch size={20} />
+            <X size={17} />
           </Button>
         </div>
-        <div className="rail-bottom">
+        <nav className="primary-navigation" aria-label="主导航">
+          <button
+            aria-current={view === "chat" ? "page" : undefined}
+            onClick={() => to("chat")}
+          >
+            <MessageSquare size={18} />
+            知识对话
+          </button>
+          <button
+            aria-label="知识库"
+            aria-current={view === "document" ? "page" : undefined}
+            onClick={() => to("document")}
+          >
+            <FileText size={18} />
+            文档管理
+          </button>
+          <button
+            aria-current={view === "agent" ? "page" : undefined}
+            onClick={() => to("agent")}
+          >
+            <GitBranch size={18} />
+            智能整理
+          </button>
+        </nav>
+        <div className="library-scroll">
+          {kbs.isPending ? (
+            <Loading />
+          ) : kbs.isError ? (
+            <ErrorState error={kbs.error} retry={() => void kbs.refetch()} />
+          ) : (
+            <Library
+              knowledgeBases={kbs.data || []}
+              kbId={actualKbId}
+              trash={trash}
+              onSelect={chooseKb}
+              tags={tags.data || []}
+              tagId={tagId}
+              onTag={(id) => {
+                setTagId(id);
+                setTrash(false);
+                setMobileLibrary(false);
+                setFilesOpen(true);
+              }}
+              onSearch={() => setSearchOpen(true)}
+              onTrash={() => {
+                setTrash(true);
+                setMobileLibrary(false);
+                setFilesOpen(true);
+              }}
+            />
+          )}
+        </div>
+        <div className="sidebar-tools">
+          <button onClick={() => to("settings")}>
+            <Settings2 size={17} />
+            设置
+          </button>
           <Button
             title="切换主题"
             aria-label="切换主题"
             size="icon"
             variant="ghost"
-            onClick={() => ui.setTheme(ui.theme === "light" ? "dark" : "light")}
+            onClick={() =>
+              ui.setTheme(
+                document.documentElement.dataset.theme === "dark"
+                  ? "light"
+                  : "dark",
+              )
+            }
           >
-            {ui.theme === "light" ? <Moon size={19} /> : <Sun size={19} />}
+            {ui.theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
           </Button>
-          <Button
-            title="设置"
-            aria-label="设置"
-            size="icon"
-            variant="ghost"
-            className={view === "settings" ? "active" : ""}
-            onClick={() => to("settings")}
-          >
-            <Settings2 size={20} />
-          </Button>
-          <span className="rail-avatar">L</span>
         </div>
-      </nav>
-      <div className="library-slot">
-        {kbs.isPending ? (
-          <Loading />
-        ) : kbs.isError ? (
-          <ErrorState error={kbs.error} retry={() => void kbs.refetch()} />
-        ) : (
-          <Library
-            knowledgeBases={kbs.data || []}
-            kbId={actualKbId}
-            trash={trash}
-            onSelect={chooseKb}
-            tags={tags.data || []}
-            tagId={tagId}
-            onTag={(id) => {
-              setTagId(id);
-              setTrash(false);
-            }}
-            onSearch={() => setSearchOpen(true)}
-            onTrash={() => {
-              setTrash(true);
-              setMobileLibrary(false);
-              setMobileFiles(true);
-            }}
-          />
-        )}
-      </div>
+      </aside>
       <div
         className="resize-handle library-resize"
+        hidden={view === "settings"}
         role="separator"
         aria-label="调整知识库栏宽度"
         aria-orientation="vertical"
+        aria-valuenow={ui.libraryWidth}
+        aria-valuemin={200}
+        aria-valuemax={360}
         tabIndex={0}
         onPointerDown={(e) => resize("library", e)}
         onKeyDown={(e) => {
-          if (e.key === "ArrowRight" || e.key === "ArrowLeft")
+          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+            e.preventDefault();
             ui.setWidths(
               ui.libraryWidth + (e.key === "ArrowRight" ? 10 : -10),
               ui.filesWidth,
             );
+          }
         }}
       />
-      {kb ? (
-        <DocumentsPane
-          key={`${actualKbId}-${trash}`}
-          kb={kb}
-          folders={folders.data || []}
-          tags={tags.data || []}
-          tagId={tagId}
-          trash={trash}
-          selectedId={selectedId}
-          onOpen={openDoc}
-        />
-      ) : (
-        <div className="documents-pane">
-          <Empty title="创建一个知识库">点击左侧“个人知识库”旁的加号。</Empty>
+      <section
+        className="context-pane"
+        aria-label="资料浏览"
+        hidden={view === "settings" || !filesOpen}
+      >
+        <div className="context-pane-heading">
+          <span>
+            <FolderOpen size={16} />
+            浏览资料
+          </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="关闭资料浏览"
+            onClick={() => setFilesOpen(false)}
+          >
+            <X size={17} />
+          </Button>
         </div>
-      )}
+        {kb ? (
+          <DocumentsPane
+            key={`${actualKbId}-${trash}`}
+            kb={kb}
+            folders={folders.data || []}
+            tags={tags.data || []}
+            tagId={tagId}
+            trash={trash}
+            selectedId={selectedId}
+            onOpen={openDoc}
+          />
+        ) : (
+          <div className="documents-pane">
+            <Empty title="创建一个知识库">
+              点击“个人知识库”旁的加号，收集你的第一份资料。
+            </Empty>
+          </div>
+        )}
+      </section>
       <div
         className="resize-handle files-resize"
+        hidden={view === "settings" || !filesOpen}
         role="separator"
         aria-label="调整文件栏宽度"
         aria-orientation="vertical"
+        aria-valuenow={ui.filesWidth}
+        aria-valuemin={280}
+        aria-valuemax={500}
         tabIndex={0}
         onPointerDown={(e) => resize("files", e)}
         onKeyDown={(e) => {
-          if (e.key === "ArrowRight" || e.key === "ArrowLeft")
+          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+            e.preventDefault();
             ui.setWidths(
               ui.libraryWidth,
               ui.filesWidth + (e.key === "ArrowRight" ? 10 : -10),
             );
+          }
         }}
       />
       <main className="workspace">
         <header className="workspace-header">
           <div className="row gap breadcrumb">
-            <Button
-              className="desktop-sidebar-toggle"
-              variant="ghost"
-              size="icon"
-              aria-label={ui.sidebarOpen ? "折叠知识库栏" : "展开知识库栏"}
-              onClick={ui.toggleSidebar}
-            >
-              {ui.sidebarOpen ? (
-                <PanelLeftClose size={17} />
-              ) : (
-                <PanelLeftOpen size={17} />
-              )}
-            </Button>
-            <Button
-              className="mobile-files-toggle"
-              variant="ghost"
-              size="icon"
-              aria-label="显示文件管理"
-              onClick={() => setMobileFiles((v) => !v)}
-            >
-              <MenuIcon size={17} />
-            </Button>
-            <BookOpen size={14} />
-            <span>{kb?.name || "知识工作空间"}</span>
-            <ChevronRight size={12} />
-            <strong>
-              {view === "chat"
-                ? "知识对话"
-                : view === "agent"
-                  ? "智能整理"
-                  : view === "settings"
-                    ? "设置"
-                    : "文档"}
-            </strong>
-          </div>
-          <span className="private-indicator">
-            <span className="online-dot" />
-            本地私有
-          </span>
-        </header>
-        <div className="workspace-tabs" role="tablist" aria-label="工作区视图">
-          <button
-            role="tab"
-            aria-selected={view === "chat"}
-            onClick={() => to("chat")}
-          >
-            <MessageSquare size={15} />
-            对话
-          </button>
-          <button
-            role="tab"
-            aria-selected={view === "document"}
-            onClick={() => to("document")}
-          >
-            <FileText size={15} />
-            文档预览
-          </button>
-          <button
-            role="tab"
-            aria-selected={view === "agent"}
-            onClick={() => to("agent")}
-          >
-            <GitBranch size={15} />
-            智能整理
-          </button>
-        </div>
-        <div className="workspace-content">
-          <Suspense fallback={<Loading />}>
             {view === "settings" ? (
-              <Settings kbId={actualKbId} />
-            ) : !kb ? (
-              <Empty title="欢迎来到知簇">
-                创建知识库后即可上传文件并开始探索。
-              </Empty>
-            ) : view === "agent" ? (
-              <Agent
-                key={actualKbId}
-                kbId={actualKbId}
-                folders={folders.data || []}
-                tags={tags.data || []}
-              />
-            ) : view === "document" ? (
-              selectedId ? (
-                <Reader
-                  key={selectedId}
-                  documentId={selectedId}
-                  reader={reader}
-                  onReader={setReader}
-                  citation={citation}
-                  folders={folders.data || []}
-                  tags={tags.data || []}
-                />
-              ) : (
-                <Empty title="打开一份文档">
-                  从文件列表选择文档查看摘要，双击进入阅读器。
-                </Empty>
-              )
+              <Button variant="ghost" size="sm" onClick={() => to("chat")}>
+                <ArrowLeft size={16} />
+                返回工作区
+              </Button>
             ) : (
-              <Chat
-                key={actualKbId}
-                kb={kb}
-                knowledgeBases={kbs.data || []}
-                tags={tags.data || []}
-                folders={folders.data || []}
-                onCitation={openCitation}
-              />
+              <>
+                <Button
+                  className="desktop-sidebar-toggle"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={ui.sidebarOpen ? "折叠知识库栏" : "展开知识库栏"}
+                  aria-expanded={ui.sidebarOpen}
+                  onClick={toggleLibrary}
+                >
+                  {ui.sidebarOpen ? (
+                    <PanelLeftClose size={18} />
+                  ) : (
+                    <PanelLeftOpen size={18} />
+                  )}
+                </Button>
+                <Button
+                  className="mobile-library-toggle"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="展开知识库栏"
+                  aria-expanded={mobileLibrary}
+                  onClick={toggleLibrary}
+                >
+                  <MenuIcon size={18} />
+                </Button>
+                <BookOpen size={14} />
+                <span>{kb?.name || "知识工作空间"}</span>
+                <ChevronRight size={12} />
+              </>
             )}
-          </Suspense>
+            <strong>{viewName}</strong>
+          </div>
+          <div className="workspace-actions">
+            {view !== "settings" && (
+              <>
+                <Button
+                  className="workspace-search"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="搜索知识"
+                  title="搜索知识 Ctrl+K"
+                  onClick={() => setSearchOpen(true)}
+                >
+                  <Search size={17} />
+                </Button>
+                <Button
+                  className="browse-files"
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={filesOpen}
+                  aria-label="浏览资料"
+                  onClick={toggleFiles}
+                >
+                  <FolderOpen size={16} />
+                  <span>浏览资料</span>
+                </Button>
+              </>
+            )}
+            <span className="private-indicator">
+              <span className="online-dot" />
+              本地私有
+            </span>
+          </div>
+        </header>
+        <div className="workspace-content">
+          {kb && (
+            <div className="workspace-view" hidden={view !== "chat"}>
+              <Suspense fallback={<Loading />}>
+                <Chat
+                  key={actualKbId}
+                  kb={kb}
+                  knowledgeBases={kbs.data || []}
+                  tags={tags.data || []}
+                  folders={folders.data || []}
+                  onCitation={openCitation}
+                />
+              </Suspense>
+            </div>
+          )}
+          {view !== "chat" && (
+            <div className="workspace-view">
+              <Suspense fallback={<Loading />}>
+                {view === "settings" ? (
+                  <Settings kbId={actualKbId} />
+                ) : !kb ? (
+                  <Empty title="欢迎来到知簇">
+                    创建知识库后即可上传文件并开始探索。
+                  </Empty>
+                ) : view === "agent" ? (
+                  <Agent
+                    key={actualKbId}
+                    kbId={actualKbId}
+                    folders={folders.data || []}
+                    tags={tags.data || []}
+                  />
+                ) : selectedId ? (
+                  <Reader
+                    key={selectedId}
+                    documentId={selectedId}
+                    reader={reader}
+                    onReader={setReader}
+                    citation={citation}
+                    folders={folders.data || []}
+                    tags={tags.data || []}
+                  />
+                ) : (
+                  <Empty title="打开一份文档">
+                    在“浏览资料”中选择文档，查看摘要或打开阅读器。
+                    <Button onClick={() => setFilesOpen(true)}>
+                      <FolderOpen size={16} />
+                      浏览资料
+                    </Button>
+                  </Empty>
+                )}
+              </Suspense>
+            </div>
+          )}
+          {view === "chat" && !kb && (
+            <Empty title="欢迎来到知簇">
+              创建知识库后即可上传文件并开始探索。
+            </Empty>
+          )}
         </div>
         <footer className="workspace-footer">
           <span>知簇 ZhiCluster</span>
           <span>有迹可循的知识 · 有据可查的答案</span>
         </footer>
       </main>
-      {(mobileFiles || mobileLibrary) && (
+      {(filesOpen || mobileLibrary) && view !== "settings" && (
         <button
           className="mobile-overlay"
           aria-label="关闭侧栏"
           onClick={() => {
-            setMobileFiles(false);
+            setFilesOpen(false);
             setMobileLibrary(false);
           }}
         />

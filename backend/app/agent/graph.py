@@ -22,6 +22,7 @@ from app.core.config import get_settings
 from app.core.errors import AppError
 from app.db.models import AgentPlan, IngestionJob
 from app.services.permissions import get_actor
+from app.services.runtime_config import get_runtime_settings
 
 
 class WorkflowState(TypedDict, total=False):
@@ -109,9 +110,13 @@ def build_graph(saver, plan_callback, execute_callback, reject_callback, verify_
     return builder.compile(checkpointer=saver)
 
 
-def database_graph(db, saver, planner=None, guard=None, on_pending=None):
+def database_graph(db, saver, planner=None, guard=None, on_pending=None, settings=None):
     actor = get_actor(db)
-    planner = planner or plan_with_model
+    if planner is None:
+        settings = settings or get_runtime_settings(db, get_settings())
+
+        def planner(*args):
+            return plan_with_model(*args, settings=settings)
     guard = guard or (lambda: None)
 
     def plan_callback(run_id):
@@ -163,7 +168,7 @@ def database_graph(db, saver, planner=None, guard=None, on_pending=None):
     return build_graph(saver, plan_callback, execute_callback, reject_callback, verify_callback)
 
 
-def process_agent_run(db, run_id, job_id=None, owner=None, planner=None):
+def process_agent_run(db, run_id, job_id=None, owner=None, planner=None, settings=None):
     actor = get_actor(db)
 
     def guard():
@@ -222,7 +227,7 @@ def process_agent_run(db, run_id, job_id=None, owner=None, planner=None):
                 return
             db.commit()
             with checkpointer() as saver:
-                graph = database_graph(db, saver, planner=planner, guard=guard, on_pending=finish_pending)
+                graph = database_graph(db, saver, planner=planner, guard=guard, on_pending=finish_pending, settings=settings)
                 graph.invoke({"run_id": run.id}, {"configurable": {"thread_id": run.thread_id}})
     except AgentJobStopped as stopped:
         stop(stopped)

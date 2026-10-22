@@ -1,6 +1,6 @@
 # API 说明
 
-本文按实际 FastAPI OpenAPI 路由核对，当前共 **55 个 HTTP 操作**。完整输入及响应模型以运行后的 `http://localhost:8000/openapi.json` 为准；Swagger 位于 `http://localhost:8000/docs`。
+本文按实际 FastAPI OpenAPI 路由核对，当前共 **57 个 HTTP 操作**。完整输入及响应模型以运行后的 `http://localhost:8000/openapi.json` 为准；Swagger 位于 `http://localhost:8000/docs`。
 
 Web 代理将 `/api` 原样转发至 API 服务。业务路由统一使用 `/api` 前缀；OpenAPI 和 Swagger 使用上面的 API 直连地址。
 
@@ -65,7 +65,9 @@ Web 代理将 `/api` 原样转发至 API 服务。业务路由统一使用 `/api
 | GET | `/api/health` | 进程存活 `{status,version}` |
 | GET | `/api/ready` | 检查数据库及 demo 身份初始化 |
 | GET | `/api/settings/model-status` | 两个独立模型配置状态、维度、重建提示、工具能力配置；不返回密钥 |
-| POST | `/api/settings/test-models` | 分别真实测试聊天、Embedding、Tool Calling；返回可理解错误 |
+| GET | `/api/settings/config` | 当前运行配置及 `revision`；密钥仅返回是否配置 |
+| PUT | `/api/settings/config` | `{revision,llm?,embedding?,processing?}`；版本校验后保存，新请求/新领取任务生效 |
+| POST | `/api/settings/test-models` | 可选 `{scope,draft}`；仅测试指定能力且不保存；空请求保持三项测试 |
 | POST | `/api/settings/rebuild-embeddings` | `{kb_id}`；为已解析文档创建 reindex 后台任务 |
 | GET | `/api/ingestion/jobs` | 可选 `kb_id`，返回可访问库最新 200 个任务 |
 | GET | `/api/ingestion/jobs/{job_id}` | 持久状态、阶段、进度、尝试次数、错误 |
@@ -74,6 +76,72 @@ Web 代理将 `/api` 原样转发至 API 服务。业务路由统一使用 `/api
 | GET | `/api/ingestion/jobs/{job_id}/events` | 持久化 SSE，支持游标 |
 
 未配置模型时解析、阅读、管理及关键词检索仍可使用；AI 阶段显示 `unconfigured`/`partial_ready`，不会返回假摘要或假向量。Embedding 重建仅处理向量，目录/标签/改名不会触发重新解析。
+
+### 运行配置读取与保存
+
+`GET /api/settings/config` 返回示例：
+
+```json
+{
+  "revision": 0,
+  "llm": {
+    "base_url": "", "model": "", "api_key_configured": false,
+    "timeout_seconds": 120, "max_retries": 2, "supports_tools": false
+  },
+  "embedding": {
+    "base_url": "", "model": "", "api_key_configured": false,
+    "timeout_seconds": 60, "max_retries": 2, "dimension": 1024, "batch_size": 32
+  },
+  "processing": {
+    "chunk_size_tokens": 800, "chunk_overlap_tokens": 100,
+    "max_ingestion_attempts": 3, "max_concurrent_model_calls": 3,
+    "summary_input_tokens": 6000, "summary_max_calls": 80
+  }
+}
+```
+
+尚未通过网页保存时 `revision=0`，值来自后端启动环境默认值。首次保存会持久化完整的有效运行配置，包括保留的环境密钥；此后这些字段以数据库记录为准。数据库连接、监听地址、CORS、上传存储路径、上传大小限制、worker 轮询和租约参数仍由启动环境控制，不属于此 API 的可写字段。
+
+`PUT` 必须提供读取时的 `revision`，其余 section 和字段可部分提交。成功返回与 GET 相同的公开结构，revision 加一；保存提交在成功响应发出前完成。示例只修改聊天模型和超时，同时保留密钥：
+
+```json
+{
+  "revision": 1,
+  "llm": {"model": "your-chat-model", "timeout_seconds": 90, "api_key": ""}
+}
+```
+
+LLM 与 Embedding 各自独立处理 `api_key`：省略、`null` 或空字符串表示保留；非空字符串表示替换；`clear_api_key:true` 显式清除。清除后不会重新使用环境中的旧密钥。非空新密钥与清除标志同时出现返回 422。密钥前后空白会被去除，密钥内部空白及控制字符被拒绝；密钥最大 4096 字符。响应不包含密钥原文或密文，`api_key_configured` 为只读字段，不应从 GET 原样回传到 PUT。
+
+服务地址可以为空，非空时仅允许 HTTP/HTTPS、必须有 hostname，不允许 URL 用户名/密码、查询参数、片段或内部空白；允许明确的本地模型服务地址。模型名称可为空、最长 512 字符。数值范围如下：
+
+| 字段 | 范围 / 约束 |
+| --- | --- |
+| `llm/embedding.timeout_seconds` | 1–600，有限数值 |
+| `llm/embedding.max_retries` | 整数 0–4 |
+| `embedding.dimension` / `batch_size` | 整数 1–16000 / 1–256；维度不支持 0 自动推断 |
+| `processing.chunk_size_tokens` / `chunk_overlap_tokens` | 整数 128–8192 / 0–2048，且重叠严格小于分块大小 |
+| `processing.max_ingestion_attempts` / `max_concurrent_model_calls` | 整数 1–10 / 1–16 |
+| `processing.summary_input_tokens` / `summary_max_calls` | 整数 1024–200000 / 1–100 |
+
+旧 revision 返回 `409 configuration_conflict`，调用方应重新读取并让用户核对后再保存，不应自动覆盖。非法字段、类型、范围或地址返回 422，跨字段分块约束返回 `invalid_configuration`。输入错误不会回显提交值。
+
+### 草稿连接与能力测试
+
+`POST /api/settings/test-models` 可传 `scope=llm|embedding|tool_calling`，每次仅执行对应的一项探测。`draft` 使用保存接口的三个 section 结构，不含 revision，密钥保留/替换/清除策略相同；省略部分基于当前已保存配置补齐。示例：
+
+```json
+{
+  "scope": "llm",
+  "draft": {"llm": {"base_url": "http://localhost:9100/v1", "model": "draft-model", "api_key": ""}}
+}
+```
+
+返回对应 section，例如 `{"llm":{"ok":true,"configured":true,"message":"聊天模型连接成功","elapsed_ms":12.3}}`。Embedding 成功额外返回实际 `dimension`，并与配置维度校验；工具测试返回 `supported`。提供方拒绝、连接失败或格式不兼容时，单项 `ok=false` 并返回可理解错误；未配置密钥不会发送模型请求。
+
+无 body 或 `{}` 保持原有聊天、Embedding、Tool Calling 三项测试契约。测试会真实请求所配置的服务，不保存 draft、不递增 revision，也不自动保存 `llm.supports_tools`；用户确认结果后另行保存。保存本身不会发起模型请求。
+
+已有加密配置却缺少或无法读取 master.key 时，相关接口返回 `503 configuration_key_unavailable`；密钥文件不匹配或密文失效时返回 `503 configuration_decryption_failed`。应恢复正确私有 runtime 卷，不能通过生成新 key 静默回退。`/api/ready` 只检查数据库与 actor，不代表模型或加密配置可用。
 
 ## 搜索与问答
 

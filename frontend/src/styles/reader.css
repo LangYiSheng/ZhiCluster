@@ -1,0 +1,253 @@
+.pdf-viewer {
+  margin: 12px 0 25px;
+  min-width: 0;
+}
+.pdf-canvas-wrap {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: auto;
+  padding: 12px;
+  display: flex;
+  justify-content: center;
+  min-height: 150px;
+}
+.pdf-canvas {
+  background: white;
+  box-shadow: 0 2px 9px #0002;
+  max-width: 100%;
+  height: auto;
+}
+.reader-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.reader-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 22px;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+.reader-toolbar strong {
+  font-size: var(--text-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 280px;
+}
+.reader-toolbar > div {
+  min-width: 0;
+}
+.reader-toolbar > a {
+  font-size: var(--text-caption);
+}
+.reader-container > .page-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 25px 32px;
+}
+.document-detail {
+  margin: 0 auto;
+  max-width: 800px;
+}
+.detail-file-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 66px;
+  height: 78px;
+  border-radius: var(--radius-panel);
+  gap: 4px;
+  margin: 10px 0 21px;
+}
+.detail-file-icon small {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+.document-detail h1 {
+  font-size: 23px;
+  overflow-wrap: anywhere;
+}
+.document-detail > p.muted {
+  font-size: var(--text-caption);
+  margin-top: 8px;
+}
+.document-detail > .row {
+  margin-top: 15px;
+}
+.document-properties {
+  margin-top: 27px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 11px 0;
+}
+.document-properties > div {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 6px 0;
+  font-size: var(--text-caption);
+}
+.document-properties > div > span:first-child {
+  width: 72px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.document-properties strong {
+  font-weight: 400;
+}
+.detail-section {
+  margin-top: 25px;
+}
+.detail-section > h3,
+.agent-timeline > h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-body);
+  margin-bottom: 12px;
+}
+.detail-section > p {
+  font-size: var(--text-caption);
+  line-height: 1.9;
+}
+.tag-pill {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: var(--text-caption);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.suggestion-box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 17px;
+  background: var(--panel-subtle);
+}
+.suggestion-box > .row {
+  margin-top: 15px;
+  flex-wrap: wrap;
+}
+.tag-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 12px 0;
+}
+.tag-checks label {
+  font-size: var(--text-caption);
+}
+.job-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 12px;
+  margin-top: 10px;
+}
+.job-row progress {
+  width: 100%;
+  height: 4px;
+  margin: 9px 0;
+  accent-color: var(--primary);
+}
+.pdf-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: var(--text-caption);
+  margin-bottom: 13px;
+}
+.pdf-controls label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin: 0;
+  gap: 8px;
+  font-size: var(--text-caption);
+}
+.pdf-controls input {
+  width: 65px !important;
+  font-size: var(--text-caption);
+  padding: 4px 6px;
+}
+.pdf-frame {
+  width: 100%;
+  height: 620px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  margin-bottom: 25px;
+}
+.citation-banner {
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, var(--border));
+  border-radius: var(--radius-control);
+  background: var(--primary-soft);
+  padding: 13px 15px;
+  font-size: var(--text-caption);
+  margin-bottom: 17px;
+}
+.citation-banner p {
+  margin-top: 7px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.text-section {
+  padding: 15px 7px;
+  border-bottom: 1px solid var(--border);
+  scroll-margin-top: 20px;
+  border-radius: 5px;
+}
+.text-section.highlighted {
+  background: var(--primary-soft);
+  border-left: 3px solid var(--primary);
+  padding-left: 12px;
+}
+.section-anchor {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  margin-bottom: 9px;
+}
+.section-anchor strong {
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+.section-anchor small {
+  font-size: var(--text-caption);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.plain-text {
+  font-family: var(--font-reading);
+  white-space: pre-wrap;
+  line-height: 2;
+  font-size: var(--text-reading);
+  overflow-wrap: anywhere;
+}
+
+.detail-disclosure {
+  margin-top: 24px;
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+}
+.detail-disclosure > summary,
+.agent-timeline > summary {
+  cursor: pointer;
+  font-size: var(--text-body);
+  line-height: 1.8;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.detail-disclosure > summary::marker,
+.agent-timeline > summary::marker {
+  color: var(--color-muted);
+}
+.detail-disclosure[open] > summary,
+.agent-timeline[open] > summary {
+  margin-bottom: 16px;
+}

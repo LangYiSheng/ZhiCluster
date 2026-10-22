@@ -1,4 +1,5 @@
 import io
+from datetime import UTC, datetime, timedelta
 
 import pymupdf
 from docx import Document as WordDocument
@@ -137,6 +138,39 @@ def test_conversations_persistent_no_key_and_search_isolation(client, factory):
     messages = client.get(f"/api/conversations/{conversation['id']}/messages").json()
     assert len(messages) == 2 and "找不到足够依据" in messages[-1]["content"]
     assert client.get(f"/api/conversations/{conversation['id']}").json()["scope"]["kb_ids"] == [base]
+
+
+def test_conversation_message_order_is_monotonic_with_frozen_clock(client, factory, monkeypatch):
+    import app.api.workflows as workflows
+    from app.db.models import Message
+    from app.services.chat import process_chat_job
+
+    frozen = datetime(2026, 10, 22, 12, tzinfo=UTC)
+    monkeypatch.setattr(workflows, "utcnow", lambda: frozen)
+    monkeypatch.setattr(Message.__table__.c.created_at.default, "arg", lambda _context: frozen)
+    # Reverse IDs ensure a same-timestamp regression fails deterministically.
+    ids = iter([f"00000000-0000-0000-0000-{number:012d}" for number in (4, 3, 2, 1)])
+    monkeypatch.setattr(Message.__table__.c.id.default, "arg", lambda _context: next(ids))
+    base = kb(client)
+    created = client.post("/api/conversations", json={"scope": {"kb_ids": [base]}})
+    assert created.status_code == 201
+    conversation_id = created.json()["id"]
+    assistant_ids = []
+    for question in ("第一轮问题", "第二轮问题"):
+        queued = client.post(f"/api/conversations/{conversation_id}/messages", json={"content": question})
+        assert queued.status_code == 202
+        assistant_ids.append(queued.json()["id"])
+        with factory() as db:
+            job_id = next(job.id for job in db.scalars(select(IngestionJob).where(IngestionJob.kind == "chat"))
+                          if job.payload["message_id"] == queued.json()["id"])
+        process_chat_job(job_id, factory, get_settings())
+    messages = client.get(f"/api/conversations/{conversation_id}/messages").json()
+    assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant"]
+    assert [message["content"] for message in messages if message["role"] == "user"] == ["第一轮问题", "第二轮问题"]
+    assert [message["id"] for message in messages if message["role"] == "assistant"] == assistant_ids
+    assert all(message["status"] == "completed" for message in messages)
+    timestamps = [datetime.fromisoformat(message["created_at"]).replace(tzinfo=UTC) for message in messages]
+    assert timestamps == [frozen + timedelta(microseconds=offset) for offset in range(4)]
 
 
 def test_rrf_dimension_and_scoped_sql():

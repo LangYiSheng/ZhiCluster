@@ -36,6 +36,15 @@ class Entity:
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class AppConfiguration(Base):
+    __tablename__ = "app_configurations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    values: Mapped[dict] = mapped_column(JSON, nullable=False)
+    secrets: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class User(Entity, Base):
     __tablename__ = "users"
     email: Mapped[str] = mapped_column(String(255), unique=True)

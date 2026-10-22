@@ -1,0 +1,371 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createMemoryRouter, RouterProvider } from "react-router-dom";
+import { Settings } from "./Settings";
+import type { RuntimeConfig } from "../../lib/settings";
+import { DEFAULT_APPEARANCE } from "../../lib/appearance";
+import { useUI } from "../../stores/ui";
+
+const initial: RuntimeConfig = {
+  revision: 7,
+  llm: {
+    base_url: "https://chat.example/v1",
+    model: "chat-old",
+    api_key_configured: true,
+    timeout_seconds: 60,
+    max_retries: 2,
+    supports_tools: true,
+  },
+  embedding: {
+    base_url: "https://vector.example/v1",
+    model: "vector-old",
+    api_key_configured: true,
+    timeout_seconds: 60,
+    max_retries: 2,
+    dimension: 1024,
+    batch_size: 32,
+  },
+  processing: {
+    chunk_size_tokens: 1024,
+    chunk_overlap_tokens: 128,
+    max_ingestion_attempts: 3,
+    max_concurrent_model_calls: 2,
+    summary_input_tokens: 16000,
+    summary_max_calls: 10,
+  },
+};
+type Request = { path: string; method: string; body: Record<string, unknown> };
+let requests: Request[];
+let server: RuntimeConfig;
+let conflict = false;
+let pendingProbe: ((response: Response) => void) | undefined;
+let deferProbe = false;
+let deferSave = false;
+let pendingSave: ((response: Response) => void) | undefined;
+const routers: ReturnType<typeof createMemoryRouter>[] = [];
+function setup() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const router = createMemoryRouter(
+    [
+      { path: "/settings", element: <Settings kbId="kb-1" /> },
+      { path: "/chat", element: <p>已返回知识对话</p> },
+    ],
+    { initialEntries: ["/settings"] },
+  );
+  routers.push(router);
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  return { user: userEvent.setup(), router };
+}
+async function models(user: ReturnType<typeof userEvent.setup>) {
+  await screen.findByRole("heading", { name: "外观与布局" });
+  await user.click(screen.getByRole("button", { name: "模型连接" }));
+}
+beforeEach(() => {
+  requests = [];
+  server = structuredClone(initial);
+  conflict = false;
+  pendingProbe = undefined;
+  deferProbe = false;
+  deferSave = false;
+  pendingSave = undefined;
+  localStorage.clear();
+  sessionStorage.clear();
+  useUI.setState(DEFAULT_APPEARANCE);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init?: RequestInit) => {
+      const method = init?.method || "GET",
+        body = init?.body ? JSON.parse(String(init.body)) : {};
+      requests.push({ path, method, body });
+      if (path.endsWith("/settings/config")) {
+        if (method === "PUT") {
+          if (deferSave)
+            return new Promise<Response>((resolve) => {
+              pendingSave = resolve;
+            });
+          if (conflict)
+            return new Response(
+              JSON.stringify({
+                error: {
+                  code: "revision_conflict",
+                  message: "changed elsewhere",
+                },
+              }),
+              { status: 409 },
+            );
+          for (const group of ["llm", "embedding", "processing"] as const) {
+            const incoming = body[group] as Record<string, unknown>;
+            const merged = { ...server[group], ...incoming };
+            if ("api_key" in merged) delete merged.api_key;
+            if ("clear_api_key" in merged) delete merged.clear_api_key;
+            server = { ...server, [group]: merged };
+          }
+          server.revision++;
+        }
+        return new Response(JSON.stringify(server));
+      }
+      if (path.endsWith("/settings/model-status"))
+        return new Response(
+          JSON.stringify({
+            embedding: { configured: true },
+            llm: { configured: true },
+          }),
+        );
+      if (path.endsWith("/knowledge-bases"))
+        return new Response(
+          JSON.stringify([
+            { id: "kb-1", name: "研究笔记" },
+            { id: "kb-2", name: "另一知识库" },
+          ]),
+        );
+      if (path.endsWith("/settings/test-models")) {
+        if (deferProbe)
+          return new Promise<Response>((resolve) => {
+            pendingProbe = resolve;
+          });
+        return new Response(
+          JSON.stringify({
+            [String(body.scope)]: {
+              ok: true,
+              message: "服务可连接",
+              elapsed_ms: 12,
+            },
+          }),
+        );
+      }
+      return new Response(JSON.stringify({ status: "queued" }));
+    }),
+  );
+});
+afterEach(() => {
+  cleanup();
+  routers.splice(0).forEach((router) => router.dispose());
+  vi.unstubAllGlobals();
+});
+
+describe("网页设置草稿", () => {
+  it("切换分类保留草稿，保存时携带revision并省略留空的已存密钥", async () => {
+    const { user } = setup();
+    await models(user);
+    expect(screen.getByLabelText("API 密钥")).toHaveValue("");
+    await user.clear(screen.getByLabelText("模型名称"));
+    await user.type(screen.getByLabelText("模型名称"), "chat-new");
+    await user.click(screen.getByRole("button", { name: "知识处理" }));
+    expect(screen.getByText("有未保存的修改")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "模型连接" }));
+    expect(screen.getByLabelText("模型名称")).toHaveValue("chat-new");
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+    await screen.findByText(/设置已保存/);
+    const request = requests.find((item) => item.method === "PUT")!;
+    expect(request.body.revision).toBe(7);
+    expect(request.body.llm).toMatchObject({ model: "chat-new" });
+    expect(request.body.llm).not.toHaveProperty("api_key");
+    expect(request.body.llm).not.toHaveProperty("api_key_configured");
+    expect(request.body.embedding).not.toHaveProperty("api_key");
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
+  });
+  it("新密钥仅在请求中发送，保存后清空；明确勾选才发送清除标记", async () => {
+    const { user } = setup();
+    await models(user);
+    await user.type(screen.getByLabelText("API 密钥"), "typed-secret-example");
+    expect(JSON.stringify(localStorage)).not.toContain("typed-secret-example");
+    expect(JSON.stringify(sessionStorage)).not.toContain(
+      "typed-secret-example",
+    );
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+    await screen.findByText(/设置已保存/);
+    expect(
+      requests.find((item) => item.method === "PUT")!.body.llm,
+    ).toMatchObject({ api_key: "typed-secret-example" });
+    expect(screen.getByLabelText("API 密钥")).toHaveValue("");
+    await user.click(screen.getByLabelText("保存时清除现有密钥"));
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+    await waitFor(() =>
+      expect(requests.filter((item) => item.method === "PUT")).toHaveLength(2),
+    );
+    expect(
+      requests.filter((item) => item.method === "PUT")[1].body.llm,
+    ).toMatchObject({ clear_api_key: true });
+    expect(
+      requests.filter((item) => item.method === "PUT")[1].body.llm,
+    ).not.toHaveProperty("api_key");
+  });
+  it("冲突保留草稿，重新读取需明确放弃并使用最新revision", async () => {
+    const { user } = setup();
+    await models(user);
+    await user.type(screen.getByLabelText("模型名称"), "-draft");
+    conflict = true;
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+    await screen.findByText(/设置已在其他窗口更新/);
+    expect(screen.getByLabelText("模型名称")).toHaveValue("chat-old-draft");
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
+    server = {
+      ...server,
+      revision: 8,
+      llm: { ...server.llm, model: "chat-remote" },
+    };
+    await user.click(screen.getByRole("button", { name: "重新读取最新设置" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("放弃尚未保存");
+    await user.click(
+      screen.getByRole("button", { name: "放弃草稿并重新读取" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("模型名称")).toHaveValue("chat-remote"),
+    );
+    conflict = false;
+    await user.type(screen.getByLabelText("模型名称"), "-new");
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+    await waitFor(() =>
+      expect(requests.filter((item) => item.method === "PUT")).toHaveLength(2),
+    );
+    expect(
+      requests.filter((item) => item.method === "PUT")[1].body.revision,
+    ).toBe(8);
+  });
+  it("连接测试只发所选scope的草稿，不保存且分开显示测试结果", async () => {
+    const { user } = setup();
+    await models(user);
+    await user.clear(screen.getByLabelText("模型名称"));
+    await user.type(screen.getByLabelText("模型名称"), "unsaved-chat");
+    await user.type(screen.getByLabelText("API 密钥"), "draft-only-secret");
+    await user.click(screen.getByRole("button", { name: "测试聊天连接" }));
+    await screen.findByText("测试通过");
+    const request = requests.find((item) =>
+      item.path.endsWith("/test-models"),
+    )!;
+    expect(request.body).toMatchObject({
+      scope: "llm",
+      draft: { llm: { model: "unsaved-chat", api_key: "draft-only-secret" } },
+    });
+    expect(request.body.draft).not.toHaveProperty("embedding");
+    expect(requests.filter((item) => item.method === "PUT")).toHaveLength(0);
+    expect(screen.getByText("有未保存的修改")).toBeVisible();
+    await user.type(screen.getByLabelText("模型名称"), "-changed");
+    expect(screen.getByText(/此结果对应先前的草稿/)).toBeVisible();
+  });
+  it("一个scope测试时，其他scope仍可操作，结果不会覆盖各自状态", async () => {
+    const { user } = setup();
+    await models(user);
+    deferProbe = true;
+    await user.click(screen.getByRole("button", { name: "测试聊天连接" }));
+    expect(screen.getByRole("button", { name: "正在测试…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "测试工具调用" })).toBeEnabled();
+    await user.click(screen.getByRole("tab", { name: "向量模型" }));
+    expect(screen.getByRole("button", { name: "测试向量连接" })).toBeEnabled();
+    await act(async () =>
+      pendingProbe?.(
+        new Response(
+          JSON.stringify({ llm: { ok: true, message: "聊天测试完成" } }),
+        ),
+      ),
+    );
+    await user.click(screen.getByRole("tab", { name: "聊天模型" }));
+    expect(await screen.findByText("聊天测试完成")).toBeVisible();
+  });
+  it("跨字段校验失败时定位到错误字段，并阻止保存", async () => {
+    const { user } = setup();
+    await screen.findByRole("heading", { name: "外观与布局" });
+    await user.click(screen.getByRole("button", { name: "知识处理" }));
+    await user.clear(screen.getByLabelText("切块重叠（Token）"));
+    await user.type(screen.getByLabelText("切块重叠（Token）"), "1024");
+    await user.click(screen.getByRole("button", { name: "模型连接" }));
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(await screen.findByText("重叠长度必须小于切块长度。")).toBeVisible();
+    expect(screen.getByLabelText("切块重叠（Token）")).toHaveFocus();
+    expect(requests.filter((item) => item.method === "PUT")).toHaveLength(0);
+  });
+  it("离开有草稿时确认，可继续编辑或明确放弃", async () => {
+    const { user, router } = setup();
+    await models(user);
+    await user.type(screen.getByLabelText("API 密钥"), "leave-draft-secret");
+    await act(async () => {
+      await router.navigate("/chat");
+    });
+    expect(screen.getByRole("dialog")).toHaveTextContent("离开设置会丢失草稿");
+    await user.click(screen.getByRole("button", { name: "继续编辑" }));
+    expect(screen.getByLabelText("API 密钥")).toHaveValue("leave-draft-secret");
+    await act(async () => {
+      await router.navigate("/chat");
+    });
+    await act(async () => {
+      await user.click(screen.getByRole("button", { name: "放弃修改并离开" }));
+    });
+    expect(await screen.findByText("已返回知识对话")).toBeVisible();
+    expect(JSON.stringify(localStorage)).not.toContain("leave-draft-secret");
+    expect(requests.filter((item) => item.method === "PUT")).toHaveLength(0);
+  });
+  it("重建明确指定库并确认模型费用后提交", async () => {
+    const { user } = setup();
+    await screen.findByRole("heading", { name: "外观与布局" });
+    await user.click(screen.getByRole("button", { name: "索引维护" }));
+    await user.selectOptions(screen.getByLabelText("要维护的知识库"), "kb-2");
+    await user.click(
+      screen.getByRole("button", { name: "重建所选知识库向量索引" }),
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent("另一知识库");
+    expect(screen.getByRole("dialog")).toHaveTextContent("模型费用");
+    expect(
+      requests.some((item) => item.path.endsWith("rebuild-embeddings")),
+    ).toBe(false);
+    await user.click(screen.getByRole("button", { name: "确认费用并重建" }));
+    await screen.findByText(/重建任务已加入队列/);
+    expect(
+      requests.find((item) => item.path.endsWith("rebuild-embeddings"))?.body,
+    ).toEqual({ kb_id: "kb-2" });
+  });
+  it("撤销新密钥和清除选择后恢复干净状态", async () => {
+    const { user } = setup();
+    await models(user);
+    await user.type(screen.getByLabelText("API 密钥"), "temporary-secret");
+    await user.clear(screen.getByLabelText("API 密钥"));
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
+    await user.click(screen.getByLabelText("保存时清除现有密钥"));
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeEnabled();
+    await user.click(screen.getByLabelText("保存时清除现有密钥"));
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
+    expect(requests.filter((item) => item.method === "PUT")).toHaveLength(0);
+  });
+  it("保存期间锁住字段，保存完成后显示服务器结果", async () => {
+    const { user } = setup();
+    await models(user);
+    await user.type(screen.getByLabelText("模型名称"), "-saved");
+    deferSave = true;
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(screen.getByLabelText("模型名称")).toBeDisabled();
+    expect(screen.getByLabelText("API 密钥")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
+    await act(async () =>
+      pendingSave?.(
+        new Response(
+          JSON.stringify({
+            ...server,
+            revision: 8,
+            llm: { ...server.llm, model: "chat-old-saved" },
+          }),
+        ),
+      ),
+    );
+    expect(await screen.findByText(/设置已保存/)).toBeVisible();
+    expect(screen.getByLabelText("模型名称")).toBeEnabled();
+    expect(screen.getByLabelText("模型名称")).toHaveValue("chat-old-saved");
+  });
+  it("外观单独保存到当前浏览器，无须写入模型配置", async () => {
+    const { user } = setup();
+    await screen.findByRole("heading", { name: "外观与布局" });
+    await user.selectOptions(screen.getByLabelText("显示模式"), "dark");
+    expect(useUI.getState().theme).toBe("light");
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+    await screen.findByText(/设置已保存/);
+    expect(useUI.getState().theme).toBe("dark");
+    expect(requests.filter((item) => item.method === "PUT")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
+  });
+});

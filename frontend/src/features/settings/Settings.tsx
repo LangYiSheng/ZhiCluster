@@ -1,208 +1,688 @@
-import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useBlocker } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  CheckCircle2,
-  KeyRound,
+  Check,
+  Database,
+  Palette,
+  Plug,
   RefreshCw,
   Settings2,
   ShieldCheck,
+  SlidersHorizontal,
 } from "lucide-react";
-import { api, errorText, json } from "../../lib/api";
+import { api, ApiError, errorText, json } from "../../lib/api";
+import type { KnowledgeBase } from "../../lib/api";
+import { configDraft, rangeRules } from "../../lib/settings";
+import type {
+  ModelStatus,
+  ProbeResult,
+  ProbeScope,
+  RuntimeConfig,
+  RuntimeDraft,
+} from "../../lib/settings";
+import type { Appearance } from "../../lib/appearance";
+import { useUI } from "../../stores/ui";
 import { Button } from "../../components/ui/button";
-import { ErrorState, Loading } from "../../components/common";
-import { toast } from "sonner";
 import { Dialog } from "../../components/ui/dialog";
-type ModelInfo = {
-  configured?: boolean;
-  model?: string;
-  model_name?: string;
-  base_url?: string;
-  dimension?: number;
-  status?: string;
-  message?: string;
-  tool_calling?: boolean;
-  needs_rebuild?: boolean;
+import { ErrorState, Loading } from "../../components/common";
+import {
+  AppearanceForm,
+  ConnectionForm,
+  Field,
+  ProcessingForm,
+} from "./SettingsFields";
+import "./settings.css";
+
+type Section = "appearance" | "models" | "processing" | "maintenance";
+const sections = [
+  {
+    id: "appearance",
+    label: "外观与布局",
+    icon: Palette,
+    description: "选择顺眼的配色，让知识更好读。",
+  },
+  {
+    id: "models",
+    label: "模型连接",
+    icon: Plug,
+    description: "分别连接聊天与向量服务，保存后用于后续请求。",
+  },
+  {
+    id: "processing",
+    label: "知识处理",
+    icon: SlidersHorizontal,
+    description: "调整文档切块、摘要与处理预算。",
+  },
+  {
+    id: "maintenance",
+    label: "索引维护",
+    icon: Database,
+    description: "查看向量状态，为指定知识库重建索引。",
+  },
+] as const;
+const equal = (a: unknown, b: unknown) =>
+  JSON.stringify(a) === JSON.stringify(b);
+const fieldId = (group: string, key: string) => `setting-${group}-${key}`;
+type ProbeState = {
+  busy: boolean;
+  result?: ProbeResult;
+  error?: string;
+  fingerprint: number;
 };
-type Models = {
-  llm?: ModelInfo;
-  embedding?: ModelInfo;
-  tool_calling?: { supported?: boolean; message?: string };
-  [key: string]: unknown;
-};
+
 export function Settings({ kbId }: { kbId: string }) {
+  const config = useQuery({
+    queryKey: ["settings-config"],
+    queryFn: () => api<RuntimeConfig>("/settings/config"),
+    refetchOnWindowFocus: false,
+  });
+  if (config.isPending) return <Loading />;
+  if (!config.data)
+    return (
+      <ErrorState error={config.error} retry={() => void config.refetch()} />
+    );
+  return <SettingsEditor initialConfig={config.data} kbId={kbId} />;
+}
+
+function SettingsEditor({
+  initialConfig,
+  kbId,
+}: {
+  initialConfig: RuntimeConfig;
+  kbId: string;
+}) {
+  const ui = useUI();
+  const currentAppearance: Appearance = {
+    theme: ui.theme,
+    palette: ui.palette,
+    fontPairing: ui.fontPairing,
+    readingScale: ui.readingScale,
+  };
+  const [appearance, setAppearance] = useState<Appearance>(currentAppearance);
+  const [savedAppearance, setSavedAppearance] =
+    useState<Appearance>(currentAppearance);
+  const [loaded, setLoaded] = useState(initialConfig);
+  const [draft, setDraft] = useState<RuntimeDraft>(() =>
+    configDraft(initialConfig),
+  );
+  const [section, setSection] = useState<Section>("appearance");
+  const [modelTab, setModelTab] = useState<"llm" | "embedding">("llm");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [message, setMessage] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [conflict, setConflict] = useState(false);
+  const [reloading, setReloading] = useState(false);
+  const [confirmReload, setConfirmReload] = useState(false);
+  const [confirmRebuild, setConfirmRebuild] = useState(false);
+  const [maintenanceKb, setMaintenanceKb] = useState(kbId);
+  const [rebuildNotice, setRebuildNotice] = useState("");
+  const [probes, setProbes] = useState<Partial<Record<ProbeScope, ProbeState>>>(
+    {},
+  );
+  const [draftVersions, setDraftVersions] = useState({ llm: 0, embedding: 0 });
+  const focusTarget = useRef("");
+  const client = useQueryClient();
   const status = useQuery({
     queryKey: ["models"],
-    queryFn: () => api<Models>("/settings/model-status"),
+    queryFn: () => api<ModelStatus>("/settings/model-status"),
   });
-  const [testResult, setTestResult] = useState<Record<string, unknown> | null>(
-    null,
+  const bases = useQuery({
+    queryKey: ["knowledge-bases"],
+    queryFn: () => api<KnowledgeBase[]>("/knowledge-bases"),
+  });
+  const runtimeDirty = !equal(draft, configDraft(loaded));
+  const dirty = runtimeDirty || !equal(appearance, savedAppearance);
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      dirty && currentLocation.pathname !== nextLocation.pathname,
   );
-  const [confirmRebuild, setConfirmRebuild] = useState(false);
+  const embeddingChanged =
+    loaded.embedding.base_url !== draft.embedding.base_url ||
+    loaded.embedding.model !== draft.embedding.model ||
+    loaded.embedding.dimension !== draft.embedding.dimension;
+
+  useEffect(() => {
+    if (initialConfig.revision !== loaded.revision && !runtimeDirty) {
+      setLoaded(initialConfig);
+      setDraft(configDraft(initialConfig));
+      setDraftVersions((previous) => ({
+        llm: previous.llm + 1,
+        embedding: previous.embedding + 1,
+      }));
+    }
+  }, [initialConfig, loaded.revision, runtimeDirty]);
+
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (dirty) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  useEffect(() => {
+    if (!dirty && blocker.state === "blocked") blocker.reset();
+  }, [dirty, blocker]);
+  useEffect(() => {
+    if (!focusTarget.current) return;
+    const target = document.getElementById(focusTarget.current);
+    const details = target?.closest("details");
+    if (details) details.open = true;
+    target?.focus();
+    focusTarget.current = "";
+  }, [errors, section, modelTab]);
+
+  function change(
+    group: keyof RuntimeDraft,
+    key: string,
+    value: string | number | boolean,
+  ) {
+    setDraft((previous) => {
+      const fields = { ...previous[group], [key]: value };
+      if (
+        (key === "api_key" && value === "") ||
+        (key === "clear_api_key" && !value)
+      )
+        delete fields[key as keyof typeof fields];
+      return { ...previous, [group]: fields };
+    });
+    if (group !== "processing")
+      setDraftVersions((previous) => ({
+        ...previous,
+        [group]: previous[group] + 1,
+      }));
+    setErrors((previous) => {
+      const next = { ...previous };
+      delete next[fieldId(group, key)];
+      return next;
+    });
+    setMessage("");
+  }
+  function validate(scope?: ProbeScope) {
+    const next: Record<string, string> = {};
+    const groups =
+      scope === "embedding"
+        ? (["embedding"] as const)
+        : scope
+          ? (["llm"] as const)
+          : (["llm", "embedding", "processing"] as const);
+    for (const group of groups) {
+      for (const [key, value] of Object.entries(draft[group])) {
+        const range = rangeRules[key as keyof typeof rangeRules];
+        if (
+          range &&
+          (!Number.isFinite(Number(value)) ||
+            (key !== "timeout_seconds" && !Number.isInteger(value)) ||
+            Number(value) < range[0] ||
+            Number(value) > range[1])
+        )
+          next[fieldId(group, key)] =
+            `请输入 ${range[0]} 至 ${range[1]} 之间的${key === "timeout_seconds" ? "数字" : "整数"}。`;
+      }
+      if (group !== "processing" && draft[group].base_url.trim()) {
+        try {
+          const url = new URL(draft[group].base_url);
+          if (
+            !["http:", "https:"].includes(url.protocol) ||
+            url.username ||
+            url.password ||
+            url.search ||
+            url.hash ||
+            draft[group].base_url.includes("?") ||
+            draft[group].base_url.includes("#") ||
+            /\s/.test(draft[group].base_url.trim())
+          )
+            throw new Error();
+        } catch {
+          next[fieldId(group, "base_url")] =
+            "请输入 HTTP 或 HTTPS 地址，不含用户名、密码、查询参数或锚点。";
+        }
+      }
+    }
+    if (
+      !scope &&
+      draft.processing.chunk_overlap_tokens >=
+        draft.processing.chunk_size_tokens
+    )
+      next[fieldId("processing", "chunk_overlap_tokens")] =
+        "重叠长度必须小于切块长度。";
+    setErrors(next);
+    const first = Object.keys(next)[0];
+    if (first) {
+      focusTarget.current = first;
+      if (first.includes("processing") || first.includes("batch_size"))
+        setSection("processing");
+      else {
+        setSection("models");
+        setModelTab(first.includes("embedding") ? "embedding" : "llm");
+      }
+      return false;
+    }
+    return true;
+  }
+  function payload(): RuntimeDraft {
+    const clean = structuredClone(draft);
+    for (const group of ["llm", "embedding"] as const) {
+      clean[group].base_url = clean[group].base_url.trim();
+      clean[group].model = clean[group].model.trim();
+      if (!clean[group].api_key) delete clean[group].api_key;
+      if (!clean[group].clear_api_key) delete clean[group].clear_api_key;
+    }
+    return clean;
+  }
+  const save = useMutation({
+    mutationFn: async () =>
+      runtimeDirty
+        ? api<RuntimeConfig>(
+            "/settings/config",
+            json("PUT", { revision: loaded.revision, ...payload() }),
+          )
+        : loaded,
+    onSuccess: (config) => {
+      setLoaded(config);
+      setDraft(configDraft(config));
+      client.setQueryData(["settings-config"], config);
+      ui.setAppearance(appearance);
+      setSavedAppearance(appearance);
+      setMessage("设置已保存。后续请求与新领取的处理任务将使用新配置。");
+      setSaveError("");
+      setConflict(false);
+      setErrors({});
+      void status.refetch();
+    },
+    onError: (error) => {
+      setConflict(error instanceof ApiError && error.status === 409);
+      setSaveError(
+        error instanceof ApiError && error.status === 409
+          ? "设置已在其他窗口更新。你的草稿已保留，请重新读取最新配置后再修改。"
+          : errorText(error),
+      );
+    },
+  });
+  async function reload() {
+    setConfirmReload(false);
+    setReloading(true);
+    setSaveError("");
+    try {
+      const config = await api<RuntimeConfig>("/settings/config");
+      setLoaded(config);
+      setDraft(configDraft(config));
+      client.setQueryData(["settings-config"], config);
+      setAppearance(currentAppearance);
+      setSavedAppearance(currentAppearance);
+      setDraftVersions((previous) => ({
+        llm: previous.llm + 1,
+        embedding: previous.embedding + 1,
+      }));
+      setErrors({});
+      setConflict(false);
+      setMessage("已重新读取最新设置。");
+    } catch (error) {
+      setSaveError(errorText(error));
+    } finally {
+      setReloading(false);
+    }
+  }
+  async function probe(scope: ProbeScope) {
+    if (!validate(scope)) return;
+    const clean = payload();
+    const probeDraft =
+      scope === "embedding"
+        ? { embedding: clean.embedding }
+        : { llm: clean.llm };
+    const fingerprint =
+      draftVersions[scope === "embedding" ? "embedding" : "llm"];
+    setProbes((previous) => ({
+      ...previous,
+      [scope]: { busy: true, fingerprint },
+    }));
+    try {
+      const result = await api<Partial<Record<ProbeScope, ProbeResult>>>(
+        "/settings/test-models",
+        json("POST", { scope, draft: probeDraft }),
+      );
+      setProbes((previous) => ({
+        ...previous,
+        [scope]: { busy: false, result: result[scope], fingerprint },
+      }));
+    } catch (error) {
+      setProbes((previous) => ({
+        ...previous,
+        [scope]: { busy: false, error: errorText(error), fingerprint },
+      }));
+    }
+  }
   const rebuild = useMutation({
     mutationFn: () =>
-      api("/settings/rebuild-embeddings", json("POST", { kb_id: kbId })),
+      api(
+        "/settings/rebuild-embeddings",
+        json("POST", { kb_id: maintenanceKb }),
+      ),
     onSuccess: () => {
       setConfirmRebuild(false);
-      toast.success("重建任务已加入队列");
+      setRebuildNotice("重建任务已加入队列，可在知识库文件列表查看处理进度。");
       void status.refetch();
     },
-    onError: (e) => toast.error(errorText(e)),
+    onError: (error) => setRebuildNotice(errorText(error)),
   });
-  const test = useMutation({
-    mutationFn: () =>
-      api<Record<string, unknown>>("/settings/test-models", json("POST")),
-    onSuccess: (data) => {
-      setTestResult(data);
-      void status.refetch();
-    },
-    onError: (e) => toast.error(errorText(e)),
-  });
-  return (
-    <div className="page-scroll settings-page">
-      <div className="eyebrow">
-        <Settings2 size={15} />
-        工作空间设置
+  function probeButton(scope: ProbeScope, label: string) {
+    const state = probes[scope];
+    const fingerprint =
+      draftVersions[scope === "embedding" ? "embedding" : "llm"];
+    return (
+      <div className="zc-probe">
+        <Button
+          type="button"
+          disabled={state?.busy || save.isPending}
+          onClick={() => void probe(scope)}
+        >
+          <RefreshCw size={15} className={state?.busy ? "spin" : ""} />
+          {state?.busy ? "正在测试…" : label}
+        </Button>
+        {(state?.result || state?.error) && (
+          <div
+            className={`zc-probe-result ${state.result?.ok ? "is-success" : "is-error"}`}
+            role="status"
+          >
+            <strong>{state.result?.ok ? "测试通过" : "测试未通过"}</strong>
+            <span>{state.error || state.result?.message}</span>
+            {state.result?.elapsed_ms !== undefined && (
+              <small>耗时 {state.result.elapsed_ms} ms</small>
+            )}
+            <small>
+              {state.fingerprint === fingerprint
+                ? "此结果仅对应本次测试的草稿，测试不会保存设置。"
+                : "配置已修改，此结果对应先前的草稿，请重新测试。"}
+            </small>
+          </div>
+        )}
       </div>
-      <h1>让知识与模型连接</h1>
-      <p className="page-lead">
-        聊天与向量服务独立配置。密钥保存在后端环境中，不会发送到浏览器。
-      </p>
-      {status.isPending ? (
-        <Loading />
-      ) : status.isError ? (
-        <ErrorState error={status.error} retry={() => void status.refetch()} />
-      ) : (
-        <div className="settings-grid">
-          {(["llm", "embedding"] as const).map((key) => {
-            const info = status.data?.[key];
-            return (
-              <section className="settings-card" key={key}>
-                <div className="row spread">
-                  <h3>{key === "llm" ? "聊天模型" : "Embedding 模型"}</h3>
-                  <span
-                    className={`status ${info?.configured ? "status-ready" : ""}`}
+    );
+  }
+  const activeSection = sections.find((item) => item.id === section)!;
+  const selectedBase = bases.data?.find((base) => base.id === maintenanceKb);
+  return (
+    <div className="zc-settings-page">
+      <nav className="zc-settings-nav" aria-label="设置分类">
+        <span className="zc-settings-nav-title">偏好与连接</span>
+        {sections.map(({ id, label, icon: Icon }) => (
+          <button
+            type="button"
+            key={id}
+            aria-current={section === id ? "page" : undefined}
+            onClick={() => setSection(id)}
+          >
+            <Icon size={17} />
+            <span>{label}</span>
+          </button>
+        ))}
+        <p>
+          知簇 ZhiCluster
+          <br />
+          让知识有迹可循
+        </p>
+      </nav>
+      <div className="zc-settings-workspace">
+        <header className="zc-settings-header">
+          <div>
+            <div className="zc-settings-eyebrow">
+              <Settings2 size={14} />
+              工作空间设置
+            </div>
+            <h1>{activeSection.label}</h1>
+            <p>{activeSection.description}</p>
+          </div>
+        </header>
+        <form
+          className="zc-settings-form"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (validate()) {
+              setMessage("");
+              setSaveError("");
+              save.mutate();
+            }
+          }}
+        >
+          <fieldset
+            className="zc-settings-content"
+            disabled={save.isPending || reloading}
+          >
+            {saveError && (
+              <div className="zc-settings-error" role="alert">
+                {saveError}
+                {conflict && (
+                  <Button type="button" onClick={() => setConfirmReload(true)}>
+                    重新读取最新设置
+                  </Button>
+                )}
+              </div>
+            )}
+            {message && (
+              <p className="zc-settings-success" role="status">
+                <Check size={16} />
+                {message}
+              </p>
+            )}
+            {section === "appearance" && (
+              <AppearanceForm
+                appearance={appearance}
+                onChange={(value) => {
+                  setAppearance(value);
+                  setMessage("");
+                }}
+              />
+            )}
+            {section === "models" && (
+              <ConnectionForm
+                draft={draft}
+                loaded={loaded}
+                tab={modelTab}
+                setTab={setModelTab}
+                errors={errors}
+                change={change}
+                embeddingChanged={embeddingChanged}
+                probeButton={probeButton}
+              />
+            )}
+            {section === "processing" && (
+              <ProcessingForm draft={draft} errors={errors} change={change} />
+            )}
+            {section === "maintenance" && (
+              <section className="zc-settings-section">
+                <h2>向量索引</h2>
+                <p className="zc-settings-note">
+                  索引维护使用已保存的向量配置。先保存模型连接的修改，再开始重建。
+                </p>
+                <Field
+                  id="maintenance-kb"
+                  label="要维护的知识库"
+                  help="仅重建你在这里选择的知识库。"
+                >
+                  <select
+                    id="maintenance-kb"
+                    value={maintenanceKb}
+                    onChange={(event) => {
+                      setMaintenanceKb(event.target.value);
+                      setRebuildNotice("");
+                    }}
                   >
-                    {info?.configured ? "已配置" : "需要配置"}
-                  </span>
-                </div>
-                <dl>
-                  <dt>模型</dt>
-                  <dd>{info?.model || info?.model_name || "尚未设置"}</dd>
-                  <dt>服务地址</dt>
-                  <dd>{info?.base_url || "由后端 .env 设置"}</dd>
-                  {key === "embedding" && (
-                    <>
-                      <dt>向量维度</dt>
-                      <dd>{info?.dimension || "由实际返回向量校验"}</dd>
-                    </>
-                  )}
+                    <option value="">请选择知识库</option>
+                    {bases.data?.map((base) => (
+                      <option key={base.id} value={base.id}>
+                        {base.name}
+                        {base.id === kbId ? "（当前库）" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                {bases.isError && (
+                  <ErrorState
+                    error={bases.error}
+                    retry={() => void bases.refetch()}
+                  />
+                )}
+                <dl className="zc-maintenance-status">
+                  <div>
+                    <dt>目标知识库</dt>
+                    <dd>{selectedBase?.name || "尚未选择"}</dd>
+                  </div>
+                  <div>
+                    <dt>已保存的向量模型</dt>
+                    <dd>{loaded.embedding.model || "尚未设置"}</dd>
+                  </div>
+                  <div>
+                    <dt>向量维度</dt>
+                    <dd>{loaded.embedding.dimension}</dd>
+                  </div>
+                  <div>
+                    <dt>配置状态</dt>
+                    <dd>
+                      {status.data?.embedding?.configured
+                        ? "已配置"
+                        : "尚未就绪"}
+                    </dd>
+                  </div>
                 </dl>
-                {info?.needs_rebuild && (
-                  <p className="notice warning">
-                    模型发生变化，需要重建向量索引。
+                {status.isError && (
+                  <ErrorState
+                    error={status.error}
+                    retry={() => void status.refetch()}
+                  />
+                )}
+                {status.data?.embedding?.needs_rebuild && (
+                  <p className="zc-settings-warning">
+                    向量配置已变化，已有索引需要重建。
                   </p>
                 )}
-                {info?.message && <p className="muted">{info.message}</p>}
-              </section>
-            );
-          })}
-        </div>
-      )}
-      <div className="row gap">
-        <Button
-          variant="default"
-          disabled={test.isPending}
-          onClick={() => test.mutate()}
-        >
-          <RefreshCw size={15} className={test.isPending ? "spin" : ""} />
-          {test.isPending ? "连接测试中…" : "测试聊天、向量与工具调用"}
-        </Button>
-        <Button
-          disabled={
-            !kbId || rebuild.isPending || !status.data?.embedding?.configured
-          }
-          onClick={() => setConfirmRebuild(true)}
-        >
-          重建当前库向量索引
-        </Button>
-      </div>
-      <p className="notice">
-        <ShieldCheck size={17} />
-        {status.data?.tool_calling?.supported
-          ? "模型已声明支持工具调用，可使用智能整理。"
-          : status.data?.tool_calling?.message ||
-            "工具调用尚未验证；请运行连接测试。知识库问答与智能整理的能力会分别检测。"}
-      </p>
-      {testResult && (
-        <section className="settings-card">
-          <h3>
-            <CheckCircle2 size={17} /> 实际连接测试结果
-          </h3>
-          {Object.entries(testResult).map(([key, value]) => {
-            const result = value as {
-              ok?: boolean;
-              message?: string;
-              supported?: boolean;
-            };
-            return (
-              <div className="model-test-row" key={key}>
-                <div className="row spread">
-                  <strong>
-                    {{
-                      llm: "聊天连接",
-                      embedding: "向量连接",
-                      tool_calling: "工具调用",
-                    }[key] || key}
-                  </strong>
-                  <span
-                    className={`status ${result.ok ? "status-ready" : "status-failed"}`}
-                  >
-                    {result.ok ? "通过" : "未通过"}
-                  </span>
-                </div>
-                <p className="muted">
-                  {result.message || (result.ok ? "服务正常" : "服务暂不可用")}
+                {runtimeDirty && (
+                  <p className="zc-settings-warning">
+                    存在尚未保存的配置，请先保存后再重建。
+                  </p>
+                )}
+                <Button
+                  type="button"
+                  disabled={
+                    !selectedBase ||
+                    rebuild.isPending ||
+                    runtimeDirty ||
+                    !status.data?.embedding?.configured
+                  }
+                  onClick={() => {
+                    setRebuildNotice("");
+                    setConfirmRebuild(true);
+                  }}
+                >
+                  <RefreshCw
+                    size={15}
+                    className={rebuild.isPending ? "spin" : ""}
+                  />
+                  {rebuild.isPending ? "正在提交…" : "重建所选知识库向量索引"}
+                </Button>
+                {rebuildNotice && (
+                  <p className="zc-settings-note" role="status">
+                    {rebuildNotice}
+                  </p>
+                )}
+                <p className="zc-settings-note">
+                  重建会调用向量服务并可能产生费用。正文、文件夹和手动标签会保留。
                 </p>
-              </div>
-            );
-          })}
-        </section>
-      )}
-      <section className="settings-card">
-        <h3>
-          <KeyRound size={17} />
-          填写后端环境变量
-        </h3>
-        <p className="muted">
-          在项目根目录复制 .env.example 为 .env，分别填写下列参数，随后重启 api
-          与 worker。
-        </p>
-        <pre className="config-example">
-          LLM_BASE_URL=你的兼容服务地址 /v1{`\n`}LLM_API_KEY=你的聊天密钥{`\n`}
-          LLM_MODEL=聊天模型名称{`\n\n`}EMBEDDING_BASE_URL=向量服务地址 /v1
-          {`\n`}EMBEDDING_API_KEY=你的向量密钥{`\n`}EMBEDDING_MODEL=向量模型名称
-          {`\n`}EMBEDDING_DIMENSION=实际向量维度
-        </pre>
-      </section>
-      <p className="notice">
-        <ShieldCheck size={17} />
-        未配置模型时，文件上传、阅读、文件夹、标签和关键词搜索仍然可用。AI
-        功能不会返回模拟结果。
-      </p>
+              </section>
+            )}
+            <p className="zc-security-note">
+              <ShieldCheck size={15} />
+              已保存的密钥仅由后端保管，浏览器不读取原值。未配置模型时，文件管理与关键词搜索仍可使用。
+            </p>
+          </fieldset>
+          <footer className="zc-settings-footer">
+            <span role="status" className={dirty ? "is-dirty" : ""}>
+              {save.isPending
+                ? "正在保存…"
+                : dirty
+                  ? "有未保存的修改"
+                  : message
+                    ? "修改已保存"
+                    : "所有设置已是最新"}
+            </span>
+            <div>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={save.isPending || reloading}
+                onClick={() => (dirty ? setConfirmReload(true) : void reload())}
+              >
+                {reloading ? "正在读取…" : "重新读取"}
+              </Button>
+              <Button
+                type="submit"
+                variant="default"
+                disabled={!dirty || save.isPending || reloading || conflict}
+              >
+                保存修改
+              </Button>
+            </div>
+          </footer>
+        </form>
+      </div>
+      <Dialog
+        open={confirmReload}
+        onOpenChange={setConfirmReload}
+        title="重新读取设置？"
+        description="这会放弃尚未保存的修改和新填写的密钥，读取服务器上的最新设置。"
+      >
+        <div className="dialog-actions">
+          <Button onClick={() => setConfirmReload(false)}>继续编辑</Button>
+          <Button variant="default" onClick={() => void reload()}>
+            放弃草稿并重新读取
+          </Button>
+        </div>
+      </Dialog>
       <Dialog
         open={confirmRebuild}
         onOpenChange={setConfirmRebuild}
-        title="重建向量索引"
-        description="将使用当前 Embedding 模型为当前知识库重新向量化。此操作可能产生模型费用，正文和手动分类会保留。"
+        title="确认重建向量索引"
+        description={`将使用已保存的 ${loaded.embedding.model || "向量模型"} 为「${selectedBase?.name || "所选知识库"}」重新向量化。此操作可能产生模型费用，正文和手动分类会保留。`}
       >
         <div className="dialog-actions">
-          <Button onClick={() => setConfirmRebuild(false)}>取消</Button>
+          <Button
+            disabled={rebuild.isPending}
+            onClick={() => setConfirmRebuild(false)}
+          >
+            取消
+          </Button>
           <Button
             variant="default"
             disabled={rebuild.isPending}
             onClick={() => rebuild.mutate()}
           >
-            确认重建
+            {rebuild.isPending ? "正在提交…" : "确认费用并重建"}
+          </Button>
+        </div>
+      </Dialog>
+      <Dialog
+        open={blocker.state === "blocked"}
+        onOpenChange={(open) => {
+          if (!open) blocker.reset?.();
+        }}
+        title="放弃未保存的修改？"
+        description={
+          save.isPending || reloading
+            ? "正在保存或读取设置，请等待完成。"
+            : "离开设置会丢失草稿和新填写的密钥。"
+        }
+      >
+        <div className="dialog-actions">
+          <Button onClick={() => blocker.reset?.()}>继续编辑</Button>
+          <Button
+            variant="default"
+            disabled={save.isPending || reloading}
+            onClick={() => blocker.proceed?.()}
+          >
+            放弃修改并离开
           </Button>
         </div>
       </Dialog>

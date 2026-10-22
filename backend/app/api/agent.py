@@ -15,6 +15,7 @@ from app.db.models import AgentEvent, AgentPlan, AgentRun, AuditLog, IngestionJo
 from app.db.session import get_db
 from app.services.library import snapshot
 from app.services.permissions import assert_can_edit_kb, get_actor
+from app.services.runtime_config import get_runtime_settings
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -35,7 +36,7 @@ def list_runs(kb_id: str, db: Session = Depends(get_db, scope="function")):
 def create_run(body: RunRequest, db: Session = Depends(get_db, scope="function")):
     actor = get_actor(db)
     assert_can_edit_kb(db, actor, body.kb_id)
-    if not get_settings().llm_configured:
+    if not get_runtime_settings(db, get_settings()).llm_configured:
         raise AppError("model_not_configured", "智能整理需要配置聊天模型服务；请前往设置检查连接和 Tool Calling", 503)
     run = AgentRun(kb_id=body.kb_id, actor_id=actor.id, thread_id=new_id(), goal=body.goal)
     db.add(run)

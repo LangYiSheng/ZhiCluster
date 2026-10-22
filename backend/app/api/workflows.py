@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends, Header, Query
-from sqlalchemy import exists, or_, select, text
+from datetime import UTC, timedelta
+
+from fastapi import APIRouter, Body, Depends, Header, Query
+from sqlalchemy import exists, func, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.gateway import ModelGateway
@@ -19,14 +21,22 @@ from app.db.models import (
     JobEvent,
     Message,
     MessageCitation,
+    utcnow,
 )
 from app.db.session import get_db
 from app.retrieval.search import scoped_query, search_knowledge
 from app.schemas.requests import ChatMessage, ConversationCreate, ConversationUpdate, Rebuild, Search
 from app.schemas.responses import ConversationOut, JobOut, SearchOut
+from app.schemas.settings import ConfigurationSave, ModelTestRequest
 from app.services.chat import emit_chat
 from app.services.library import get_document, snapshot
 from app.services.permissions import accessible_kb_ids, assert_can_edit_kb, assert_can_read_kb, get_actor
+from app.services.runtime_config import (
+    apply_draft,
+    get_runtime_settings,
+    read_configuration,
+    save_configuration,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -45,7 +55,7 @@ def ready(db: Session = Depends(get_db, scope="function")):
 
 @router.get("/settings/model-status")
 def model_status(db: Session = Depends(get_db, scope="function")):
-    settings = get_settings()
+    settings = get_runtime_settings(db, get_settings())
     gateway = ModelGateway(settings)
     profile = db.scalar(select(EmbeddingProfile).where(EmbeddingProfile.fingerprint == gateway.profile_fingerprint))
     missing_vectors = True if not profile else exists(select(DocumentChunk.id).where(
@@ -53,12 +63,26 @@ def model_status(db: Session = Depends(get_db, scope="function")):
         ~exists(select(ChunkEmbedding.chunk_id).where(ChunkEmbedding.chunk_id == DocumentChunk.id, ChunkEmbedding.profile_id == profile.id)),
     ))
     pending = db.scalar(select(Document.id).where(Document.kb_id.in_(accessible_kb_ids(db, get_actor(db))), Document.deleted_at.is_(None), or_(Document.index_status != "ready", missing_vectors)).limit(1))
-    return {"llm": {"configured": settings.llm_configured, "model": settings.llm_model}, "embedding": {"configured": settings.embedding_configured, "model": settings.embedding_model, "dimension": settings.embedding_dimension, "needs_rebuild": bool(settings.embedding_configured and (not profile or pending))}, "tool_calling": {"supported": settings.llm_supports_tools, "message": "请先测试能力，或通过 LLM_SUPPORTS_TOOLS 显式配置"}, "configuration": "在后端 .env 配置密钥后重启 api 和 worker"}
+    return {"llm": {"configured": settings.llm_configured, "model": settings.llm_model}, "embedding": {"configured": settings.embedding_configured, "model": settings.embedding_model, "dimension": settings.embedding_dimension, "needs_rebuild": bool(settings.embedding_configured and (not profile or pending))}, "tool_calling": {"supported": settings.llm_supports_tools, "message": "请在设置中测试工具调用能力并保存配置"}, "configuration": "在网页设置中保存后，新请求和下一个后台任务自动使用新配置"}
+
+
+@router.get("/settings/config")
+def configuration(db: Session = Depends(get_db, scope="function")):
+    get_actor(db)
+    return read_configuration(db, get_settings())
+
+
+@router.put("/settings/config")
+def update_configuration(body: ConfigurationSave, db: Session = Depends(get_db, scope="function")):
+    get_actor(db)
+    return save_configuration(db, body, get_settings())
 
 
 @router.post("/settings/test-models")
-def test_models():
-    return ModelGateway(get_settings()).test_models()
+def test_models(body: ModelTestRequest | None = Body(None), db: Session = Depends(get_db, scope="function")):
+    settings = get_runtime_settings(db, get_settings())
+    settings = apply_draft(settings, body.draft if body else None)
+    return ModelGateway(settings).test_models(scope=body.scope if body else None)
 
 
 @router.post("/settings/rebuild-embeddings")
@@ -207,7 +231,6 @@ def rename_conversation(conversation_id: str, body: ConversationUpdate, db: Sess
 
 @router.delete("/conversations/{conversation_id}")
 def delete_conversation(conversation_id: str, db: Session = Depends(get_db, scope="function")):
-    from app.db.models import utcnow
     item = checked_conversation(db, conversation_id)
     item.deleted_at = utcnow()
     return {"status": "deleted"}
@@ -240,9 +263,17 @@ def send_message(conversation_id: str, body: ChatMessage, db: Session = Depends(
     active = db.scalar(select(Message).where(Message.conversation_id == item.id, Message.status.in_(["queued", "processing"])))
     if active:
         raise AppError("conversation_busy", "请等待当前回复完成", 409)
-    db.add(Message(conversation_id=item.id, role="user", content=body.content))
+    # The conversation lock serializes this allocation across turns/processes.
+    # Clock ticks (or clock rollback) must never make UUID ordering reorder turns.
+    last_created_at = db.scalar(select(func.max(Message.created_at)).where(Message.conversation_id == item.id))
+    created_at = utcnow()
+    if last_created_at is not None:
+        if last_created_at.tzinfo is None:  # SQLite strips timezone information.
+            last_created_at = last_created_at.replace(tzinfo=UTC)
+        created_at = max(created_at, last_created_at + timedelta(microseconds=1))
+    db.add(Message(conversation_id=item.id, role="user", content=body.content, created_at=created_at))
     db.flush()
-    message = Message(conversation_id=item.id, role="assistant", status="queued")
+    message = Message(conversation_id=item.id, role="assistant", status="queued", created_at=created_at + timedelta(microseconds=1))
     db.add(message)
     db.flush()
     job = IngestionJob(kb_id=item.scope["kb_ids"][0], kind="chat", payload={"conversation_id": item.id, "message_id": message.id})

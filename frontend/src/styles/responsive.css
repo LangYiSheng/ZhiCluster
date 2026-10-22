@@ -1,0 +1,329 @@
+@media (min-width: 1600px) {
+  .chat-messages {
+    padding-left: 60px;
+    padding-right: 60px;
+  }
+  .chat-composer-wrap {
+    padding-left: 55px;
+    padding-right: 55px;
+  }
+  .chat-welcome h1 {
+    font-size: 32px;
+  }
+  .page-scroll {
+    padding: 38px 48px;
+  }
+}
+@media (max-width: 1200px) {
+  .workspace-header {
+    padding: 0 20px;
+  }
+  .private-indicator {
+    display: none;
+  }
+  .workspace-footer > span:last-child {
+    display: none;
+  }
+  .page-scroll {
+    padding: 28px;
+  }
+  .reader-toolbar strong {
+    max-width: 180px;
+  }
+  .plan-header {
+    gap: 12px;
+  }
+}
+@media (max-width: 1023px) {
+  .app-shell:not(.settings-mode) {
+    grid-template-columns: 0 0 0 0 minmax(0, 1fr);
+  }
+  .workspace,
+  .files-open .workspace,
+  .sidebar-collapsed .workspace,
+  .sidebar-collapsed.files-open .workspace {
+    margin: 12px;
+    border-radius: var(--radius-shell);
+  }
+  .library-slot,
+  .library-resize,
+  .files-resize,
+  .context-pane {
+    visibility: hidden;
+  }
+  .desktop-sidebar-toggle {
+    display: none;
+  }
+  .mobile-library-toggle {
+    display: inline-flex;
+  }
+  .app-shell.mobile-library-open .library-slot {
+    display: flex;
+    visibility: visible;
+    position: fixed;
+    z-index: 36;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(300px, calc(100vw - 40px));
+    background: var(--color-background);
+    box-shadow: var(--shadow);
+  }
+  .sidebar-brand .sidebar-close {
+    display: inline-flex;
+  }
+  .files-open .context-pane {
+    display: flex;
+    visibility: visible;
+    position: fixed;
+    z-index: 36;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(380px, calc(100vw - 40px));
+    margin: 0;
+    border-radius: 0 var(--radius-shell) var(--radius-shell) 0;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+  }
+  .mobile-overlay {
+    display: block;
+    position: fixed;
+    z-index: 29;
+    inset: 0;
+    background: var(--color-overlay);
+  }
+  .workspace-header {
+    padding: 0 20px;
+  }
+}
+@media (max-width: 720px) {
+  .workspace,
+  .files-open .workspace,
+  .sidebar-collapsed .workspace,
+  .sidebar-collapsed.files-open .workspace,
+  .settings-mode .workspace {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .workspace-header {
+    min-height: 56px;
+    padding: 0 16px;
+    gap: 8px;
+  }
+  .breadcrumb {
+    gap: 6px;
+  }
+  .breadcrumb > span {
+    max-width: min(120px, 26vw);
+  }
+  .breadcrumb > svg {
+    display: none;
+  }
+  .workspace-actions {
+    gap: 2px;
+  }
+  .workspace-search {
+    display: none;
+  }
+  .browse-files > span {
+    display: none;
+  }
+  .browse-files {
+    padding: 6px;
+  }
+  .chat-messages {
+    padding: 10px 20px 20px;
+  }
+  .chat-composer-wrap {
+    padding: 0 16px 14px;
+  }
+  .conversation-toolbar {
+    padding: 8px 20px;
+  }
+  .chat-welcome {
+    padding: 24px 4px;
+  }
+  .chat-welcome h1 {
+    font-size: 25px;
+  }
+  .chat-welcome > p {
+    max-width: 310px;
+  }
+  .welcome-symbol {
+    width: 52px;
+    height: 52px;
+    margin-bottom: 22px;
+  }
+  .welcome-scope {
+    padding: 12px;
+    gap: 8px;
+  }
+  .welcome-scope > strong {
+    padding-left: 0;
+  }
+  .page-scroll {
+    padding: 24px 20px;
+  }
+  .agent-heading h1 {
+    font-size: 25px;
+  }
+  .agent-prompt > .row {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 12px;
+  }
+  .agent-prompt > .row > .tiny {
+    flex: 1 1 100%;
+  }
+  .workflow-steps {
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .workflow-steps > div {
+    gap: 6px;
+  }
+  .agent-run {
+    padding: 16px;
+  }
+  .plan-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .plan-header small {
+    text-align: left;
+  }
+  .reader-toolbar {
+    padding: 12px;
+    flex-wrap: wrap;
+  }
+  .reader-toolbar strong {
+    max-width: min(210px, 70vw);
+  }
+  .reader-toolbar > .row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .reader-container > .page-scroll {
+    padding: 24px 20px;
+  }
+  .document-detail h1 {
+    font-size: 24px;
+  }
+  .document-properties > div {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .document-properties > div > span:first-child {
+    width: 64px;
+  }
+  .pdf-controls {
+    flex-wrap: wrap;
+  }
+  .pdf-controls > .muted {
+    display: none;
+  }
+  .workspace-footer {
+    padding: 7px 16px;
+  }
+  .message {
+    gap: 10px;
+  }
+  .message-avatar {
+    width: 26px;
+    height: 26px;
+  }
+  .dialog-content {
+    padding: 22px;
+    max-height: 90dvh;
+  }
+  .dialog-actions {
+    flex-wrap: wrap;
+  }
+  .context-menu {
+    max-width: calc(100vw - 24px);
+  }
+  .file-filters {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 380px) {
+  .breadcrumb > span {
+    display: none;
+  }
+  .chat-messages {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .chat-composer-wrap {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .scope-options {
+    min-width: 0;
+    width: 260px;
+    max-width: calc(100vw - 40px);
+  }
+  .message {
+    gap: 8px;
+  }
+  .message-avatar {
+    display: none;
+  }
+  .document-properties > div > span:first-child {
+    width: 100%;
+  }
+  .plan-operation {
+    padding: 14px;
+  }
+}
+@media (max-height: 540px) and (orientation: landscape) {
+  .workspace,
+  .settings-mode .workspace {
+    margin: 0;
+    border-radius: 0;
+  }
+  .workspace-header {
+    min-height: 48px;
+  }
+  .workspace-footer {
+    display: none;
+  }
+  .sidebar-brand {
+    min-height: 65px;
+    padding-top: 14px;
+  }
+  .primary-navigation {
+    padding-bottom: 8px;
+  }
+  .chat-welcome {
+    min-height: 220px;
+    padding: 20px 10px;
+  }
+  .chat-composer textarea {
+    min-height: 48px;
+  }
+  .chat-composer-wrap {
+    padding-bottom: 10px;
+  }
+}
+@media (hover: none) {
+  .library-item > .button,
+  .tag-row > .button,
+  .folder-row > .button,
+  .document-row > input,
+  .document-row > .button {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -6,9 +6,11 @@ import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, func, select, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
 import app.agent.graph as workflow
@@ -30,7 +32,19 @@ from app.db.seed import seed
 from app.services.permissions import get_actor
 
 TEST_URL = os.getenv("ZHICLUSTER_TEST_DATABASE_URL", "")
-pytestmark = pytest.mark.skipif(not TEST_URL, reason="set ZHICLUSTER_TEST_DATABASE_URL to an isolated migrated PostgreSQL database")
+pytestmark = pytest.mark.skipif(not TEST_URL, reason="set ZHICLUSTER_TEST_DATABASE_URL to isolated zhicluster_agent_test")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def migrated_agent_database():
+    """Only the dedicated Agent test database may be migrated by this suite."""
+    assert make_url(TEST_URL).database == "zhicluster_agent_test", "Refusing to migrate a non-test database"
+    environment = {key: os.environ[key] for key in ("PATH", "SYSTEMROOT", "USERPROFILE", "TEMP", "TMP") if key in os.environ}
+    environment.update(DATABASE_URL=TEST_URL, APP_ENV="test", PYTHONIOENCODING="utf-8")
+    migration = subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"],
+                               cwd=Path(__file__).resolve().parents[1], env=environment,
+                               capture_output=True, text=True, encoding="utf-8")
+    assert migration.returncode == 0, migration.stdout + migration.stderr
 
 
 @pytest.fixture
