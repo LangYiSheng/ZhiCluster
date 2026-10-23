@@ -6,29 +6,35 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agent.executor import edit_plan, get_plan, get_run, undo_run
+from app.agent.executor import edit_plan, execute_plan, get_plan, get_run, reject_plan, undo_run
 from app.agent.graph import resume_plan
 from app.agent.plans import ApproveRequest, PlanEdit, RunRequest
 from app.core.config import get_settings
 from app.core.errors import AppError
-from app.db.models import AgentEvent, AgentPlan, AgentRun, AuditLog, IngestionJob, new_id
+from app.db.models import AgentEvent, AgentPlan, AgentRun, AuditLog, IngestionJob, KnowledgeBaseMember, new_id
 from app.db.session import get_db
 from app.services.library import snapshot
-from app.services.permissions import assert_can_edit_kb, get_actor
+from app.services.permissions import accessible_kb_ids, assert_can_edit_kb, get_actor
+from app.services.review import plan_preview
 from app.services.runtime_config import get_runtime_settings
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
-def serialize_plan(plan):
-    return snapshot(plan) if plan else None
+def serialize_plan(plan, db):
+    return {**snapshot(plan), "preview": plan_preview(db, plan)} if plan else None
 
 
 @router.get("/runs")
-def list_runs(kb_id: str, db: Session = Depends(get_db, scope="function")):
+def list_runs(kb_id: str | None = None, db: Session = Depends(get_db, scope="function")):
     actor = get_actor(db)
-    assert_can_edit_kb(db, actor, kb_id)
-    return [snapshot(run) for run in db.scalars(select(AgentRun).where(AgentRun.kb_id == kb_id,
+    allowed = [kb_id] if kb_id else accessible_kb_ids(db, actor)
+    if kb_id:
+        assert_can_edit_kb(db, actor, kb_id)
+    else:
+        allowed = list(db.scalars(select(KnowledgeBaseMember.kb_id).where(KnowledgeBaseMember.user_id == actor.id,
+            KnowledgeBaseMember.kb_id.in_(allowed), KnowledgeBaseMember.role.in_(["owner", "editor"]))))
+    return [snapshot(run) for run in db.scalars(select(AgentRun).where(AgentRun.kb_id.in_(allowed),
         AgentRun.actor_id == actor.id).order_by(AgentRun.created_at.desc()).limit(50))]
 
 
@@ -52,28 +58,41 @@ def read_run(run_id: str, db: Session = Depends(get_db, scope="function")):
     plan = db.scalar(select(AgentPlan).where(AgentPlan.run_id == run.id))
     events = list(db.scalars(select(AgentEvent).where(AgentEvent.run_id == run.id).order_by(AgentEvent.sequence)))
     audits = list(db.scalars(select(AuditLog).where(AuditLog.run_id == run.id).order_by(AuditLog.created_at)))
-    return {**snapshot(run), "plan": serialize_plan(plan), "events": [snapshot(e) for e in events],
+    return {**snapshot(run), "plan": serialize_plan(plan, db), "events": [snapshot(e) for e in events],
             "audit_logs": [snapshot(a) for a in audits]}
 
 
 @router.get("/plans/{plan_id}")
 def read_plan(plan_id: str, db: Session = Depends(get_db, scope="function")):
-    return serialize_plan(get_plan(db, get_actor(db), plan_id))
+    return serialize_plan(get_plan(db, get_actor(db), plan_id), db)
 
 
 @router.patch("/plans/{plan_id}")
 def update_plan(plan_id: str, body: PlanEdit, db: Session = Depends(get_db, scope="function")):
-    return serialize_plan(edit_plan(db, get_actor(db), plan_id, body))
+    return serialize_plan(edit_plan(db, get_actor(db), plan_id, body), db)
+
+
+def metadata_run(db, run_id):
+    return db.scalar(select(IngestionJob.id).where(IngestionJob.kind == "organize",
+        IngestionJob.payload["run_id"].as_string() == run_id)) is not None
 
 
 @router.post("/plans/{plan_id}/approve")
 def approve_plan(plan_id: str, body: ApproveRequest, db: Session = Depends(get_db, scope="function")):
-    return resume_plan(db, get_actor(db), plan_id, {"action": "approve", **body.model_dump()})
+    actor = get_actor(db)
+    plan = get_plan(db, actor, plan_id)
+    if metadata_run(db, plan.run_id):
+        return execute_plan(db, actor, plan_id, body.plan_version, body.confirm_high_risk)
+    return resume_plan(db, actor, plan_id, {"action": "approve", **body.model_dump()})
 
 
 @router.post("/plans/{plan_id}/reject")
 def reject(plan_id: str, db: Session = Depends(get_db, scope="function")):
-    return resume_plan(db, get_actor(db), plan_id, {"action": "reject"})
+    actor = get_actor(db)
+    plan = get_plan(db, actor, plan_id)
+    if metadata_run(db, plan.run_id):
+        return snapshot(reject_plan(db, actor, plan_id))
+    return resume_plan(db, actor, plan_id, {"action": "reject"})
 
 
 @router.post("/runs/{run_id}/undo")

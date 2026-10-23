@@ -1,18 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
-  Check,
   Download,
   FileText,
   MoreHorizontal,
   Sparkles,
-  X,
+  ListChecks,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { toast } from "sonner";
-import { api, anchorText, errorText, json } from "../../lib/api";
+import { api, anchorText, query } from "../../lib/api";
 import type {
   Citation,
   Document,
@@ -23,8 +21,6 @@ import type {
   Tag,
 } from "../../lib/api";
 import { Button } from "../../components/ui/button";
-import { Checkbox } from "../../components/ui/checkbox";
-import { Select } from "../../components/ui/select";
 import { Menu, MenuItem } from "../../components/ui/menu";
 import { Empty, ErrorState, Loading, Status } from "../../components/common";
 import {
@@ -59,7 +55,6 @@ export function Reader({
   active?: boolean;
 }) {
   const navigate = useNavigate();
-  const qc = useQueryClient();
   const body = useRef<HTMLDivElement>(null);
   const doc = useQuery({
     queryKey: ["document", documentId],
@@ -86,28 +81,7 @@ export function Reader({
     enabled: !!doc.data && doc.data.classification_status === "ready",
     retry: false,
   });
-  const [edited, setEdited] = useState<Suggestion | null>(null);
   const [page, setPage] = useState(1);
-  const activeSuggestion = edited || suggestion.data?.payload;
-  const change = useMutation({
-    mutationFn: ({
-      action,
-      payload,
-    }: {
-      action: string;
-      payload?: Suggestion;
-    }) =>
-      api(
-        `/documents/${documentId}/suggestion`,
-        json("POST", { action, payload }),
-      ),
-    onSuccess: () => {
-      void qc.invalidateQueries();
-      setEdited(null);
-      toast.success("建议已保存");
-    },
-    onError: (e) => toast.error(errorText(e)),
-  });
   useEffect(() => {
     setPage(
       citation?.page_start ||
@@ -149,6 +123,7 @@ export function Reader({
   const activeJobs = relatedJobs.filter(isActiveJob);
   const needsAttention = relatedJobs[0] && jobNeedsAttention(relatedJobs[0]);
   const tasksUrl = `/tasks?kb=${d.kb_id}&document=${documentId}`;
+  const reviewUrl = `/review${query({ kb: d.kb_id, filter_kb: d.kb_id, document: documentId, tab: "suggestions" })}`;
   const textSections = content.data?.sections || [];
   return (
     <div className="reader-container">
@@ -175,6 +150,11 @@ export function Reader({
             >
               <MenuItem onSelect={() => onReader(true)}>阅读正文</MenuItem>
               <MenuItem onSelect={() => onReader(false)}>查看属性</MenuItem>
+              {suggestion.data?.status === "pending" && (
+                <MenuItem onSelect={() => navigate(reviewUrl)}>
+                  审阅分类建议
+                </MenuItem>
+              )}
               <MenuItem onSelect={() => navigate(tasksUrl)}>
                 查看处理任务
               </MenuItem>
@@ -245,119 +225,21 @@ export function Reader({
                 有任务需要处理，前往任务列表查看与重试
               </Link>
             )}
-            {active &&
-              activeSuggestion &&
-              suggestion.data?.status === "pending" && (
-                <details className="detail-section detail-disclosure suggestion-box">
-                  <summary>分类建议</summary>
-                  <p>{activeSuggestion.reason}</p>
-                  <label>
-                    主要文件夹
-                    <Select
-                      aria-label="主要文件夹"
-                      value={activeSuggestion.existing_folder_id || ""}
-                      onValueChange={(value) =>
-                        setEdited({
-                          ...activeSuggestion,
-                          existing_folder_id: value || null,
-                          proposed_folder_path: null,
-                        })
-                      }
-                      options={[
-                        { value: "", label: "未分类 / 使用新建建议" },
-                        ...folders
-                          .filter((folder) => !folder.deleted_at)
-                          .map((folder) => ({
-                            value: folder.id,
-                            label: folder.name,
-                          })),
-                      ]}
-                    />
-                  </label>
-                  <label>
-                    建议新文件夹路径
-                    <input
-                      value={activeSuggestion.proposed_folder_path || ""}
-                      onChange={(e) =>
-                        setEdited({
-                          ...activeSuggestion,
-                          proposed_folder_path: e.target.value || null,
-                          existing_folder_id: null,
-                        })
-                      }
-                    />
-                  </label>
-                  <div className="tag-checks">
-                    {tags.map((t) => (
-                      <label className="checkbox-label" key={t.id}>
-                        <Checkbox
-                          checked={
-                            activeSuggestion.existing_tag_ids?.includes(t.id) ||
-                            false
-                          }
-                          onChange={(e) =>
-                            setEdited({
-                              ...activeSuggestion,
-                              existing_tag_ids: e.target.checked
-                                ? [
-                                    ...(activeSuggestion.existing_tag_ids ||
-                                      []),
-                                    t.id,
-                                  ]
-                                : (
-                                    activeSuggestion.existing_tag_ids || []
-                                  ).filter((id) => id !== t.id),
-                            })
-                          }
-                        />
-                        {t.name}
-                      </label>
-                    ))}
-                  </div>
-                  <label>
-                    建议新标签（英文逗号分隔）
-                    <input
-                      value={activeSuggestion.new_tag_names?.join(", ") || ""}
-                      onChange={(e) =>
-                        setEdited({
-                          ...activeSuggestion,
-                          new_tag_names: e.target.value
-                            .split(",")
-                            .map((s) => s.trim())
-                            .filter(Boolean),
-                        })
-                      }
-                    />
-                  </label>
-                  <small className="muted">
-                    {activeSuggestion.confidence_hint} · 此说明为启发式判断
-                  </small>
-                  <div className="row gap">
-                    <Button
-                      size="sm"
-                      variant="default"
-                      disabled={change.isPending}
-                      onClick={() =>
-                        change.mutate({
-                          action: "apply",
-                          payload: activeSuggestion,
-                        })
-                      }
-                    >
-                      <Check size={14} />
-                      应用调整后的建议
-                    </Button>
-                    <Button
-                      size="sm"
-                      disabled={change.isPending}
-                      onClick={() => change.mutate({ action: "reject" })}
-                    >
-                      <X size={14} />
-                      拒绝
-                    </Button>
-                  </div>
-                </details>
-              )}
+            {active && suggestion.data?.status === "pending" && (
+              <section className="detail-section">
+                <h3>
+                  <ListChecks size={16} />
+                  待审阅的分类建议
+                </h3>
+                <p className="muted tiny">{suggestion.data.payload.reason}</p>
+                <Link
+                  className="button button-secondary button-sm"
+                  to={reviewUrl}
+                >
+                  前往整理审阅
+                </Link>
+              </section>
+            )}
             <details className="detail-section detail-disclosure">
               <summary>文档属性</summary>
               <div className="document-properties">

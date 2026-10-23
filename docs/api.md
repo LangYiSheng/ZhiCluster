@@ -213,9 +213,21 @@ LLM 与 Embedding 各自独立处理 `api_key`：省略、`null` 或空字符串
 
 ## 智能整理与整批审批
 
+统一整理审阅使用以下接口；均按当前 actor 的知识库权限过滤，生成建议或方案本身不改变文档目录和标签。
+
 | 方法 | 路径 | 请求 / 行为 |
 | --- | --- | --- |
-| GET | `/api/agent/runs?kb_id=...` | 当前用户本库最近 50 次整理 |
+| GET | `/api/review/suggestions` | 可选 `kb_id/document_id/status/page/page_size`；status 为 pending/applied/rejected/all；返回 items、total、分页及 counts，含当前版本、现有/目标目录、标签、权限与冲突状态 |
+| POST | `/api/review/suggestions/{id}` | `{action:apply或reject,document_version,payload?}`；应用使用最终编辑稿，返回审计 run_id 与撤销能力 |
+| POST | `/api/review/suggestions/batch` | `{action,items:[{suggestion_id,document_version,payload?}]}`；至多 100 项；返回每项成功、冲突或错误，响应顺序与输入一致 |
+| POST | `/api/review/suggestions/{id}/refresh` | `{document_version}`；仅 pending 建议；排队仅分类任务，不重做解析、摘要或向量；返回 job_id |
+| POST | `/api/review/plans` | `{kb_id,goal?,document_ids?}`；范围最多 50 份文档；201 返回 run；后台生成有界 JSON 整理方案，已有生成任务时 409 |
+
+建议应用重新检查文档版本及同库目标；批量使用独立 savepoint 并按知识库固定顺序取得锁。已过期建议返回冲突，调用方可让用户重新生成。分类与批量整理沿用下面的计划审批、编辑及撤销接口。新整理任务 kind 为 organize，使用后台模型额度，不占聊天任务通道。
+
+| 方法 | 路径 | 请求 / 行为 |
+| --- | --- | --- |
+| GET | `/api/agent/runs?kb_id=...` | 当前用户最近 50 次整理；省略 kb_id 时跨可编辑知识库 |
 | POST | `/api/agent/runs` | `{kb_id,goal}`；201；仅排队，未配置聊天模型时 503 |
 | GET | `/api/agent/runs/{run_id}` | 运行状态、完整计划、事件及操作审计 |
 | GET | `/api/agent/plans/{plan_id}` | `{id,version,status,payload,result,...}` |

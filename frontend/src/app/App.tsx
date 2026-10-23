@@ -15,6 +15,7 @@ import {
   FolderOpen,
   History,
   ListTodo,
+  ListChecks,
   Menu as MenuIcon,
   MessageSquare,
   PanelLeftClose,
@@ -57,8 +58,13 @@ const Settings = lazy(() =>
 const Tasks = lazy(() =>
   import("../features/tasks/Tasks").then((m) => ({ default: m.Tasks })),
 );
+const Review = lazy(() =>
+  import("../features/review/Review").then((m) => ({ default: m.Review })),
+);
 
-const Trash = lazy(() => import("../features/trash/Trash").then((m) => ({ default: m.Trash })));
+const Trash = lazy(() =>
+  import("../features/trash/Trash").then((m) => ({ default: m.Trash })),
+);
 
 export function App() {
   const ui = useUI();
@@ -111,9 +117,11 @@ export function App() {
         ? "trash"
         : location.pathname === "/tasks"
           ? "tasks"
-          : location.pathname === "/document"
-            ? "document"
-            : "chat";
+          : location.pathname === "/review"
+            ? "review"
+            : location.pathname === "/document"
+              ? "document"
+              : "chat";
   const viewName =
     view === "settings"
       ? "设置"
@@ -121,9 +129,11 @@ export function App() {
         ? "回收站"
         : view === "tasks"
           ? "任务列表"
-          : view === "document"
-            ? "文档管理"
-            : "知识对话";
+          : view === "review"
+            ? "整理审阅"
+            : view === "document"
+              ? "文档管理"
+              : "知识对话";
   const referencesOpen = references.tabs.length > 0;
   const filesWidth = Math.max(380, ui.filesWidth);
   useEffect(() => {
@@ -174,7 +184,11 @@ export function App() {
     setMobileLibrary(false);
     setDocumentCitation(undefined);
     updateReferences({ type: "clear" });
-    setParams({ kb: id });
+    setParams(
+      view === "review"
+        ? { kb: id, filter_kb: id, tab: params.get("tab") || "suggestions" }
+        : { kb: id },
+    );
   }
   function to(path: string) {
     citationRequest.current += 1;
@@ -334,6 +348,13 @@ export function App() {
           )}
         </div>
         <div className="sidebar-tools">
+          <button
+            aria-current={view === "review" ? "page" : undefined}
+            onClick={() => to("review")}
+          >
+            <ListChecks size={17} />
+            整理审阅
+          </button>
           <button
             aria-current={view === "tasks" ? "page" : undefined}
             onClick={() => to("tasks")}
@@ -500,6 +521,11 @@ export function App() {
                   <Settings kbId={actualKbId} />
                 ) : view === "tasks" ? (
                   <Tasks kb={kb || null} documentId={selectedId || undefined} />
+                ) : view === "review" ? (
+                  <Review
+                    knowledgeBases={kbs.data || []}
+                    currentKbId={actualKbId}
+                  />
                 ) : view === "trash" ? (
                   <Trash />
                 ) : !kb ? (

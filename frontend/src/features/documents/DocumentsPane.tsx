@@ -1134,6 +1134,30 @@ function DocumentProcessing({
   const related = jobs.filter((job) => job.document_id === document.id);
   const running = related.find(isActiveJob);
   if (running) {
+    if (
+      document.parse_status === "ready" &&
+      document.index_status === "ready"
+    ) {
+      const metadataLabel =
+        running.status === "queued"
+          ? "后台任务排队中"
+          : running.status === "retry_wait"
+            ? "后台任务待重试"
+            : running.stage === "classifying"
+              ? "分类建议生成中"
+              : running.stage === "summarizing"
+                ? "摘要生成中"
+                : running.stage === "embedding" || running.kind === "reindex"
+                  ? "索引更新中"
+                  : running.stage === "enriching"
+                    ? "摘要与建议生成中"
+                    : "后台完善中";
+      return (
+        <span className="status status-processing">
+          可检索 · {metadataLabel}
+        </span>
+      );
+    }
     const pending = running.status === "queued";
     return (
       <span className="status status-processing">

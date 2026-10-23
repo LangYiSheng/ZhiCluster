@@ -15,6 +15,7 @@ from app.db.models import (
     Document,
     DocumentChunk,
     EmbeddingProfile,
+    Folder,
     IngestionJob,
     JobEvent,
     KnowledgeBase,
@@ -191,6 +192,8 @@ def test_full_fake_ai_pipeline_persists_suggestions_without_applying(ingestion_c
 
         def chat(self, messages, *, json_mode=False, max_tokens=0):
             prompt = messages[-1]["content"]
+            if "同时生成文档摘要与分类建议" in messages[0]["content"]:
+                return json.dumps({"summary": {"short_summary": "研究短摘要", "detailed_summary": "研究详细摘要", "keywords": ["RAG"], "main_topics": ["知识库"]}, "classification": {"existing_folder_id": None, "proposed_folder_path": "研究", "existing_tag_ids": [], "new_tag_names": ["检索", "知识库", "RAG"], "short_summary": "分类摘要", "reason": "研究资料", "confidence_hint": "未经校准的启发式"}})
             if "为文档建议分类" in prompt:
                 return json.dumps({"existing_folder_id": None, "proposed_folder_path": "研究", "existing_tag_ids": [], "new_tag_names": ["检索", "知识库", "RAG"], "short_summary": "分类摘要", "reason": "研究资料", "confidence_hint": "未经校准的启发式"})
             if json_mode:
@@ -231,3 +234,211 @@ def test_provider_failure_after_lease_transfer_cannot_mark_document_failed(inges
         document = db.get(Document, document_id)
         assert document.index_status != "failed"
         assert document.error is None
+
+
+JOINT_SUMMARY = {"short_summary": "研究短摘要", "detailed_summary": "研究详细摘要", "keywords": ["检索"], "main_topics": ["研究"]}
+JOINT_CLASSIFICATION = {"existing_folder_id": None, "existing_tag_ids": [], "new_tag_names": ["研究"], "short_summary": "研究资料", "reason": "资料包含研究事实"}
+
+
+def test_joint_model_call_starts_after_text_and_vectors_are_durable(ingestion_context):
+    factory, config, document_id, job_id = ingestion_context
+    config.embedding_base_url, config.embedding_api_key, config.embedding_model = "https://test.invalid/v1", "test-only", "test-embedding"
+
+    class Gateway(ModelGateway):
+        calls = 0
+        llm_configured = True
+
+        def embed(self, texts):
+            return [[1.0, 0.1, 0.2] for _ in texts]
+
+        def chat(self, messages, **kwargs):
+            self.calls += 1
+            with factory() as reader:
+                document = reader.get(Document, document_id)
+                assert document.parse_status == document.index_status == "ready"
+                assert reader.scalar(select(func.count(DocumentChunk.id)).where(DocumentChunk.document_id == document_id)) > 0
+                assert reader.scalar(select(func.count(ChunkEmbedding.id))) > 0
+            assert "同时生成文档摘要与分类建议" in messages[0]["content"]
+            return json.dumps({"summary": JOINT_SUMMARY, "classification": JOINT_CLASSIFICATION})
+
+    gateway = Gateway(config)
+    process_ingestion_job(job_id, factory, config, gateway)
+    assert gateway.calls == 1
+    with factory() as db:
+        assert db.get(IngestionJob, job_id).status == "completed"
+        assert db.get(Document, document_id).summary_status == db.get(Document, document_id).classification_status == "ready"
+
+
+@pytest.mark.parametrize("failed_stage", ["summary", "classification"])
+def test_joint_half_failure_retries_only_missing_stage(ingestion_context, failed_stage):
+    factory, config, document_id, job_id = ingestion_context
+
+    class Gateway:
+        llm_configured = True
+        embeddings_configured = False
+        calls = []
+
+        def chat(self, messages, **kwargs):
+            self.calls.append(messages)
+            if len(self.calls) == 1:
+                return json.dumps({"summary": JOINT_SUMMARY, "classification": JOINT_CLASSIFICATION, failed_stage: {"invalid": True}})
+            assert "同时生成文档摘要与分类建议" not in messages[0]["content"]
+            return json.dumps(JOINT_SUMMARY if failed_stage == "summary" else JOINT_CLASSIFICATION)
+
+    gateway = Gateway()
+    process_ingestion_job(job_id, factory, config, gateway)
+    with factory() as db:
+        document = db.get(Document, document_id)
+        assert getattr(document, f"{failed_stage}_status") == "failed"
+        successful_stage = "summary" if failed_stage == "classification" else "classification"
+        assert getattr(document, f"{successful_stage}_status") == "ready"
+        job = db.get(IngestionJob, job_id)
+        job.status = "queued"
+        setattr(document, f"{failed_stage}_status", "queued")
+        db.commit()
+    process_ingestion_job(job_id, factory, config, gateway)
+    assert len(gateway.calls) == 2
+    with factory() as db:
+        document = db.get(Document, document_id)
+        assert document.summary_status == document.classification_status == "ready"
+        assert document.short_summary == JOINT_SUMMARY["short_summary"]
+        assert db.scalar(select(ClassificationSuggestion).where(ClassificationSuggestion.document_id == document_id)).payload["new_tag_names"] == ["研究"]
+
+
+@pytest.mark.parametrize("change", ["catalog", "document"])
+def test_joint_classification_snapshot_drift_keeps_valid_summary_only(ingestion_context, change):
+    factory, config, document_id, job_id = ingestion_context
+
+    class Gateway:
+        llm_configured = True
+        embeddings_configured = False
+
+        def chat(self, messages, **kwargs):
+            with factory() as editor:
+                document = editor.get(Document, document_id)
+                if change == "catalog":
+                    editor.add(Folder(kb_id=document.kb_id, name="并发新目录"))
+                else:
+                    document.display_name, document.version = "人工改名.md", document.version + 1
+                editor.commit()
+            return json.dumps({"summary": JOINT_SUMMARY, "classification": JOINT_CLASSIFICATION})
+
+    process_ingestion_job(job_id, factory, config, Gateway())
+    with factory() as db:
+        document = db.get(Document, document_id)
+        assert document.summary_status == "ready" and document.classification_status == "failed"
+        assert db.scalar(select(ClassificationSuggestion).where(ClassificationSuggestion.document_id == document_id)) is None
+        assert db.get(IngestionJob, job_id).status == "retry_wait"
+
+
+@pytest.mark.parametrize("review_status", ["applied", "rejected"])
+def test_retry_never_replaces_reviewed_classification(ingestion_context, review_status):
+    factory, config, document_id, job_id = ingestion_context
+    with factory() as db:
+        document = db.get(Document, document_id)
+        db.add(ClassificationSuggestion(document_id=document_id, kb_id=document.kb_id, document_version=document.version, status=review_status, payload={"reviewed": True}))
+        document.classification_status = "failed"
+        db.commit()
+
+    class Gateway:
+        llm_configured = True
+        embeddings_configured = False
+
+        def chat(self, messages, **kwargs):
+            assert "同时生成文档摘要与分类建议" not in messages[0]["content"]
+            return json.dumps(JOINT_SUMMARY)
+
+    process_ingestion_job(job_id, factory, config, Gateway())
+    with factory() as db:
+        current = db.scalar(select(ClassificationSuggestion).where(ClassificationSuggestion.document_id == document_id))
+        assert current.status == review_status and current.payload == {"reviewed": True}
+        assert db.get(Document, document_id).classification_status == "ready"
+
+
+@pytest.mark.parametrize("provider_fails", [False, True])
+def test_joint_completion_from_old_owner_never_persists_after_handoff(ingestion_context, provider_fails):
+    factory, config, document_id, job_id = ingestion_context
+    with factory() as db:
+        claim_job(db, "old-enrichment-worker", 60)
+
+    class Gateway:
+        llm_configured = True
+        embeddings_configured = False
+
+        def chat(self, messages, **kwargs):
+            with factory() as recovery:
+                recovery.get(IngestionJob, job_id).lease_owner = "new-enrichment-worker"
+                recovery.commit()
+            if provider_fails:
+                raise ProviderError("controlled provider error after handoff", retryable=True)
+            return json.dumps({"summary": JOINT_SUMMARY, "classification": JOINT_CLASSIFICATION})
+
+    process_ingestion_job(job_id, factory, config, Gateway(), "old-enrichment-worker")
+    with factory() as db:
+        job = db.get(IngestionJob, job_id)
+        assert job.lease_owner == "new-enrichment-worker" and job.status == "running"
+        document = db.get(Document, document_id)
+        assert document.summary_status != "ready" and document.summary_status != "failed"
+        assert db.scalar(select(ClassificationSuggestion).where(ClassificationSuggestion.document_id == document_id)) is None
+
+
+@pytest.mark.parametrize("review_status", ["applied", "rejected"])
+def test_review_during_joint_request_wins_over_generated_classification(ingestion_context, review_status):
+    factory, config, document_id, job_id = ingestion_context
+    with factory() as db:
+        document = db.get(Document, document_id)
+        db.add(ClassificationSuggestion(document_id=document_id, kb_id=document.kb_id, document_version=document.version, payload={"old": True}, status="pending"))
+        document.classification_status = "failed"
+        db.commit()
+
+    class Gateway:
+        llm_configured = True
+        embeddings_configured = False
+
+        def chat(self, messages, **kwargs):
+            with factory() as review:
+                item = review.scalar(select(ClassificationSuggestion).where(ClassificationSuggestion.document_id == document_id))
+                item.status, item.payload = review_status, {"human_review": True}
+                document = review.get(Document, document_id)
+                document.version += 1
+                review.commit()
+            return json.dumps({"summary": JOINT_SUMMARY, "classification": JOINT_CLASSIFICATION})
+
+    process_ingestion_job(job_id, factory, config, Gateway())
+    with factory() as db:
+        current = db.scalar(select(ClassificationSuggestion).where(ClassificationSuggestion.document_id == document_id))
+        assert current.status == review_status and current.payload == {"human_review": True}
+        assert db.get(Document, document_id).summary_status == db.get(Document, document_id).classification_status == "ready"
+
+
+def test_classification_only_review_refresh_preserves_failed_independent_stages(ingestion_context):
+    factory, config, document_id, job_id = ingestion_context
+    process_ingestion_job(job_id, factory, config)
+    with factory() as db:
+        document = db.get(Document, document_id)
+        document.index_status = document.summary_status = "failed"
+        document.classification_status = "queued"
+        document.error = "independent index failure"
+        job = db.get(IngestionJob, job_id)
+        job.status, job.payload = "queued", {"classification_only": True}
+        db.add(ClassificationSuggestion(document_id=document_id, kb_id=document.kb_id, document_version=document.version, payload={"previous": True}, status="pending"))
+        db.commit()
+
+    class Gateway:
+        llm_configured = True
+        embeddings_configured = True
+
+        def embed(self, texts):
+            pytest.fail("review refresh must not retry an independent embedding stage")
+
+        def chat(self, messages, **kwargs):
+            assert "知识分类助手" in messages[0]["content"]
+            return json.dumps(JOINT_CLASSIFICATION)
+
+    process_ingestion_job(job_id, factory, config, Gateway())
+    with factory() as db:
+        document = db.get(Document, document_id)
+        assert document.index_status == document.summary_status == "failed"
+        assert document.classification_status == "ready"
+        assert document.error == "independent index failure"
+        assert db.get(IngestionJob, job_id).status == "completed"

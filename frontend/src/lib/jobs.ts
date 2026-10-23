@@ -60,6 +60,7 @@ export function jobStageLabel(job: Job) {
     chunking: "建立文本索引",
     embedding: "生成向量索引",
     summarizing: "生成摘要",
+    enriching: "生成摘要与分类建议",
     classifying: "生成分类建议",
     completed: "本次处理已结束",
   };

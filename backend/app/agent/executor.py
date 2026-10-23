@@ -47,8 +47,19 @@ def get_plan(db, actor, plan_id, lock=False):
     plan = db.scalar(query.with_for_update() if lock else query)
     if not plan:
         raise AppError("not_found", "整理计划不存在", 404)
-    get_run(db, actor, plan.run_id)
+    run = get_run(db, actor, plan.run_id)
+    if run.kb_id != plan.kb_id:
+        raise AppError("invalid_plan_resource", "整理计划与任务不属于同一知识库", 409)
     return plan
+
+
+def lock_plan_namespace(db, actor, plan_id):
+    """Locate without locks, then serialize writes as KB -> run -> plan."""
+    located = get_plan(db, actor, plan_id)
+    library.lock_kb_namespace(db, actor, located.kb_id)
+    run = get_run(db, actor, located.run_id, lock=True)
+    plan = get_plan(db, actor, plan_id, lock=True)
+    return plan, run
 
 
 def entity(db, key, kb_id, lock=False, include_deleted=False):
@@ -150,7 +161,7 @@ def persist_plan(db, actor, run, draft: PlanDraft, observed=None):
 
 
 def edit_plan(db, actor, plan_id, edit: PlanEdit):
-    plan = get_plan(db, actor, plan_id, lock=True)
+    plan, _ = lock_plan_namespace(db, actor, plan_id)
     if plan.status != "pending_review":
         raise AppError("invalid_plan_state", "只有待审批计划可以修改", 409)
     library.version_check(plan, edit.version)
@@ -176,8 +187,8 @@ def _snapshot(db, kind, value):
 
 def execute_plan(db, actor, plan_id, plan_version, confirm_high_risk=False):
     """Caller commits this one transaction. Replays return its durable result."""
-    plan = get_plan(db, actor, plan_id, lock=True)
-    if get_run(db, actor, plan.run_id).status == "cancelled":
+    plan, run = lock_plan_namespace(db, actor, plan_id)
+    if run.status == "cancelled":
         raise AppError("invalid_run_state", "已取消的整理任务不能批准执行", 409)
     if plan.status == "completed":
         library.version_check(plan, plan_version)
@@ -186,12 +197,10 @@ def execute_plan(db, actor, plan_id, plan_version, confirm_high_risk=False):
         raise AppError("invalid_plan_state", "此计划已拒绝、已撤销或正在执行", 409)
     library.version_check(plan, plan_version)
     data = AgentPlanData.model_validate(plan.payload)
-    library.lock_kb_namespace(db, actor, plan.kb_id)
     check_versions(db, data)
     validate_parameters(db, data)
     if data.risk_level == "high" and not confirm_high_risk:
         raise AppError("high_risk_confirmation_required", f"此计划将软删除资料，影响 {data.expected_changes} 项，请额外确认", 409)
-    run = get_run(db, actor, plan.run_id, lock=True)
     plan.status, run.status = "executing", "executing"
     plan.approved_by, plan.approved_at = actor.id, utcnow()
     emit_event(db, run.id, "status", {"message": "正在执行已批准的最终计划"})
@@ -290,26 +299,26 @@ def execute_plan(db, actor, plan_id, plan_version, confirm_high_risk=False):
 
 
 def reject_plan(db, actor, plan_id):
-    plan = get_plan(db, actor, plan_id, lock=True)
+    plan, run = lock_plan_namespace(db, actor, plan_id)
     if plan.status == "rejected":
         return plan
     if plan.status != "pending_review":
         raise AppError("invalid_plan_state", "此计划不能再拒绝", 409)
     plan.status = "rejected"
     plan.payload = {**plan.payload, "status": "rejected"}
-    run = get_run(db, actor, plan.run_id)
     run.status = "rejected"
     emit_event(db, run.id, "completed", {"message": "已拒绝计划，资料未发生修改", "status": "rejected"})
     return plan
 
 
 def undo_run(db, actor, run_id):
+    located = get_run(db, actor, run_id)
+    library.lock_kb_namespace(db, actor, located.kb_id)
     run = get_run(db, actor, run_id, lock=True)
     if run.status == "undone":
         return {"status": "undone"}
     if run.status != "completed":
         raise AppError("invalid_run_state", "只有已完成的整理可以撤销", 409)
-    library.lock_kb_namespace(db, actor, run.kb_id)
     records = list(db.scalars(select(UndoRecord).where(UndoRecord.run_id == run.id,
                         UndoRecord.status == "available").order_by(UndoRecord.created_at.desc(), UndoRecord.id.desc()).with_for_update()))
     if not records:

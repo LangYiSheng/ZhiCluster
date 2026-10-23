@@ -10,23 +10,21 @@ from app.ai.gateway import AIUnavailable, ModelGateway, ProviderError
 from app.core.config import get_settings
 from app.db.models import (
     ChunkEmbedding,
-    ClassificationSuggestion,
     Document,
     DocumentChunk,
     DocumentSection,
-    Folder,
     IngestionJob,
     KnowledgeBase,
-    Tag,
     new_id,
     utcnow,
 )
 from app.db.session import SessionLocal
 from app.ingestion.chunking import chunk_sections
-from app.ingestion.enrichment import classify_document, summarize_sections
+from app.ingestion.context import ChunkContext
 from app.ingestion.parsers import ParseError, parse_document
 from app.services.runtime_config import get_runtime_settings
 from app.worker.embeddings import ensure_embedding_profile
+from app.worker.enrichment import process_enrichment
 from app.worker.queue import emit
 
 
@@ -51,6 +49,7 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
             return
         if owner and (job.lease_owner != owner or job.status != "running"):
             return
+        classification_only = bool(job.payload.get("classification_only"))
         document = db.get(Document, job.document_id)
         kb = db.get(KnowledgeBase, job.kb_id)
         if document is None or document.deleted_at or kb is None or kb.deleted_at:
@@ -124,8 +123,11 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
                 db.commit()
                 chunks = list(db.scalars(select(DocumentChunk).where(DocumentChunk.document_id == document.id).order_by(DocumentChunk.chunk_index)))
 
-            stage("embedding", 30)
-            if not gateway.embeddings_configured:
+            if not classification_only:
+                stage("embedding", 30)
+            if classification_only:
+                pass
+            elif not gateway.embeddings_configured:
                 check_active(lock=True)
                 document.index_status = "unconfigured"
                 db.commit()
@@ -136,11 +138,12 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
                     db.commit()
                     existing = set(db.scalars(select(ChunkEmbedding.chunk_id).where(ChunkEmbedding.profile_id == profile.id, ChunkEmbedding.kb_id == document.kb_id, ChunkEmbedding.chunk_id.in_(select(DocumentChunk.id).where(DocumentChunk.document_id == document.id)))))
                     missing = [chunk for chunk in chunks if chunk.id not in existing]
+                    context = ChunkContext(document.display_name, sections)
                     batch_size = max(1, int(settings.embedding_batch_size))
                     for start in range(0, len(missing), batch_size):
                         check_active()
                         batch = missing[start:start + batch_size]
-                        vectors = gateway.embed([chunk.content for chunk in batch])
+                        vectors = gateway.embed([context.text(chunk) for chunk in batch])
                         check_active(lock=True)
                         for chunk, vector in zip(batch, vectors, strict=True):
                             if len(vector) != profile.dimension:
@@ -171,63 +174,20 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
                 db.commit()
                 return
 
-            stage("summarizing", 60)
-            if not gateway.llm_configured:
-                check_active(lock=True)
-                document.summary_status = "unconfigured"
-                document.classification_status = "unconfigured"
-                db.commit()
-            else:
-                if document.summary_status != "ready":
-                    try:
-                        def save_section(index: int, summary: str) -> None:
-                            check_active(lock=True)
-                            sections[index].section_summary = summary
-                            db.commit()
-
-                        summary = summarize_sections(sections, gateway, settings, save_section)
-                        check_active(lock=True)
-                        document.short_summary = summary.short_summary
-                        document.detailed_summary = summary.detailed_summary
-                        document.summary_metadata = {"keywords": summary.keywords, "main_topics": summary.main_topics}
-                        document.summary_status = "ready"
-                        db.commit()
-                    except (AIUnavailable, ProviderError) as error:
-                        check_active(lock=True)
-                        document.summary_status = "failed"
-                        errors.append(str(error))
-                        retryable |= getattr(error, "retryable", False)
-                        db.commit()
-                stage("classifying", 85)
-                if document.classification_status != "ready":
-                    try:
-                        folders = [{"id": folder.id, "name": folder.name, "parent_id": folder.parent_id} for folder in db.scalars(select(Folder).where(Folder.kb_id == document.kb_id, Folder.deleted_at.is_(None)))]
-                        tags = [{"id": tag.id, "name": tag.name, "aliases": tag.aliases} for tag in db.scalars(select(Tag).where(Tag.kb_id == document.kb_id))]
-                        source_summary = document.detailed_summary or "\n".join(section.section_summary for section in sections if section.section_summary) or "\n".join(section.plain_text for section in sections[:3])
-                        base_version = document.version
-                        suggestion = classify_document(document.display_name, source_summary, folders, tags, gateway, int(settings.summary_input_tokens))
-                        check_active(lock=True)
-                        db.refresh(document)
-                        current = db.scalar(select(ClassificationSuggestion).where(ClassificationSuggestion.document_id == document.id))
-                        if current is None:
-                            current = ClassificationSuggestion(document_id=document.id, kb_id=document.kb_id, document_version=base_version)
-                            db.add(current)
-                        current.payload = suggestion.model_dump()
-                        current.document_version = base_version
-                        current.model = settings.llm_model
-                        current.status = "pending"
-                        document.classification_status = "ready"
-                        db.commit()
-                    except (AIUnavailable, ProviderError) as error:
-                        check_active(lock=True)
-                        document.classification_status = "failed"
-                        errors.append(str(error))
-                        retryable |= getattr(error, "retryable", False)
-                        db.commit()
+            # Parsed text/chunks and any completed vectors are already durable
+            # and searchable before optional summaries/classification begin.
             check_active(lock=True)
-            has_unconfigured = any(status == "unconfigured" for status in (document.index_status, document.summary_status, document.classification_status))
+            emit(db, job, "document_ready", {"document_id": document.id, "parse_status": document.parse_status, "index_status": document.index_status})
+            db.commit()
+            enrichment_errors = process_enrichment(db, document, sections, gateway, settings, check_active, stage, classification_only=classification_only)
+            errors.extend(str(error) for error in enrichment_errors)
+            retryable |= any(error.retryable for error in enrichment_errors)
+            check_active(lock=True)
+            required_statuses = (document.classification_status,) if classification_only else (document.index_status, document.summary_status, document.classification_status)
+            has_unconfigured = any(status == "unconfigured" for status in required_statuses)
             job.error = "; ".join(errors) if errors else "需要配置模型服务；解析与关键词搜索已就绪" if has_unconfigured else None
-            document.error = "; ".join(errors) if errors else None
+            if not classification_only or all(status != "failed" for status in (document.index_status, document.summary_status)):
+                document.error = "; ".join(errors) if errors else None
             if retryable and job.attempts < int(settings.max_ingestion_attempts):
                 job.status = "retry_wait"
                 job.next_attempt_at = utcnow() + timedelta(seconds=min(60, 2 ** max(1, job.attempts)))

@@ -16,6 +16,8 @@ from docx.oxml.ns import qn
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
+from app.ingestion.structure import FENCE
+
 
 class ParseError(ValueError):
     """A user-correctable file format or document content error."""
@@ -87,8 +89,16 @@ def _text_sections(text: str, markdown: bool) -> list[ParsedSection]:
     lines = text.splitlines(keepends=True)
     starts = []
     offset = 0
+    fence = None
     for index, line in enumerate(lines):
-        heading = re.match(r"^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$", line.rstrip("\n")) if markdown else None
+        marker = FENCE.match(line.rstrip("\n")) if markdown else None
+        inside_fence = bool(fence)
+        if marker:
+            if fence and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not marker[2].strip():
+                fence = None
+            elif not fence:
+                fence = marker[1]
+        heading = re.match(r"^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$", line.rstrip("\n")) if markdown and not inside_fence and not marker else None
         if heading:
             starts.append((index, offset, heading.group(2), len(heading.group(1))))
         offset += len(line)

@@ -363,7 +363,13 @@ it("文档进度使用后端百分比，1以下不会放大为100%", async () =>
         new Response(
           JSON.stringify(
             path.includes("/documents")
-              ? { items: [doc], total: 1, page_size: 50 }
+              ? {
+                  items: [
+                    { ...doc, parse_status: "parsing", index_status: "queued" },
+                  ],
+                  total: 1,
+                  page_size: 50,
+                }
               : [
                   {
                     id: "job-progress",
@@ -392,6 +398,52 @@ it("文档进度使用后端百分比，1以下不会放大为100%", async () =>
   );
   expect(await screen.findByText("正在处理 1%")).toBeInTheDocument();
   expect(screen.queryByText("正在处理 50%")).not.toBeInTheDocument();
+});
+
+it("正文和向量已就绪时明确可检索，摘要与分类后台生成不阻止打开", async () => {
+  const ready = {
+    ...doc,
+    summary_status: "processing",
+    classification_status: "processing",
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async (path: string) =>
+        new Response(
+          JSON.stringify(
+            path.includes("/documents")
+              ? { items: [ready], total: 1, page_size: 50 }
+              : [
+                  {
+                    id: "metadata-job",
+                    document_id: doc.id,
+                    status: "running",
+                    stage: "enriching",
+                    progress: 70,
+                    attempts: 1,
+                  },
+                ],
+          ),
+        ),
+    ),
+  );
+  const open = vi.fn();
+  render(
+    <QueryClientProvider client={client()}>
+      <DocumentsPane
+        kb={kb}
+        folders={[]}
+        tags={[]}
+        trash={false}
+        onOpen={open}
+        selectedId=""
+      />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByText("可检索 · 摘要与建议生成中")).toBeVisible();
+  await userEvent.click(screen.getByText(doc.display_name));
+  expect(open).toHaveBeenCalledWith(ready, true);
 });
 
 it("独立回收站可恢复文档和知识库，拖入文件不会触发上传", async () => {

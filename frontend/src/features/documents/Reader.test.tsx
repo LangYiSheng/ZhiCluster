@@ -235,3 +235,93 @@ it("摘要优先，属性和历史默认折叠，错误及重试统一指向任�
   mounted.rerender(view(false));
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 });
+
+it("摘要仍在生成时可直接阅读全文，待分类建议链接统一整理审阅", async () => {
+  const document = {
+    id: "doc-review",
+    kb_id: "kb-1",
+    display_name: "可检索的资料",
+    original_filename: "review.txt",
+    ext: "txt",
+    parse_status: "ready",
+    index_status: "ready",
+    summary_status: "processing",
+    classification_status: "ready",
+    version: 3,
+    size_bytes: 100,
+    tag_ids: [],
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async (path: string) =>
+        new Response(
+          JSON.stringify(
+            path.endsWith("/content")
+              ? {
+                  text: "这段正文已经可以阅读",
+                  sections: [
+                    {
+                      id: "s-1",
+                      plain_text: "这段正文已经可以阅读",
+                      anchors: { line_start: 1, line_end: 1 },
+                    },
+                  ],
+                }
+              : path.endsWith("/suggestion")
+                ? {
+                    id: "suggestion-1",
+                    status: "pending",
+                    document_version: 3,
+                    payload: {
+                      existing_tag_ids: [],
+                      new_tag_names: [],
+                      reason: "建议按主题归档",
+                    },
+                  }
+                : path.includes("/ingestion/jobs")
+                  ? [
+                      {
+                        id: "job-1",
+                        document_id: document.id,
+                        status: "running",
+                        stage: "enriching",
+                        progress: 70,
+                        attempts: 1,
+                      },
+                    ]
+                  : document,
+          ),
+        ),
+    ),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const view = (reader: boolean) => (
+    <QueryClientProvider client={client}>
+      <Reader
+        documentId={document.id}
+        reader={reader}
+        onReader={vi.fn()}
+        folders={[]}
+        tags={[]}
+      />
+    </QueryClientProvider>
+  );
+  const mounted = render(view(false));
+  const link = await screen.findByRole("link", { name: "前往整理审阅" });
+  expect(link).toHaveAttribute(
+    "href",
+    "/review?kb=kb-1&filter_kb=kb-1&document=doc-review&tab=suggestions",
+  );
+  mounted.rerender(view(true));
+  expect(
+    await screen.findByText("这段正文已经可以阅读", {
+      selector: ".plain-text",
+    }),
+  ).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "文档操作" }));
+  expect(screen.getByRole("menuitem", { name: "审阅分类建议" })).toBeVisible();
+  client.clear();
+});

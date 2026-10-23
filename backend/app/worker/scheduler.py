@@ -66,7 +66,7 @@ class WorkerScheduler:
         if self.closed:
             return 0
         started = 0
-        for lane, kinds in (("interactive", ("chat", "agent")), ("ingestion", ("ingest", "reindex"))):
+        for lane, kinds in (("interactive", ("chat", "agent")), ("ingestion", ("ingest", "reindex", "organize"))):
             active = self.pending[lane]
             for future in list(active):
                 if future.done():

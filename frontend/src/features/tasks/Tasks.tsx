@@ -42,6 +42,7 @@ const jobKinds: Record<string, string> = {
   reindex: "重建向量索引",
   chat: "知识对话",
   agent: "整理任务",
+  organize: "生成整理方案",
 };
 
 function TaskRow({ job, kbId }: { job: Job; kbId: string }) {

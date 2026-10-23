@@ -139,6 +139,8 @@ def jobs(kb_id: str | None = None, document_id: str | None = None, group: Litera
     stmt = select(IngestionJob, Document).outerjoin(Document, IngestionJob.document_id == Document.id).where(IngestionJob.kb_id.in_(allowed))
     own_conversation = exists(select(Conversation.id).where(Conversation.id == IngestionJob.payload["conversation_id"].as_string(), Conversation.user_id == actor.id, Conversation.deleted_at.is_(None)))
     stmt = stmt.where(or_(IngestionJob.kind != "chat", own_conversation))
+    own_run = exists(select(AgentRun.id).where(AgentRun.id == IngestionJob.payload["run_id"].as_string(), AgentRun.actor_id == actor.id))
+    stmt = stmt.where(or_(IngestionJob.kind.not_in(["agent", "organize"]), own_run))
     if document_id:
         document = get_document(db, actor, document_id)
         if kb_id and document.kb_id != kb_id:
@@ -160,6 +162,10 @@ def checked_job(db, job_id, edit=False):
     (assert_can_edit_kb if edit else assert_can_read_kb)(db, get_actor(db), job.kb_id)
     if job.kind == "chat":
         checked_conversation(db, job.payload.get("conversation_id"))
+    elif job.kind in {"agent", "organize"}:
+        from app.agent.executor import get_run
+
+        get_run(db, get_actor(db), job.payload.get("run_id"))
     return job
 
 
@@ -190,7 +196,7 @@ def retry_job(job_id: str, db: Session = Depends(get_db, scope="function")):
         if later:
             raise AppError("chat_turn_is_past", "此回答之后已有新对话，请回到知识对话重新提问", 409)
         message.status, message.error = "queued", None
-    if job.kind == "agent":
+    if job.kind in {"agent", "organize"}:
         run = db.scalar(select(AgentRun).where(AgentRun.id == job.payload.get("run_id")).with_for_update().execution_options(populate_existing=True))
         if db.scalar(select(AgentPlan.id).where(AgentPlan.run_id == job.payload.get("run_id"))):
             raise AppError("agent_already_planned", "此任务已有整理计划，请重新打开计划或创建新的整理任务", 409)
@@ -219,7 +225,7 @@ def cancel_job(job_id: str, db: Session = Depends(get_db, scope="function")):
         if message and message.status in {"queued", "processing"}:
             message.status, message.error = "failed", "用户已取消生成"
             emit_chat(db, message.conversation_id, "error", {"message_id": message.id, "message": message.error})
-    elif job.kind == "agent":
+    elif job.kind in {"agent", "organize"}:
         from app.agent.executor import emit_event
 
         run = db.scalar(select(AgentRun).where(AgentRun.id == job.payload.get("run_id")).with_for_update().execution_options(populate_existing=True))

@@ -1238,6 +1238,399 @@
         }
       }
     },
+    "/api/review/suggestions": {
+      "get": {
+        "tags": [
+          "review"
+        ],
+        "summary": "Suggestions",
+        "operationId": "suggestions_api_review_suggestions_get",
+        "parameters": [
+          {
+            "name": "kb_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kb Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "pending",
+                "applied",
+                "rejected",
+                "all"
+              ],
+              "type": "string",
+              "default": "pending",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 30,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/review/suggestions/batch": {
+      "post": {
+        "tags": [
+          "review"
+        ],
+        "summary": "Batch Suggestions",
+        "operationId": "batch_suggestions_api_review_suggestions_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchSuggestionDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/review/suggestions/{suggestion_id}": {
+      "post": {
+        "tags": [
+          "review"
+        ],
+        "summary": "Suggestion Decision",
+        "operationId": "suggestion_decision_api_review_suggestions__suggestion_id__post",
+        "parameters": [
+          {
+            "name": "suggestion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Suggestion Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestionDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/review/suggestions/{suggestion_id}/refresh": {
+      "post": {
+        "tags": [
+          "review"
+        ],
+        "summary": "Regenerate Suggestion",
+        "operationId": "regenerate_suggestion_api_review_suggestions__suggestion_id__refresh_post",
+        "parameters": [
+          {
+            "name": "suggestion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Suggestion Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestionRefresh"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/review/plans": {
+      "post": {
+        "tags": [
+          "review"
+        ],
+        "summary": "Create Organization Plan",
+        "operationId": "create_organization_plan_api_review_plans_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/trash": {
+      "get": {
+        "summary": "Trash",
+        "operationId": "trash_api_trash_get",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "document",
+                "folder",
+                "knowledge_base"
+              ],
+              "type": "string",
+              "default": "document",
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 30,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/trash/purge": {
+      "post": {
+        "summary": "Purge",
+        "operationId": "purge_api_trash_purge_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Health",
@@ -1379,6 +1772,42 @@
         }
       }
     },
+    "/api/settings/models": {
+      "post": {
+        "summary": "Model Catalog",
+        "operationId": "model_catalog_api_settings_models_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/settings/rebuild-embeddings": {
       "post": {
         "summary": "Rebuild",
@@ -1472,6 +1901,43 @@
                 }
               ],
               "title": "Kb Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "attention",
+                    "active",
+                    "completed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group"
             }
           }
         ],
@@ -2012,9 +2478,16 @@
           {
             "name": "kb_id",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "Kb Id"
             }
           }
@@ -2488,6 +2961,66 @@
           "action"
         ],
         "title": "Batch"
+      },
+      "BatchSuggestionDecision": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "apply",
+              "reject"
+            ],
+            "title": "Action"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BatchSuggestionItem"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action",
+          "items"
+        ],
+        "title": "BatchSuggestionDecision"
+      },
+      "BatchSuggestionItem": {
+        "properties": {
+          "suggestion_id": {
+            "type": "string",
+            "title": "Suggestion Id"
+          },
+          "document_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Document Version"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "suggestion_id",
+          "document_version"
+        ],
+        "title": "BatchSuggestionItem"
       },
       "Body_upload_api_knowledge_bases__kb_id__uploads_post": {
         "properties": {
@@ -3365,6 +3898,22 @@
               }
             ],
             "title": "Next Attempt At"
+          },
+          "document_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Name"
+          },
+          "document_available": {
+            "type": "boolean",
+            "title": "Document Available",
+            "default": true
           }
         },
         "type": "object",
@@ -3599,6 +4148,34 @@
         "type": "object",
         "title": "LlmPatch"
       },
+      "ModelListRequest": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "llm",
+              "embedding"
+            ],
+            "title": "Scope"
+          },
+          "draft": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationDraft"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "title": "ModelListRequest"
+      },
       "ModelTestRequest": {
         "properties": {
           "scope": {
@@ -3708,6 +4285,35 @@
         "additionalProperties": false,
         "type": "object",
         "title": "MoveParams"
+      },
+      "OrganizationRequest": {
+        "properties": {
+          "kb_id": {
+            "type": "string",
+            "title": "Kb Id"
+          },
+          "goal": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Goal",
+            "default": "按资料主题整理目录和标签，优先复用已有分类，保留无需调整的文件"
+          },
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Document Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kb_id"
+        ],
+        "title": "OrganizationRequest"
       },
       "PlanEdit": {
         "properties": {
@@ -3860,6 +4466,39 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ProcessingPatch"
+      },
+      "PurgeRequest": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "document",
+              "folder",
+              "knowledge_base",
+              "all"
+            ],
+            "title": "Kind"
+          },
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "title": "Ids"
+          },
+          "confirm": {
+            "type": "boolean",
+            "const": true,
+            "title": "Confirm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "confirm"
+        ],
+        "title": "PurgeRequest"
       },
       "Rebuild": {
         "properties": {
@@ -4118,6 +4757,11 @@
             "title": "Mode",
             "default": "hybrid"
           },
+          "rerank": {
+            "type": "boolean",
+            "title": "Rerank",
+            "default": false
+          },
           "limit": {
             "type": "integer",
             "maximum": 100.0,
@@ -4225,6 +4869,11 @@
             },
             "type": "array",
             "title": "Kb Ids"
+          },
+          "reranking": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Reranking"
           }
         },
         "type": "object",
@@ -4345,6 +4994,57 @@
           "action"
         ],
         "title": "SuggestionAction"
+      },
+      "SuggestionDecision": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "apply",
+              "reject"
+            ],
+            "title": "Action"
+          },
+          "document_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Document Version"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action",
+          "document_version"
+        ],
+        "title": "SuggestionDecision"
+      },
+      "SuggestionRefresh": {
+        "properties": {
+          "document_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Document Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "document_version"
+        ],
+        "title": "SuggestionRefresh"
       },
       "TagCreate": {
         "properties": {

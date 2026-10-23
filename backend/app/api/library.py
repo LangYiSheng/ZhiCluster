@@ -363,35 +363,14 @@ def suggestion(doc_id: str, db: Session = Depends(get_db, scope="function")):
 
 @router.post("/documents/{doc_id}/suggestion")
 def apply_suggestion(doc_id: str, body: SuggestionAction, db: Session = Depends(get_db, scope="function")):
+    from app.schemas.review import SuggestionDecision
+    from app.services.review import decide_suggestion
+
     actor = get_actor(db)
     doc = get_document(db, actor, doc_id)
-    assert_can_edit_kb(db, actor, doc.kb_id)
-    item = db.scalar(select(ClassificationSuggestion).where(ClassificationSuggestion.document_id == doc_id).with_for_update())
-    if not item or item.status != "pending":
+    item = db.scalar(select(ClassificationSuggestion).where(ClassificationSuggestion.document_id == doc_id))
+    if not item:
         raise AppError("not_pending", "没有待处理的建议", 409)
-    version_check(doc, item.document_version)
-    if body.action == "reject":
-        item.status = "rejected"
-        return item
-    from app.ingestion.enrichment import ClassificationResult
-    payload = ClassificationResult.model_validate(body.payload or item.payload).model_dump()
-    folder_id = payload.get("existing_folder_id")
-    validate_folder(db, doc.kb_id, folder_id)
-    if not folder_id and payload.get("proposed_folder_path"):
-        parent = None
-        for name in payload["proposed_folder_path"].split("/"):
-            if not name.strip():
-                continue
-            existing = db.scalar(select(Folder).where(Folder.kb_id == doc.kb_id, Folder.parent_id == parent, Folder.name == name.strip(), Folder.deleted_at.is_(None)))
-            parent = existing.id if existing else create_folder(db, actor, doc.kb_id, {"name": name, "parent_id": parent}).id
-        folder_id = parent
-    tag_ids = list(payload.get("existing_tag_ids", []))
-    for name in payload.get("new_tag_names", []):
-        existing = next((t for t in db.scalars(select(Tag).where(Tag.kb_id == doc.kb_id)) if normalized_name(name) in {t.normalized_name, *map(normalized_name, t.aliases)}), None)
-        if existing:
-            tag_ids.append(existing.id)
-        else:
-            tag_ids.append(add_tag(doc.kb_id, TagCreate(name=name), db).id)
-    update_document(db, actor, doc.id, {"folder_id": folder_id, "tag_ids": tag_ids})
-    item.payload, item.status = payload, "applied"
-    return item
+    result = decide_suggestion(db, actor, item.id, SuggestionDecision(action=body.action,
+        document_version=doc.version, payload=body.payload))
+    return {**snapshot(item), "run_id": result.get("run_id"), "undo_available": result.get("undo_available", False)}

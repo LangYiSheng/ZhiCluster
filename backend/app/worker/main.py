@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 def dispatch(job_id: str, kind: str, owner: str, settings, session_factory=SessionLocal) -> None:
     if kind in {"ingest", "reindex"}:
         process_ingestion_job(job_id, session_factory, settings, owner=owner)
+    elif kind == "organize":
+        from app.agent.organization import process_organization_job
+
+        process_organization_job(job_id, session_factory, settings, owner=owner)
     elif kind == "chat":
         from app.services.chat import process_chat_job
 

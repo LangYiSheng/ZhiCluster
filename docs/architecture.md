@@ -26,10 +26,10 @@ flowchart LR
 - `api/`：Pydantic 输入、路由、错误映射和 SSE。上传请求只验证/保存文件与创建任务，不在 API 进程执行长文档解析。
 - `services/`：知识库权限、目录树、手动元数据操作、聊天和运行配置服务；API 与 Agent 共用相同业务边界。`chat_context.py` 单独约束追问、历史和证据预算；`trash.py` 负责回收站查询及事务删除，`storage_cleanup.py` 负责已确认原文件的有限清理。
 - `db/`：SQLAlchemy 2 模型、同步 Session 与初始化 seed。采用同步事务减少 Demo 多阶段状态管理复杂度；FastAPI 同步路由在线程池中执行，长任务由独立 worker 处理。
-- `ingestion/`：真实文件解析、来源锚点、token 切块、层级摘要与结构化分类建议；`parallel.py` 提供有界并行映射，数据库写入仍由协调线程负责。
+- `ingestion/`：真实文件解析、来源锚点和结构切块；`summaries.py` 管理分组摘要与检查点，`classification.py` 管理分类输入及校验，`enrichment.py` 协调联合请求；`parallel.py` 提供有界并行映射，数据库写入仍由协调线程负责。
 - `ai/`：HTTPX OpenAI 兼容聊天与向量适配器；两个服务独立配置，密钥只在后端使用。`concurrency.py` 在进程内跨网关实例共享模型调用额度，区分交互和后台任务。没有模型配置时抛明确异常，不生成替代 AI 业务结果。
 - `retrieval/`：`terms.py` 规划查询词和复合子问句，`ranking.py` 负责词面打分、融合、多样性和片段；`search.py` 负责范围 SQL 与检索协调，`evidence.py` 提供可选、有界模型证据重排。
-- `agent/`：LangChain `create_agent` 的只读工具规划、Pydantic 计划、LangGraph 审批流程、事务执行器、审计与撤销。
+- `agent/`：LangChain `create_agent` 的只读工具规划、Pydantic 计划、LangGraph 审批流程、事务执行器、审计与撤销；`organization.py` 用有界 JSON 请求生成现有资料的整理方案，复用审批执行器。
 - `worker/`：`queue.py` 负责持久领取和租约，`scheduler.py` 负责交互/入库两个并发通道及心跳，`pipeline.py` 负责分阶段提交和恢复，`embeddings.py` 负责并发 profile 创建的冲突处理。
 
 当前保留清晰的模块边界，未为小规模 Demo 增加独立 repository 类、Redis、Celery 或专用搜索引擎。SQL 查询位于相应服务或管线模块。
@@ -55,7 +55,7 @@ flowchart LR
 3. 入库的分块、向量批次、摘要预算和模型网关保持该快照；聊天的检索和流式回答保持该快照；Agent 的聊天模型及其只读检索工具也使用同一快照。保存新配置不会替换执行中的对象，心跳闭包同样持有本次参数。
 4. 执行尝试结束后，下次领取重新读取数据库。崩溃、租约回收或显式重试开始新的执行尝试，可能使用更新后的配置；当前不持久化每个任务的历史配置或 revision。Agent 已生成并等待审批的业务计划仍以保存的最终计划及实体版本执行，不在批准时重新向模型生成计划。
 
-worker 的两个通道容量属于启动配置：`WORKER_INGESTION_CONCURRENCY` 默认 3（有效范围 1–16），处理 ingest/reindex；`WORKER_INTERACTIVE_CONCURRENCY` 默认 1（有效范围 1–8），处理 chat/agent。调整后重启 worker，不属于网页运行配置字段。通道有空闲线程时才领取任务，防止任务持有租约却排在执行器内部等待。每个任务使用独立 Session、owner 和续约线程；同一文档的 ingest/reindex 通过任务及文档行锁串行领取。优雅停止会等待已领取任务完成，等待期间保持续约。
+worker 的两个通道容量属于启动配置：`WORKER_INGESTION_CONCURRENCY` 默认 3（有效范围 1–16），处理 ingest/reindex/organize；`WORKER_INTERACTIVE_CONCURRENCY` 默认 1（有效范围 1–8），处理 chat/agent。调整后重启 worker，不属于网页运行配置字段。通道有空闲线程时才领取任务，防止任务持有租约却排在执行器内部等待。每个任务使用独立 Session、owner 和续约线程；同一文档的 ingest/reindex 通过任务及文档行锁串行领取。优雅停止会等待已领取任务完成，等待期间保持续约。
 
 `MAX_CONCURRENT_MODEL_CALLS` 与上面的任务线程数分别生效。相同连接配置和限额的网关实例在同一进程内共享额度；后台最多占用 `max(1,限额−1)` 个槽，等待中的交互请求优先取得后续空闲槽。限额至少为 2 时可为交互保留一个槽，限额为 1 时不能预留或抢占正在执行的请求。API 和 worker 是不同进程，各自执行限额；这不是部署全局或服务商账户级限流。配置改变时，旧请求完成并归还原额度，新快照使用相应额度。
 
@@ -65,13 +65,15 @@ worker 的两个通道容量属于启动配置：`WORKER_INGESTION_CONCURRENCY` 
 
 ## 入库与恢复
 
-任务状态和事件保存在数据库，worker 使用 `FOR UPDATE SKIP LOCKED` 领取并写入 owner/lease，后台线程续约。多个文档可以同时入库，聊天使用独立通道。单个文档的阶段依次为 parsing、chunking、embedding、summarizing、classifying。正常终态为 completed；缺 Key 或 AI 子阶段失败时可为 partial_ready，已完成解析与关键词检索仍可使用。
+任务状态和事件保存在数据库，worker 使用 `FOR UPDATE SKIP LOCKED` 领取并写入 owner/lease，后台线程续约。多个文档可以同时入库，聊天使用独立通道。单个文档先完成 parsing、chunking、embedding，再执行摘要及分类的 enriching；只补其中一项时使用相应单项阶段。解析和索引提交后立即发布 document_ready，阅读与检索不等待摘要及分类。正常终态为 completed；缺 Key 或 AI 子阶段失败时可为 partial_ready，已完成的阅读与检索仍可使用。
 
-四格式分别提供真实来源精度：PDF 页码；DOCX 标题与段落范围；Markdown 标题层级与行号；TXT 行号。PDF 无文本层明确报错，不尝试 OCR。切块默认约 800 tokens、100 tokens 重叠，按句段边界优先截取。
+四格式分别提供真实来源精度：PDF 页码；DOCX 标题与段落范围；Markdown 标题层级与行号；TXT 行号。PDF 无文本层明确报错，不尝试 OCR。切块默认约 800 tokens、100 tokens 重叠，按句段边界优先截取。token 偏移窗口避免反复编码剩余全文；能放入预算的 Markdown 代码块和表格尽量保持完整，大表格优先按行切开。代码块内的伪标题不形成章节。原文及来源定位保持不变，新建或补齐向量的输入另加最多 96 tokens 的文件名、章节路径和续表表头上下文。
 
 原文解析完成后持久化 sections，再持久化 chunks。若两次提交之间崩溃，可从已保存 sections 重建 chunks。Embedding 按批提交并报告真实的已完成/总 chunk 数；重试只补当前 profile 缺失的 chunk。多个文档同时首次创建 profile 时，嵌套事务仅回滚冲突插入并复用同一 profile，不丢弃外层任务状态。
 
-可放入摘要输入预算的短文档直接进行一次结构化摘要，无须对每个段落或 PDF 页面分别请求模型。长文档的缺失章节摘要通过有界线程并行计算，完成后由协调线程逐次保存，树形聚合仍受输入和调用次数预算约束。AI 分类只保存 pending suggestion，人工应用时重新校验文档版本及同库目标。
+可放入摘要输入预算的短文档用一次结构化请求返回摘要与分类建议。长文档按输入预算打包缺失章节，每组最多 8 节，有界并行处理并逐节校验、保存检查点，再进行一次最终联合请求。摘要与分类分别校验及持久化：其中一份无效时保留另一份，重试只补缺失阶段。输入和调用次数仍受运行配置预算限制；模型网络等待期间不持有文档或目录行锁，提交前重验 owner、文档版本及分类目录快照。
+
+AI 分类只保存 pending suggestion，不直接移动资料。统一整理审阅页跨知识库分页展示建议，支持编辑、逐项或批量应用和拒绝。应用复用事务执行器、审计及撤销；标签默认追加，保留人工已有标签。旧建议对应的文档版本失效时，可显式排队重新生成，只运行分类，不重做摘要或向量；已应用或已拒绝建议不会被后台覆盖。
 
 ## 检索、聊天与事件
 
@@ -96,6 +98,8 @@ worker 的两个通道容量属于启动配置：`WORKER_INGESTION_CONCURRENCY` 
 数据库删除与 `StorageDeletion` 待清理记录在同一事务提交。随后只清理当前用户已确认项目的原文件，每次最多 64 条；路径必须符合私有原件键结构，拒绝目录符号链接/联接，只删除具体文件及空父目录。清理失败保留 attempts/error，不回滚已经完成的元数据删除。API 返回 `pending_file_cleanup`；再次明确确认清空时重试剩余记录。当前没有后台自动删除线程或定时清理任务。
 
 ## Agent 审批
+
+整理审阅页可为指定知识库及至多 50 份文档生成整理方案，优先复用现有目录和标签。该任务走后台通道，使用一次有界 JSON 请求，不依赖模型的工具调用能力；只允许创建目录、移动文档和追加标签。生成阶段不修改文件，用户审阅并批准最终版本后才执行，也可拒绝或在版本检查通过后撤销。范围和源文档版本在模型请求前后均检查。
 
 LangChain 只读工具可列举和搜索授权范围内资料，没有 Shell/SQL/Python 执行工具。模型输出结构化计划，LangGraph 在 Review 节点 interrupt，整批审批后进入 Execute/Verify。用户编辑后的最终计划保存在业务表，执行器读取该版本；创建文件夹、移动、打标、重命名与软删除在事务中执行。
 
