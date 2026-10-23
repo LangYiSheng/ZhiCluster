@@ -8,12 +8,13 @@ import {
 import type { Conversation, KnowledgeBase } from "../../lib/api";
 import { Empty, ErrorState, Loading } from "../../components/common";
 import { Button } from "../../components/ui/button";
-import { Dialog } from "../../components/ui/dialog";
+import { Popover } from "../../components/ui/popover";
 import { Menu, MenuItem } from "../../components/ui/menu";
 
 export function ConversationHistory({
   open,
   onOpenChange,
+  anchorElement,
   conversations,
   currentId,
   knowledgeBases,
@@ -27,6 +28,7 @@ export function ConversationHistory({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  anchorElement?: HTMLElement | null;
   conversations: Conversation[];
   currentId: string;
   knowledgeBases: KnowledgeBase[];
@@ -39,7 +41,13 @@ export function ConversationHistory({
   onDelete: (id: string) => void;
 }) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title="历史对话" wide>
+    <Popover
+      open={open}
+      onOpenChange={onOpenChange}
+      anchorElement={anchorElement}
+      title="历史对话"
+      className="history-popover"
+    >
       <div className="conversation-history">
         <div className="history-actions">
           <span className="muted">{conversations.length} 个对话</span>
@@ -123,6 +131,6 @@ export function ConversationHistory({
           </div>
         )}
       </div>
-    </Dialog>
+    </Popover>
   );
 }

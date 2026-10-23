@@ -1,0 +1,173 @@
+import { lazy, Suspense } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { FileText, FolderOpen, X } from "lucide-react";
+import type { Dispatch, KeyboardEvent } from "react";
+import { api } from "../lib/api";
+import type { Document, Folder, Tag } from "../lib/api";
+import { Button } from "../components/ui/button";
+import { Loading } from "../components/common";
+import { DocumentsPane } from "../features/documents/DocumentsPane";
+import type {
+  ReferenceAction,
+  ReferenceState,
+  ReferenceTab,
+} from "./referenceWorkspace";
+
+const Reader = lazy(() =>
+  import("../features/documents/Reader").then((m) => ({ default: m.Reader })),
+);
+
+function ReferenceContent({
+  tab,
+  active,
+  onReader,
+  onOpen,
+}: {
+  tab: ReferenceTab;
+  active: boolean;
+  onReader: (reader: boolean) => void;
+  onOpen: (doc: Document, reader?: boolean) => void;
+}) {
+  const folders = useQuery({
+    queryKey: ["folders", tab.kb.id],
+    queryFn: () =>
+      api<Folder[]>(
+        `/knowledge-bases/${tab.kb.id}/folders?include_deleted=true`,
+      ),
+  });
+  const tags = useQuery({
+    queryKey: ["tags", tab.kb.id],
+    queryFn: () => api<Tag[]>(`/knowledge-bases/${tab.kb.id}/tags`),
+  });
+  return tab.kind === "library" ? (
+    <DocumentsPane
+      kb={tab.kb}
+      folders={folders.data || []}
+      tags={tags.data || []}
+      trash={false}
+      active={active}
+      selectedId=""
+      onOpen={onOpen}
+    />
+  ) : (
+    <Suspense fallback={<Loading />}>
+      <Reader
+        documentId={tab.documentId!}
+        active={active}
+        citation={tab.citation}
+        reader={tab.reader}
+        onReader={onReader}
+        folders={folders.data || []}
+        tags={tags.data || []}
+      />
+    </Suspense>
+  );
+}
+
+export function ReferencePane({
+  state,
+  dispatch,
+  active,
+  onOpen,
+}: {
+  state: ReferenceState;
+  dispatch: Dispatch<ReferenceAction>;
+  active: boolean;
+  onOpen: (doc: Document, reader?: boolean) => void;
+}) {
+  const multiple = state.tabs.length > 1;
+  const selected = state.tabs.find((tab) => tab.id === state.activeId);
+  if (!selected) return null;
+  function tabKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+    if (!keys.includes(event.key)) return;
+    event.preventDefault();
+    const count = state.tabs.length;
+    const next =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? count - 1
+          : (index + (event.key === "ArrowRight" ? 1 : -1) + count) % count;
+    dispatch({ type: "activate", id: state.tabs[next].id });
+    const buttons = event.currentTarget
+      .closest('[role="tablist"]')
+      ?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+    buttons?.[next].focus();
+  }
+  return (
+    <aside className="reference-pane" aria-label="参考资料">
+      <header className="reference-pane-heading">
+        <span>
+          {selected.kind === "library" ? (
+            <FolderOpen size={16} />
+          ) : (
+            <FileText size={16} />
+          )}
+          <strong>{multiple ? "参考资料" : selected.title}</strong>
+        </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="关闭参考资料"
+          onClick={() => dispatch({ type: "clear" })}
+        >
+          <X size={17} />
+        </Button>
+      </header>
+      {multiple && (
+        <div className="reference-tabs" role="tablist" aria-label="打开的资料">
+          {state.tabs.map((tab, index) => (
+            <div
+              className={`reference-tab ${state.activeId === tab.id ? "is-active" : ""}`}
+              key={tab.id}
+            >
+              <button
+                id={`reference-tab-${tab.id}`}
+                role="tab"
+                aria-selected={state.activeId === tab.id}
+                aria-controls={`reference-panel-${tab.id}`}
+                tabIndex={state.activeId === tab.id ? 0 : -1}
+                onClick={() => dispatch({ type: "activate", id: tab.id })}
+                onKeyDown={(event) => tabKey(event, index)}
+                title={tab.title}
+              >
+                {tab.title}
+              </button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`关闭 ${tab.title}`}
+                onClick={() => dispatch({ type: "close", id: tab.id })}
+              >
+                <X size={13} />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="reference-content">
+        {state.tabs.map((tab) => (
+          <div
+            className="reference-view"
+            key={tab.id}
+            id={`reference-panel-${tab.id}`}
+            role="tabpanel"
+            aria-label={!multiple ? tab.title : undefined}
+            aria-labelledby={multiple ? `reference-tab-${tab.id}` : undefined}
+            hidden={tab.id !== state.activeId}
+          >
+            <ReferenceContent
+              tab={tab}
+              active={active && tab.id === state.activeId}
+              onOpen={onOpen}
+              onReader={(reader) =>
+                dispatch({ type: "reader", id: tab.id, reader })
+              }
+            />
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
+}

@@ -43,6 +43,7 @@ export function DocumentsPane({
   tags,
   trash,
   active = true,
+  layout = "compact",
   onOpen,
   selectedId,
   onUnclassified,
@@ -52,6 +53,7 @@ export function DocumentsPane({
   tags: Tag[];
   trash: boolean;
   active?: boolean;
+  layout?: "compact" | "page";
   onOpen: (doc: Document, reader?: boolean) => void;
   selectedId: string;
   onUnclassified?: () => void;
@@ -203,6 +205,7 @@ export function DocumentsPane({
   function drop(e: DragEvent, target: string | null) {
     e.preventDefault();
     setDragging(false);
+    if (trash) return;
     const docIds = e.dataTransfer.getData("application/x-zhicluster-documents");
     const sourceFolder = e.dataTransfer.getData(
       "application/x-zhicluster-folder",
@@ -345,10 +348,11 @@ export function DocumentsPane({
   if (!active) return null;
   return (
     <section
-      className={`documents-pane ${dragging ? "dragging" : ""}`}
+      className={`documents-pane documents-${layout} documents-pane-${layout} ${trash ? "documents-trash" : ""} ${dragging ? "dragging" : ""}`}
+      aria-label={trash ? "回收站内容" : `${kb.name}文档管理`}
       onDragOver={(e) => {
         e.preventDefault();
-        if (e.dataTransfer.types.includes("Files")) setDragging(true);
+        if (!trash && e.dataTransfer.types.includes("Files")) setDragging(true);
       }}
       onDragLeave={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node))
@@ -356,450 +360,490 @@ export function DocumentsPane({
       }}
       onDrop={(e) => drop(e, folderId && folderId !== "root" ? folderId : null)}
     >
-      <header className="pane-header">
-        <div>
-          <span className="eyebrow">{trash ? "回收站" : "知识管理"}</span>
-          <h2>{kb.name}</h2>
-        </div>
-        <Button
-          size="icon"
-          variant="ghost"
-          aria-label="刷新文件"
-          onClick={() => void documents.refetch()}
-        >
-          <RefreshCw size={16} />
-        </Button>
-      </header>
-      {!trash && (
-        <div className="upload-wrap">
+      <div className="document-heading-bar">
+        <header className="pane-header">
+          {layout === "page" && (
+            <span className="document-library-icon" aria-hidden="true">
+              {trash ? <Trash2 size={27} /> : <FolderOpen size={29} />}
+            </span>
+          )}
+          <div className="document-library-heading">
+            <span className="eyebrow">{trash ? kb.name : "我的知识库"}</span>
+            <h2>{trash ? "回收站" : kb.name}</h2>
+            {layout === "page" && !trash && kb.description && (
+              <p className="document-library-description">{kb.description}</p>
+            )}
+          </div>
           <Button
-            variant="default"
-            className="upload-button"
-            onClick={() => input.current?.click()}
-            disabled={upload.isPending}
+            size="icon"
+            variant="ghost"
+            aria-label="刷新文件"
+            onClick={() => void documents.refetch()}
           >
-            <Plus size={17} />
-            {upload.isPending ? "上传中…" : "添加知识"}
+            <RefreshCw size={16} />
           </Button>
-          <input
-            ref={input}
-            hidden
-            type="file"
-            aria-label="上传文档"
-            accept=".pdf,.docx,.md,.txt"
-            multiple
-            onChange={(e) => {
-              if (e.target.files?.length)
-                upload.mutate({ files: Array.from(e.target.files) });
-              e.target.value = "";
-            }}
-          />
-          <p className="tiny muted">PDF、DOCX、Markdown、TXT · 可拖拽上传</p>
-        </div>
-      )}
-      <div className="document-navigation">
-        <button
-          className={!folderId ? "selected" : ""}
-          onClick={() => {
-            setFolderId("");
-            setPage(1);
-            setSelected(new Set());
-          }}
-        >
-          <FileText size={15} />
-          全部文档 <span>{!folderId ? total : ""}</span>
-        </button>
+        </header>
         {!trash && (
-          <button
-            className={folderId === "root" ? "selected" : ""}
-            onClick={() => {
-              setFolderId("root");
-              setPage(1);
-              onUnclassified?.();
-            }}
-          >
-            <Archive size={15} />
-            未分类
-          </button>
+          <div className="upload-wrap">
+            <Button
+              variant="default"
+              className="upload-button"
+              onClick={() => input.current?.click()}
+              disabled={upload.isPending}
+            >
+              <Plus size={17} />
+              {upload.isPending ? "上传中…" : "添加知识"}
+            </Button>
+            <input
+              ref={input}
+              hidden
+              type="file"
+              aria-label="上传文档"
+              accept=".pdf,.docx,.md,.txt"
+              multiple
+              onChange={(e) => {
+                if (e.target.files?.length)
+                  upload.mutate({ files: Array.from(e.target.files) });
+                e.target.value = "";
+              }}
+            />
+            <p className="tiny muted">PDF、DOCX、Markdown、TXT · 可拖拽上传</p>
+          </div>
         )}
       </div>
-      <div
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.stopPropagation();
-          drop(e, null);
-        }}
-        className="folder-root-drop"
-      >
-        <FolderTree
-          folders={folders}
-          selected={folderId}
-          onSelect={(id) => {
-            setFolderId(id);
-            setPage(1);
-            setSelected(new Set());
-          }}
-          onAction={openFolderForm}
-          onDrop={drop}
-          trash={trash}
-        />
-      </div>
-      {trash && !!deletedKbs.data?.some((k) => k.deleted_at) && (
-        <details className="deleted-kbs">
-          <summary>
-            已删除知识库 · {deletedKbs.data.filter((k) => k.deleted_at).length}
-          </summary>
-          <div className="deleted-kb-list">
-            {deletedKbs.data
-              .filter((k) => k.deleted_at)
-              .map((k) => (
-                <div className="row spread" key={k.id}>
-                  <span>{k.name}</span>
-                  <Button
-                    size="sm"
-                    onClick={() =>
+      <div className="document-browser-body">
+        <aside
+          className="document-folder-panel"
+          aria-label={trash ? "已删除文件夹" : "文档文件夹"}
+        >
+          <div className="document-navigation">
+            <button
+              className={!folderId ? "selected" : ""}
+              onClick={() => {
+                setFolderId("");
+                setPage(1);
+                setSelected(new Set());
+              }}
+            >
+              <FileText size={15} />
+              全部文档 <span>{!folderId ? total : ""}</span>
+            </button>
+            {!trash && (
+              <button
+                className={folderId === "root" ? "selected" : ""}
+                onClick={() => {
+                  setFolderId("root");
+                  setPage(1);
+                  onUnclassified?.();
+                }}
+              >
+                <Archive size={15} />
+                未分类
+              </button>
+            )}
+          </div>
+          <div
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.stopPropagation();
+              drop(e, null);
+            }}
+            className="folder-root-drop"
+          >
+            <FolderTree
+              folders={folders}
+              selected={folderId}
+              onSelect={(id) => {
+                setFolderId(id);
+                setPage(1);
+                setSelected(new Set());
+              }}
+              onAction={openFolderForm}
+              onDrop={drop}
+              trash={trash}
+            />
+          </div>
+          {trash && !!deletedKbs.data?.some((k) => k.deleted_at) && (
+            <details className="deleted-kbs">
+              <summary>
+                已删除知识库 ·{" "}
+                {deletedKbs.data.filter((k) => k.deleted_at).length}
+              </summary>
+              <div className="deleted-kb-list">
+                {deletedKbs.data
+                  .filter((k) => k.deleted_at)
+                  .map((k) => (
+                    <div className="row spread" key={k.id}>
+                      <span>{k.name}</span>
+                      <Button
+                        size="sm"
+                        onClick={() =>
+                          action.mutate({
+                            path: `/knowledge-bases/${k.id}/restore`,
+                          })
+                        }
+                      >
+                        恢复
+                      </Button>
+                    </div>
+                  ))}
+              </div>
+            </details>
+          )}
+        </aside>
+        <div className="document-files-panel">
+          <div className="document-list-heading">
+            <span>
+              {activeFolder?.name ||
+                (folderId === "root" ? "未分类" : "全部文档")}
+              <small>{total} 项</small>
+            </span>
+            <Menu
+              trigger={
+                <Button size="icon" variant="ghost" aria-label="排序文件">
+                  <ArrowDownAZ size={15} />
+                </Button>
+              }
+            >
+              {[
+                ["date", "按日期"],
+                ["name", "按名称"],
+                ["type", "按类型"],
+              ].map(([key, label]) => (
+                <MenuItem key={key} onSelect={() => setSort(key)}>
+                  {sort === key && <Check size={13} />} {label}
+                </MenuItem>
+              ))}
+            </Menu>
+          </div>
+          <div className="file-filters">
+            <ListFilter size={13} />
+            <select
+              aria-label="文件类型筛选"
+              value={ext}
+              onChange={(e) => {
+                setExt(e.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">全部类型</option>
+              {["pdf", "docx", "md", "txt"].map((t) => (
+                <option key={t}>{t}</option>
+              ))}
+            </select>
+            <select
+              aria-label="处理状态筛选"
+              value={status}
+              onChange={(e) => {
+                setStatus(e.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">全部状态</option>
+              <option value="ready">已就绪</option>
+              <option value="queued">排队中</option>
+              <option value="failed">失败</option>
+            </select>
+            <select
+              aria-label="标签筛选"
+              value={tagId}
+              onChange={(event) => {
+                setTagFilter({ kbId: kb.id, id: event.target.value });
+                setPage(1);
+                setSelected(new Set());
+              }}
+            >
+              <option value="">全部标签</option>
+              {tags.map((tag) => (
+                <option key={tag.id} value={tag.id}>
+                  {tag.name}
+                </option>
+              ))}
+            </select>
+            {!trash && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setManageTags(true)}
+              >
+                管理标签
+              </Button>
+            )}
+          </div>
+          <div className="selection-bar">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                aria-label="全选当前页"
+                checked={!!rows.length && rows.every((d) => selected.has(d.id))}
+                onChange={(e) =>
+                  setSelected(
+                    e.target.checked
+                      ? new Set(rows.map((d) => d.id))
+                      : new Set(),
+                  )
+                }
+              />
+              {selected.size ? `已选 ${selected.size} 项` : "当前页"}
+            </label>
+            {!!selected.size && (
+              <Menu
+                trigger={
+                  <Button size="sm" variant="ghost">
+                    <MoreHorizontal size={14} />
+                    批量操作
+                  </Button>
+                }
+              >
+                {trash ? (
+                  <MenuItem
+                    onSelect={() =>
                       action.mutate({
-                        path: `/knowledge-bases/${k.id}/restore`,
+                        path: "/documents/batch",
+                        body: {
+                          kb_id: kb.id,
+                          document_ids: [...selected],
+                          action: "restore",
+                        },
                       })
                     }
                   >
-                    恢复
-                  </Button>
-                </div>
-              ))}
-          </div>
-        </details>
-      )}
-      <div className="document-list-heading">
-        <span>
-          {activeFolder?.name || (folderId === "root" ? "未分类" : "全部文档")}
-          <small>{total} 项</small>
-        </span>
-        <Menu
-          trigger={
-            <Button size="icon" variant="ghost" aria-label="排序文件">
-              <ArrowDownAZ size={15} />
-            </Button>
-          }
-        >
-          {[
-            ["date", "按日期"],
-            ["name", "按名称"],
-            ["type", "按类型"],
-          ].map(([key, label]) => (
-            <MenuItem key={key} onSelect={() => setSort(key)}>
-              {sort === key && <Check size={13} />} {label}
-            </MenuItem>
-          ))}
-        </Menu>
-      </div>
-      <div className="file-filters">
-        <ListFilter size={13} />
-        <select
-          aria-label="文件类型筛选"
-          value={ext}
-          onChange={(e) => {
-            setExt(e.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">全部类型</option>
-          {["pdf", "docx", "md", "txt"].map((t) => (
-            <option key={t}>{t}</option>
-          ))}
-        </select>
-        <select
-          aria-label="处理状态筛选"
-          value={status}
-          onChange={(e) => {
-            setStatus(e.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">全部状态</option>
-          <option value="ready">已就绪</option>
-          <option value="queued">排队中</option>
-          <option value="failed">失败</option>
-        </select>
-        <select
-          aria-label="标签筛选"
-          value={tagId}
-          onChange={(event) => {
-            setTagFilter({ kbId: kb.id, id: event.target.value });
-            setPage(1);
-            setSelected(new Set());
-          }}
-        >
-          <option value="">全部标签</option>
-          {tags.map((tag) => (
-            <option key={tag.id} value={tag.id}>
-              {tag.name}
-            </option>
-          ))}
-        </select>
-        {!trash && (
-          <Button size="sm" variant="ghost" onClick={() => setManageTags(true)}>
-            管理标签
-          </Button>
-        )}
-      </div>
-      <div className="selection-bar">
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            aria-label="全选当前页"
-            checked={!!rows.length && rows.every((d) => selected.has(d.id))}
-            onChange={(e) =>
-              setSelected(
-                e.target.checked ? new Set(rows.map((d) => d.id)) : new Set(),
-              )
-            }
-          />
-          {selected.size ? `已选 ${selected.size} 项` : "当前页"}
-        </label>
-        {!!selected.size && (
-          <Menu
-            trigger={
-              <Button size="sm" variant="ghost">
-                <MoreHorizontal size={14} />
-                批量操作
-              </Button>
-            }
-          >
-            {trash ? (
-              <MenuItem
-                onSelect={() =>
-                  action.mutate({
-                    path: "/documents/batch",
-                    body: {
-                      kb_id: kb.id,
-                      document_ids: [...selected],
-                      action: "restore",
-                    },
-                  })
-                }
-              >
-                恢复所选
-              </MenuItem>
-            ) : (
-              <>
-                <MenuItem
-                  onSelect={() =>
-                    setForm({
-                      kind: "move",
-                      name: "",
-                      ids: [...selected],
-                      parent_id: null,
-                    })
-                  }
-                >
-                  移动所选
-                </MenuItem>
-                <MenuItem
-                  onSelect={() =>
-                    setForm({
-                      kind: "tags",
-                      name: "",
-                      ids: [...selected],
-                      tag_ids: [],
-                      tag_mode: "add",
-                    })
-                  }
-                >
-                  批量标签
-                </MenuItem>
-                <MenuItem
-                  danger
-                  onSelect={() =>
-                    setForm({ kind: "delete", name: "", ids: [...selected] })
-                  }
-                >
-                  删除所选
-                </MenuItem>
-              </>
-            )}
-          </Menu>
-        )}
-      </div>
-      <div className="document-list">
-        {documents.isPending ? (
-          <Loading />
-        ) : documents.isError ? (
-          <ErrorState
-            error={documents.error}
-            retry={() => void documents.refetch()}
-          />
-        ) : !rows.length ? (
-          <Empty title={trash ? "回收站很干净" : "这里还没有文档"}>
-            <p>
-              {trash
-                ? "删除的文档可以在这里恢复。"
-                : "上传一份文档，让知识在这里生长。"}
-            </p>
-            {!trash && (
-              <Button size="sm" onClick={() => input.current?.click()}>
-                <UploadCloud size={14} />
-                上传文件
-              </Button>
-            )}
-          </Empty>
-        ) : (
-          rows.map((doc) => (
-            <div
-              key={doc.id}
-              className={`document-row ${selectedId === doc.id ? "active" : ""} ${selected.has(doc.id) ? "checked" : ""}`}
-              draggable={!trash}
-              onDragStart={(e) => {
-                e.dataTransfer.setData(
-                  "application/x-zhicluster-documents",
-                  JSON.stringify(
-                    selected.has(doc.id) ? [...selected] : [doc.id],
-                  ),
-                );
-                e.stopPropagation();
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setContext({
-                  x: Math.min(e.clientX, window.innerWidth - 200),
-                  y: Math.min(e.clientY, window.innerHeight - 240),
-                  doc,
-                });
-              }}
-            >
-              <input
-                type="checkbox"
-                aria-label={`选择 ${doc.display_name}`}
-                checked={selected.has(doc.id)}
-                onChange={(e) =>
-                  setSelected((s) => {
-                    const n = new Set(s);
-                    if (e.target.checked) n.add(doc.id);
-                    else n.delete(doc.id);
-                    return n;
-                  })
-                }
-              />
-              <button
-                className="document-open"
-                onClick={() => onOpen(doc)}
-                onDoubleClick={() => onOpen(doc, true)}
-              >
-                <span className={`file-icon file-${doc.ext}`}>
-                  <FileText size={19} />
-                  <small>{doc.ext.toUpperCase()}</small>
-                </span>
-                <span className="file-info">
-                  <strong>{doc.display_name}</strong>
-                  <small>
-                    {new Date(doc.created_at).toLocaleDateString("zh-CN")} ·{" "}
-                    {formatSize(doc.size_bytes)}
-                  </small>
-                  <Status value={doc.parse_status} />
-                  {!!doc.tag_ids?.length && (
-                    <span className="document-tags">
-                      {tags
-                        .filter((tag) => doc.tag_ids?.includes(tag.id))
-                        .map((tag) => (
-                          <span key={tag.id} className="document-tag">
-                            <span
-                              className="tag-dot"
-                              style={{ background: tag.color }}
-                            />
-                            {tag.name}
-                          </span>
-                        ))}
-                    </span>
-                  )}
-                </span>
-              </button>
-              <Menu
-                trigger={
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label={`${doc.display_name}文档菜单`}
-                  >
-                    <MoreHorizontal size={15} />
-                  </Button>
-                }
-              >
-                {docMenu(doc)}
+                    恢复所选
+                  </MenuItem>
+                ) : (
+                  <>
+                    <MenuItem
+                      onSelect={() =>
+                        setForm({
+                          kind: "move",
+                          name: "",
+                          ids: [...selected],
+                          parent_id: null,
+                        })
+                      }
+                    >
+                      移动所选
+                    </MenuItem>
+                    <MenuItem
+                      onSelect={() =>
+                        setForm({
+                          kind: "tags",
+                          name: "",
+                          ids: [...selected],
+                          tag_ids: [],
+                          tag_mode: "add",
+                        })
+                      }
+                    >
+                      批量标签
+                    </MenuItem>
+                    <MenuItem
+                      danger
+                      onSelect={() =>
+                        setForm({
+                          kind: "delete",
+                          name: "",
+                          ids: [...selected],
+                        })
+                      }
+                    >
+                      删除所选
+                    </MenuItem>
+                  </>
+                )}
               </Menu>
-            </div>
-          ))
-        )}
-      </div>
-      {total > 50 && (
-        <div className="pagination">
-          <Button
-            size="sm"
-            disabled={page === 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            上一页
-          </Button>
-          <small>
-            {page} / {Math.ceil(total / 50)}
-          </small>
-          <Button
-            size="sm"
-            disabled={page * 50 >= total}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            下一页
-          </Button>
-        </div>
-      )}
-      <div className="document-footer">
-        <small>{total} 个文档</small>
-        <span>
-          {jobs.data?.filter((j) => ["queued", "running"].includes(j.status))
-            .length || 0}{" "}
-          项任务
-        </span>
-      </div>
-      {dragging && (
-        <div className="drop-overlay">
-          <UploadCloud size={40} />
-          <strong>放下文件，添加到知识库</strong>
-        </div>
-      )}
-      {!!uploadItems.length && (
-        <details
-          className="upload-results"
-          open={
-            uploadItems.some((item) => item.status === "error") || undefined
-          }
-        >
-          <summary>
-            上传结果 · {uploadItems.length} 个文件
-            {uploadItems.some((item) => item.status === "error") && (
-              <span className="danger">含上传失败</span>
             )}
-          </summary>
-          <div className="upload-results-content">
-            {uploadItems.map((r, i) => (
-              <p key={i} className={r.status === "error" ? "danger" : ""}>
-                {r.document?.display_name || `文件 ${i + 1}`} ·{" "}
-                {r.message ||
-                  { queued: "已排队", duplicate: "文件已存在，已跳过" }[
-                    r.status
-                  ] ||
-                  r.status}
-              </p>
-            ))}
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-label="关闭上传结果"
-              onClick={() => setUploadItems([])}
-            >
-              清除记录
-            </Button>
+            {layout === "page" && !selected.size && (
+              <span className="document-columns" aria-hidden="true">
+                <span>添加日期 · 大小</span>
+                <span>处理状态</span>
+              </span>
+            )}
           </div>
-        </details>
-      )}
+          <div className="document-list">
+            {documents.isPending ? (
+              <Loading />
+            ) : documents.isError ? (
+              <ErrorState
+                error={documents.error}
+                retry={() => void documents.refetch()}
+              />
+            ) : !rows.length ? (
+              <Empty title={trash ? "回收站很干净" : "这里还没有文档"}>
+                <p>
+                  {trash
+                    ? "删除的文档可以在这里恢复。"
+                    : "上传一份文档，让知识在这里生长。"}
+                </p>
+                {!trash && (
+                  <Button size="sm" onClick={() => input.current?.click()}>
+                    <UploadCloud size={14} />
+                    上传文件
+                  </Button>
+                )}
+              </Empty>
+            ) : (
+              rows.map((doc) => (
+                <div
+                  key={doc.id}
+                  className={`document-row ${selectedId === doc.id ? "active" : ""} ${selected.has(doc.id) ? "checked" : ""}`}
+                  draggable={!trash}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(
+                      "application/x-zhicluster-documents",
+                      JSON.stringify(
+                        selected.has(doc.id) ? [...selected] : [doc.id],
+                      ),
+                    );
+                    e.stopPropagation();
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setContext({
+                      x: Math.min(e.clientX, window.innerWidth - 200),
+                      y: Math.min(e.clientY, window.innerHeight - 240),
+                      doc,
+                    });
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    aria-label={`选择 ${doc.display_name}`}
+                    checked={selected.has(doc.id)}
+                    onChange={(e) =>
+                      setSelected((s) => {
+                        const n = new Set(s);
+                        if (e.target.checked) n.add(doc.id);
+                        else n.delete(doc.id);
+                        return n;
+                      })
+                    }
+                  />
+                  <button
+                    className="document-open"
+                    onClick={() =>
+                      onOpen(doc, layout === "page" ? true : undefined)
+                    }
+                    onDoubleClick={() => onOpen(doc, true)}
+                  >
+                    <span className={`file-icon file-${doc.ext}`}>
+                      <FileText size={19} />
+                      <small>{doc.ext.toUpperCase()}</small>
+                    </span>
+                    <span className="file-info">
+                      <strong>{doc.display_name}</strong>
+                      <small>
+                        {new Date(doc.created_at).toLocaleDateString("zh-CN")} ·{" "}
+                        {formatSize(doc.size_bytes)}
+                      </small>
+                      <Status value={doc.parse_status} />
+                      {!!doc.tag_ids?.length && (
+                        <span className="document-tags">
+                          {tags
+                            .filter((tag) => doc.tag_ids?.includes(tag.id))
+                            .map((tag) => (
+                              <span key={tag.id} className="document-tag">
+                                <span
+                                  className="tag-dot"
+                                  style={{ background: tag.color }}
+                                />
+                                {tag.name}
+                              </span>
+                            ))}
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                  <Menu
+                    trigger={
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`${doc.display_name}文档菜单`}
+                      >
+                        <MoreHorizontal size={15} />
+                      </Button>
+                    }
+                  >
+                    {docMenu(doc)}
+                  </Menu>
+                </div>
+              ))
+            )}
+          </div>
+          {total > 50 && (
+            <div className="pagination">
+              <Button
+                size="sm"
+                disabled={page === 1}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                上一页
+              </Button>
+              <small>
+                {page} / {Math.ceil(total / 50)}
+              </small>
+              <Button
+                size="sm"
+                disabled={page * 50 >= total}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                下一页
+              </Button>
+            </div>
+          )}
+          <div className="document-footer">
+            <small>{total} 个文档</small>
+            <span>
+              {jobs.data?.filter((j) =>
+                ["queued", "running"].includes(j.status),
+              ).length || 0}{" "}
+              项任务
+            </span>
+          </div>
+          {dragging && (
+            <div className="drop-overlay">
+              <UploadCloud size={40} />
+              <strong>放下文件，添加到知识库</strong>
+            </div>
+          )}
+          {!!uploadItems.length && (
+            <details
+              className="upload-results"
+              open={
+                uploadItems.some((item) => item.status === "error") || undefined
+              }
+            >
+              <summary>
+                上传结果 · {uploadItems.length} 个文件
+                {uploadItems.some((item) => item.status === "error") && (
+                  <span className="danger">含上传失败</span>
+                )}
+              </summary>
+              <div className="upload-results-content">
+                {uploadItems.map((r, i) => (
+                  <p key={i} className={r.status === "error" ? "danger" : ""}>
+                    {r.document?.display_name || `文件 ${i + 1}`} ·{" "}
+                    {r.message ||
+                      { queued: "已排队", duplicate: "文件已存在，已跳过" }[
+                        r.status
+                      ] ||
+                      r.status}
+                  </p>
+                ))}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label="关闭上传结果"
+                  onClick={() => setUploadItems([])}
+                >
+                  清除记录
+                </Button>
+              </div>
+            </details>
+          )}
+        </div>
+      </div>
       <Dialog
         open={!!form}
         onOpenChange={(v) => !v && setForm(null)}
@@ -982,56 +1026,63 @@ export function DocumentsPane({
             role="menu"
             style={{ left: context.x, top: context.y }}
           >
-            <button role="menuitem" onClick={() => onOpen(context.doc, true)}>
-              <FolderOpen size={14} />
-              打开阅读器
-            </button>
-            <button
-              role="menuitem"
-              onClick={() =>
-                setForm({
-                  kind: "rename",
-                  name: context.doc.display_name,
-                  document: context.doc,
-                })
-              }
-            >
-              重命名
-            </button>
-            <button
-              role="menuitem"
-              onClick={() =>
-                setForm({
-                  kind: "move",
-                  name: "",
-                  ids: [context.doc.id],
-                  parent_id: context.doc.folder_id,
-                })
-              }
-            >
-              移动到…
-            </button>
-            <button
-              role="menuitem"
-              onClick={() =>
-                setForm({
-                  kind: "tags",
-                  name: "",
-                  ids: [context.doc.id],
-                  tag_ids: context.doc.tag_ids || [],
-                  tag_mode: "set",
-                })
-              }
-            >
-              设置标签
-            </button>
-            <a
-              role="menuitem"
-              href={`/api/documents/${context.doc.id}/download`}
-            >
-              <Download size={14} />
-              下载原文件
-            </a>
+            {!trash && (
+              <>
+                <button
+                  role="menuitem"
+                  onClick={() => onOpen(context.doc, true)}
+                >
+                  <FolderOpen size={14} />
+                  打开阅读器
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() =>
+                    setForm({
+                      kind: "rename",
+                      name: context.doc.display_name,
+                      document: context.doc,
+                    })
+                  }
+                >
+                  重命名
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() =>
+                    setForm({
+                      kind: "move",
+                      name: "",
+                      ids: [context.doc.id],
+                      parent_id: context.doc.folder_id,
+                    })
+                  }
+                >
+                  移动到…
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() =>
+                    setForm({
+                      kind: "tags",
+                      name: "",
+                      ids: [context.doc.id],
+                      tag_ids: context.doc.tag_ids || [],
+                      tag_mode: "set",
+                    })
+                  }
+                >
+                  设置标签
+                </button>
+                <a
+                  role="menuitem"
+                  href={`/api/documents/${context.doc.id}/download`}
+                >
+                  <Download size={14} />
+                  下载原文件
+                </a>
+              </>
+            )}
             {trash ? (
               <button
                 role="menuitem"

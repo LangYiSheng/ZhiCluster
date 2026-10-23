@@ -1,7 +1,25 @@
 .chat-container {
   height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+}
+.chat-container.chat-is-empty {
+  justify-content: center;
+  padding-block: clamp(24px, 7vh, 90px);
+}
+.chat-is-empty .chat-messages {
+  flex: 0 1 auto;
+  padding-top: 0;
+  padding-bottom: 28px;
+}
+.chat-is-empty .chat-welcome {
+  min-height: 0;
+  padding: 12px 10px;
+}
+.chat-is-empty .chat-composer-wrap {
+  flex: 0 0 auto;
+  margin: 0 auto;
 }
 .chat-messages {
   flex: 1;
@@ -311,7 +329,11 @@
 }
 .scope-panel {
   display: grid;
-  gap: 22px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  gap: 18px;
+  padding-right: 4px;
 }
 .scope-saved-note,
 .scope-empty {
@@ -326,7 +348,7 @@
 }
 .scope-section + .scope-section {
   border-top: 1px solid var(--border);
-  padding-top: 20px;
+  padding-top: 16px;
 }
 .scope-section h3 {
   display: flex;
@@ -347,8 +369,8 @@
 }
 .scope-choice-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
 }
 label.scope-choice {
   display: flex;
@@ -356,7 +378,7 @@ label.scope-choice {
   align-items: center;
   gap: 9px;
   margin: 0;
-  padding: 10px 11px;
+  padding: 9px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   font-size: var(--text-body);
@@ -383,12 +405,24 @@ label.scope-choice {
 label.scope-descendants {
   margin-top: 10px;
 }
-.scope-panel .dialog-actions {
-  margin-top: 0;
+.scope-actions {
+  display: flex;
+  justify-content: flex-end;
+  position: sticky;
+  bottom: 0;
+  padding-block: 8px 0;
+  background: var(--panel);
 }
 .conversation-history {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
   gap: 16px;
+}
+.history-popover {
+  width: min(390px, calc(100vw - 24px));
 }
 .history-actions {
   display: flex;
@@ -399,7 +433,10 @@ label.scope-descendants {
 }
 .history-list {
   display: grid;
-  gap: 10px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  gap: 8px;
+  padding-right: 4px;
 }
 .history-card {
   display: flex;
@@ -424,7 +461,7 @@ label.scope-descendants {
 .history-card-select {
   flex: 1;
   min-width: 0;
-  padding: 15px;
+  padding: 12px;
   text-align: left;
   border-radius: var(--radius-control);
 }
@@ -475,6 +512,25 @@ label.scope-descendants {
     padding-left: 23px;
   }
   .history-card-select {
-    padding: 12px;
+    padding: 10px;
+  }
+}
+@media (max-height: 540px) {
+  .chat-container.chat-is-empty {
+    justify-content: flex-start;
+    padding-block: 8px;
+  }
+  .chat-is-empty .chat-messages {
+    flex: 1;
+    padding-bottom: 8px;
+  }
+  .chat-is-empty .chat-welcome {
+    min-height: 140px;
+  }
+  .chat-is-empty .welcome-symbol {
+    display: none;
+  }
+  .chat-is-empty .chat-welcome > p {
+    margin-top: 8px;
   }
 }

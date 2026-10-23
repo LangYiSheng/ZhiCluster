@@ -30,19 +30,15 @@
 }
 @media (max-width: 1023px) {
   .app-shell:not(.settings-mode) {
-    grid-template-columns: 0 0 0 0 minmax(0, 1fr);
+    grid-template-columns: 0 0 minmax(0, 1fr);
   }
   .workspace,
-  .files-open .workspace,
-  .sidebar-collapsed .workspace,
-  .sidebar-collapsed.files-open .workspace {
+  .sidebar-collapsed .workspace {
     margin: 12px;
     border-radius: var(--radius-shell);
   }
   .library-slot,
-  .library-resize,
-  .files-resize,
-  .context-pane {
+  .library-resize {
     visibility: hidden;
   }
   .desktop-sidebar-toggle {
@@ -66,24 +62,10 @@
   .sidebar-brand .sidebar-close {
     display: inline-flex;
   }
-  .files-open .context-pane {
-    display: flex;
-    visibility: visible;
-    position: fixed;
-    z-index: 36;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: min(380px, calc(100vw - 40px));
-    margin: 0;
-    border-radius: 0 var(--radius-shell) var(--radius-shell) 0;
-    border: 1px solid var(--border);
-    box-shadow: var(--shadow);
-  }
   .mobile-overlay {
     display: block;
     position: fixed;
-    z-index: 29;
+    z-index: 35;
     inset: 0;
     background: var(--color-overlay);
   }
@@ -93,9 +75,7 @@
 }
 @media (max-width: 720px) {
   .workspace,
-  .files-open .workspace,
   .sidebar-collapsed .workspace,
-  .sidebar-collapsed.files-open .workspace,
   .settings-mode .workspace {
     margin: 0;
     border: 0;

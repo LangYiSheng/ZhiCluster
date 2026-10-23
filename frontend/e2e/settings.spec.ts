@@ -26,7 +26,7 @@ test("字体、按需资料栏、草稿延续与桌面/手机/横屏布局", asy
     await expect(
       page.getByRole("heading", { name: "外观与布局" }),
     ).toBeVisible();
-    await expect(page.locator(".context-pane")).toBeHidden();
+    await expect(page.locator(".reference-pane:visible")).toHaveCount(0);
     await expect(page.locator(".library-slot")).toBeHidden();
     await page.getByLabel("显示模式", { exact: true }).selectOption("dark");
     await page.getByLabel("字体搭配", { exact: true }).selectOption("sans");
@@ -66,14 +66,22 @@ test("字体、按需资料栏、草稿延续与桌面/手机/横屏布局", asy
     expect(fonts.uiLoaded && fonts.titleLoaded).toBeTruthy();
     await page.setViewportSize({ width: 1100, height: 800 });
     await page.getByRole("button", { name: "浏览资料", exact: true }).click();
-    const before = await page.locator(".workspace").boundingBox();
+    const workspace = await page.locator(".chat-main").boundingBox();
+    const contextPane = await page.locator(".reference-pane").boundingBox();
+    expect(contextPane!.x).toBeGreaterThanOrEqual(
+      workspace!.x + workspace!.width - 1,
+    );
     await page
       .getByRole("button", { name: "折叠知识库栏", exact: true })
       .click();
-    const after = await page.locator(".workspace").boundingBox();
-    expect(after!.width - before!.width).toBeGreaterThan(200);
+    await expect(page.locator(".app-shell")).toHaveClass(/sidebar-collapsed/);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBeTruthy();
     await page
-      .getByRole("button", { name: "关闭资料浏览", exact: true })
+      .getByRole("button", { name: "关闭参考资料", exact: true })
       .click();
     for (const [width, height] of [
       [1440, 900],

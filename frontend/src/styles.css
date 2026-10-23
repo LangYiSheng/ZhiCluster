@@ -6,7 +6,9 @@
 @import "./styles/documents.css";
 @import "./styles/common.css";
 @import "./styles/chat.css";
+@import "./styles/references.css";
 @import "./styles/reader.css";
 @import "./styles/agent.css";
 @import "./styles/overlays.css";
+@import "./styles/popover.css";
 @import "./styles/responsive.css";

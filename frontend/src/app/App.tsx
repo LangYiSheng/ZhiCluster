@@ -1,14 +1,18 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useReducer, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Navigate,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
 import {
   ArrowLeft,
   BookOpen,
   ChevronRight,
   FileText,
   FolderOpen,
-  GitBranch,
   History,
   Menu as MenuIcon,
   MessageSquare,
@@ -19,8 +23,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { api, errorText } from "../lib/api";
 import { toast } from "sonner";
+import { api, errorText, json } from "../lib/api";
 import type {
   Citation,
   Document,
@@ -35,21 +39,69 @@ import { DocumentsPane } from "../features/documents/DocumentsPane";
 import { SearchDialog } from "../features/search/SearchDialog";
 import { Button } from "../components/ui/button";
 import { Empty, ErrorState, Loading } from "../components/common";
-
+import { ReferencePane } from "./ReferencePane";
+import { emptyReferences, referenceReducer } from "./referenceWorkspace";
+import type { ReferenceAction } from "./referenceWorkspace";
 const Reader = lazy(() =>
   import("../features/documents/Reader").then((m) => ({ default: m.Reader })),
 );
 const Chat = lazy(() =>
   import("../features/chat/Chat").then((m) => ({ default: m.Chat })),
 );
-const Agent = lazy(() =>
-  import("../features/agent/Agent").then((m) => ({ default: m.Agent })),
-);
 const Settings = lazy(() =>
   import("../features/settings/Settings").then((m) => ({
     default: m.Settings,
   })),
 );
+
+function EmptyTrash() {
+  const client = useQueryClient();
+  const bases = useQuery({
+    queryKey: ["deleted-kbs"],
+    queryFn: () =>
+      api<KnowledgeBase[]>("/knowledge-bases?include_deleted=true"),
+  });
+  const restore = useMutation({
+    mutationFn: (id: string) =>
+      api(`/knowledge-bases/${id}/restore`, json("POST")),
+    onSuccess: () => {
+      void client.invalidateQueries();
+      toast.success("知识库已恢复");
+    },
+    onError: (error) => toast.error(errorText(error)),
+  });
+  if (bases.isPending) return <Loading />;
+  if (bases.isError)
+    return (
+      <ErrorState error={bases.error} retry={() => void bases.refetch()} />
+    );
+  const deleted = bases.data.filter((base) => base.deleted_at);
+  return (
+    <section className="empty-trash-page">
+      <h1>回收站</h1>
+      {deleted.length ? (
+        <div className="deleted-library-cards">
+          {deleted.map((base) => (
+            <div key={base.id}>
+              <BookOpen size={20} />
+              <span>{base.name}</span>
+              <Button
+                disabled={restore.isPending}
+                onClick={() => restore.mutate(base.id)}
+              >
+                恢复知识库
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <Empty title="回收站很干净">
+          删除的文档、文件夹和知识库会显示在这里。
+        </Empty>
+      )}
+    </section>
+  );
+}
 
 export function App() {
   const ui = useUI();
@@ -59,19 +111,26 @@ export function App() {
   const [savedKb, setSavedKb] = useState(
     () => localStorage.getItem("zhicluster-kb") || "",
   );
-  const [trash, setTrash] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [filesOpen, setFilesOpen] = useState(location.pathname === "/document");
+  const [historyAnchor, setHistoryAnchor] = useState<HTMLButtonElement | null>(
+    null,
+  );
   const [mobileLibrary, setMobileLibrary] = useState(false);
-  const [reader, setReader] = useState(false);
-  const [citation, setCitation] = useState<Citation | undefined>();
+  const [documentCitation, setDocumentCitation] = useState<
+    Citation | undefined
+  >();
+  const [references, dispatchReference] = useReducer(
+    referenceReducer,
+    emptyReferences,
+  );
+  const citationRequest = useRef(0);
   const kbs = useQuery({
     queryKey: ["knowledge-bases"],
     queryFn: () => api<KnowledgeBase[]>("/knowledge-bases"),
   });
-  const kbId = params.get("kb") || savedKb || kbs.data?.[0]?.id || "";
-  const kb = kbs.data?.find((k) => k.id === kbId) || kbs.data?.[0];
+  const kbId = params.get("kb") || savedKb;
+  const kb = kbs.data?.find((base) => base.id === kbId) || kbs.data?.[0];
   const actualKbId = kb?.id || "";
   const folders = useQuery({
     queryKey: ["folders", actualKbId],
@@ -87,23 +146,25 @@ export function App() {
     enabled: !!actualKbId,
   });
   const selectedId = params.get("document") || "";
+  const reader = params.get("mode") === "read";
   const view =
     location.pathname === "/settings"
       ? "settings"
-      : location.pathname === "/agent"
-        ? "agent"
+      : location.pathname === "/trash"
+        ? "trash"
         : location.pathname === "/document"
           ? "document"
           : "chat";
   const viewName =
-    view === "chat"
-      ? "知识对话"
-      : view === "agent"
-        ? "智能整理"
-        : view === "settings"
-          ? "设置"
-          : "文档管理";
-
+    view === "settings"
+      ? "设置"
+      : view === "trash"
+        ? "回收站"
+        : view === "document"
+          ? "文档管理"
+          : "知识对话";
+  const referencesOpen = references.tabs.length > 0;
+  const filesWidth = Math.max(380, ui.filesWidth);
   useEffect(() => {
     const system = window.matchMedia("(prefers-color-scheme: dark)");
     const appearance = {
@@ -118,66 +179,114 @@ export function App() {
     return () => system.removeEventListener("change", apply);
   }, [ui.theme, ui.palette, ui.fontPairing, ui.readingScale]);
   useEffect(() => {
-    function key(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setSearchOpen((v) => !v);
+    function key(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen((value) => !value);
       }
-      if (e.key === "Escape") {
-        setFilesOpen(false);
+      if (event.key === "Escape" && !event.defaultPrevented)
         setMobileLibrary(false);
-      }
     }
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
   }, []);
+  useEffect(() => {
+    citationRequest.current += 1;
+    setSearchOpen(false);
+    setHistoryOpen(false);
+    setMobileLibrary(false);
+  }, [location.key]);
+  useEffect(() => {
+    dispatchReference({ type: "clear" });
+    setHistoryOpen(false);
+    citationRequest.current += 1;
+  }, [actualKbId]);
+
+  function updateReferences(action: ReferenceAction) {
+    if (action.type === "clear") citationRequest.current += 1;
+    dispatchReference(action);
+  }
   function chooseKb(id: string) {
     setSavedKb(id);
     localStorage.setItem("zhicluster-kb", id);
-    setTrash(false);
     setHistoryOpen(false);
     setMobileLibrary(false);
+    setDocumentCitation(undefined);
+    updateReferences({ type: "clear" });
     setParams({ kb: id });
-    setCitation(undefined);
-    if (view === "document") setFilesOpen(true);
-  }
-  function openDoc(doc: Document, read = false) {
-    setReader(read);
-    setCitation(undefined);
-    if (window.innerWidth <= 1023) setFilesOpen(false);
-    navigate(`/document?kb=${actualKbId}&document=${doc.id}`);
-  }
-  function openCitation(c: Citation) {
-    void api<Document>(`/documents/${c.document_id}`)
-      .then((doc) => {
-        setCitation(c);
-        setReader(true);
-        setFilesOpen(false);
-        setSavedKb(doc.kb_id);
-        localStorage.setItem("zhicluster-kb", doc.kb_id);
-        setTrash(false);
-        setHistoryOpen(false);
-        navigate(`/document?kb=${doc.kb_id}&document=${c.document_id}`);
-      })
-      .catch((e) => toast.error(errorText(e)));
   }
   function to(path: string) {
-    setHistoryOpen(false);
+    citationRequest.current += 1;
     setMobileLibrary(false);
-    setFilesOpen(path === "document");
+    setHistoryOpen(false);
+    navigate(`/${path}${actualKbId ? `?kb=${actualKbId}` : ""}`);
+  }
+  function openLibrary() {
+    if (!kb) return;
+    setMobileLibrary(false);
+    dispatchReference({
+      type: "open",
+      tab: {
+        id: "library",
+        kind: "library",
+        title: "资料管理",
+        kb,
+        reader: false,
+      },
+    });
+  }
+  function referenceDocument(doc: Document, read = false, citation?: Citation) {
+    const base = kbs.data?.find((item) => item.id === doc.kb_id);
+    if (!base) {
+      toast.error("知识库已不可访问，请刷新后重试");
+      return;
+    }
+    dispatchReference({
+      type: "open",
+      tab: {
+        id: `document-${doc.id}`,
+        kind: "document",
+        title: doc.display_name,
+        kb: base,
+        documentId: doc.id,
+        reader: read,
+        citation: citation ? { ...citation } : undefined,
+      },
+    });
+  }
+  function openDoc(doc: Document, read = false) {
+    if (view === "chat") {
+      referenceDocument(doc, read);
+      return;
+    }
+    if (view === "trash") {
+      toast.info("恢复文档后即可查看内容");
+      return;
+    }
+    setDocumentCitation(undefined);
     navigate(
-      `/${path}?kb=${actualKbId}${selectedId ? `&document=${selectedId}` : ""}`,
+      `/document?kb=${doc.kb_id}&document=${doc.id}${read ? "&mode=read" : ""}`,
     );
   }
-  function toggleLibrary() {
-    if (window.innerWidth <= 1023) {
-      setFilesOpen(false);
-      setMobileLibrary((v) => !v);
-    } else ui.toggleSidebar();
+  function openCitation(citation: Citation) {
+    const request = ++citationRequest.current;
+    void api<Document>(`/documents/${citation.document_id}`)
+      .then((doc) => {
+        if (request !== citationRequest.current) return;
+        if (view === "chat") {
+          referenceDocument(doc, true, citation);
+          return;
+        }
+        setDocumentCitation({ ...citation });
+        navigate(`/document?kb=${doc.kb_id}&document=${doc.id}&mode=read`);
+      })
+      .catch((error) => {
+        if (request === citationRequest.current) toast.error(errorText(error));
+      });
   }
-  function toggleFiles() {
-    setMobileLibrary(false);
-    setFilesOpen((v) => !v);
+  function toggleLibrary() {
+    if (window.innerWidth <= 1023) setMobileLibrary((value) => !value);
+    else ui.toggleSidebar();
   }
   function resize(
     kind: "library" | "files",
@@ -185,12 +294,13 @@ export function App() {
   ) {
     event.preventDefault();
     const start = event.clientX;
-    const initial = kind === "library" ? ui.libraryWidth : ui.filesWidth;
-    function move(e: globalThis.PointerEvent) {
-      const width = initial + e.clientX - start;
+    const initial = kind === "library" ? ui.libraryWidth : filesWidth;
+    function move(pointer: globalThis.PointerEvent) {
+      const width =
+        initial + (pointer.clientX - start) * (kind === "files" ? -1 : 1);
       ui.setWidths(
         kind === "library" ? width : ui.libraryWidth,
-        kind === "files" ? width : ui.filesWidth,
+        kind === "files" ? width : filesWidth,
       );
     }
     function stop() {
@@ -202,11 +312,13 @@ export function App() {
   }
   const layoutStyle = {
     "--library-width": `${ui.sidebarOpen ? ui.libraryWidth : 0}px`,
-    "--files-width": `${filesOpen ? ui.filesWidth : 0}px`,
+    "--reference-width": `${filesWidth}px`,
   } as CSSProperties;
+  if (location.pathname === "/agent")
+    return <Navigate replace to={`/chat${kbId ? `?kb=${kbId}` : ""}`} />;
   return (
     <div
-      className={`app-shell ${!ui.sidebarOpen ? "sidebar-collapsed" : ""} ${filesOpen ? "files-open" : ""} ${mobileLibrary ? "mobile-library-open" : ""} ${view === "settings" ? "settings-mode" : ""}`}
+      className={`app-shell ${!ui.sidebarOpen ? "sidebar-collapsed" : ""} ${mobileLibrary ? "mobile-library-open" : ""} ${view === "settings" ? "settings-mode" : ""}`}
       style={layoutStyle}
     >
       <aside
@@ -239,19 +351,11 @@ export function App() {
             知识对话
           </button>
           <button
-            aria-label="知识库"
             aria-current={view === "document" ? "page" : undefined}
             onClick={() => to("document")}
           >
             <FileText size={18} />
             文档管理
-          </button>
-          <button
-            aria-current={view === "agent" ? "page" : undefined}
-            onClick={() => to("agent")}
-          >
-            <GitBranch size={18} />
-            智能整理
           </button>
         </nav>
         <div className="library-scroll">
@@ -263,28 +367,22 @@ export function App() {
             <Library
               knowledgeBases={kbs.data || []}
               kbId={actualKbId}
-              trash={trash}
+              trash={view === "trash"}
               onSelect={chooseKb}
             />
           )}
         </div>
         <div className="sidebar-tools">
-          <button onClick={() => to("settings")}>
-            <Settings2 size={17} />
-            设置
-          </button>
           <button
-            className={trash ? "active" : ""}
-            aria-pressed={trash}
-            disabled={!actualKbId}
-            onClick={() => {
-              setTrash(true);
-              setMobileLibrary(false);
-              setFilesOpen(true);
-            }}
+            aria-current={view === "trash" ? "page" : undefined}
+            onClick={() => to("trash")}
           >
             <Trash2 size={17} />
             回收站
+          </button>
+          <button onClick={() => to("settings")}>
+            <Settings2 size={17} />
+            设置
           </button>
         </div>
       </aside>
@@ -298,72 +396,13 @@ export function App() {
         aria-valuemin={200}
         aria-valuemax={360}
         tabIndex={0}
-        onPointerDown={(e) => resize("library", e)}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-            e.preventDefault();
+        onPointerDown={(event) => resize("library", event)}
+        onKeyDown={(event) => {
+          if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+            event.preventDefault();
             ui.setWidths(
-              ui.libraryWidth + (e.key === "ArrowRight" ? 10 : -10),
-              ui.filesWidth,
-            );
-          }
-        }}
-      />
-      <section
-        className="context-pane"
-        aria-label="资料浏览"
-        hidden={view === "settings" || !filesOpen}
-      >
-        <div className="context-pane-heading">
-          <span>
-            <FolderOpen size={16} />
-            浏览资料
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="关闭资料浏览"
-            onClick={() => setFilesOpen(false)}
-          >
-            <X size={17} />
-          </Button>
-        </div>
-        {kb ? (
-          <DocumentsPane
-            key={`${actualKbId}-${trash}`}
-            kb={kb}
-            folders={folders.data || []}
-            tags={tags.data || []}
-            active={view !== "settings" && filesOpen}
-            trash={trash}
-            selectedId={selectedId}
-            onOpen={openDoc}
-          />
-        ) : (
-          <div className="documents-pane">
-            <Empty title="创建一个知识库">
-              点击“个人知识库”旁的加号，收集你的第一份资料。
-            </Empty>
-          </div>
-        )}
-      </section>
-      <div
-        className="resize-handle files-resize"
-        hidden={view === "settings" || !filesOpen}
-        role="separator"
-        aria-label="调整文件栏宽度"
-        aria-orientation="vertical"
-        aria-valuenow={ui.filesWidth}
-        aria-valuemin={280}
-        aria-valuemax={500}
-        tabIndex={0}
-        onPointerDown={(e) => resize("files", e)}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-            e.preventDefault();
-            ui.setWidths(
-              ui.libraryWidth,
-              ui.filesWidth + (e.key === "ArrowRight" ? 10 : -10),
+              ui.libraryWidth + (event.key === "ArrowRight" ? 10 : -10),
+              filesWidth,
             );
           }
         }}
@@ -402,16 +441,27 @@ export function App() {
                 >
                   <MenuIcon size={18} />
                 </Button>
-                <BookOpen size={14} />
-                <span>{kb?.name || "知识工作空间"}</span>
-                <ChevronRight size={12} />
+                {view === "chat" && (
+                  <>
+                    <BookOpen size={14} />
+                    <span>{kb?.name || "知识工作空间"}</span>
+                    <ChevronRight size={12} />
+                  </>
+                )}
               </>
             )}
             <strong>{viewName}</strong>
+            {view === "document" && selectedId && (
+              <Button variant="ghost" size="sm" onClick={() => to("document")}>
+                <ArrowLeft size={15} />
+                返回文档列表
+              </Button>
+            )}
           </div>
           <div className="workspace-actions">
             {view === "chat" && kb && (
               <Button
+                ref={setHistoryAnchor}
                 className="workspace-history"
                 variant="ghost"
                 size="sm"
@@ -419,55 +469,92 @@ export function App() {
                 title="历史对话"
                 aria-haspopup="dialog"
                 aria-expanded={historyOpen}
-                onClick={() => setHistoryOpen(true)}
+                onClick={() => setHistoryOpen((value) => !value)}
               >
                 <History size={17} />
                 <span>历史</span>
               </Button>
             )}
             {view !== "settings" && (
-              <>
-                <Button
-                  className="workspace-search"
-                  variant="ghost"
-                  size="icon"
-                  aria-label="搜索知识"
-                  title="搜索知识 Ctrl+K"
-                  onClick={() => setSearchOpen(true)}
-                >
-                  <Search size={17} />
-                </Button>
-                <Button
-                  className="browse-files"
-                  variant="ghost"
-                  size="sm"
-                  aria-expanded={filesOpen}
-                  aria-label="浏览资料"
-                  onClick={toggleFiles}
-                >
-                  <FolderOpen size={16} />
-                  <span>浏览资料</span>
-                </Button>
-              </>
+              <Button
+                className="workspace-search"
+                variant="ghost"
+                size="icon"
+                aria-label="搜索知识"
+                title="搜索知识 Ctrl+K"
+                onClick={() => setSearchOpen(true)}
+              >
+                <Search size={17} />
+              </Button>
+            )}
+            {view === "chat" && kb && (
+              <Button
+                className="browse-files"
+                variant="ghost"
+                size="sm"
+                aria-expanded={referencesOpen}
+                aria-label="浏览资料"
+                onClick={openLibrary}
+              >
+                <FolderOpen size={16} />
+                <span>浏览资料</span>
+              </Button>
             )}
           </div>
         </header>
         <div className="workspace-content">
           {kb && (
-            <div className="workspace-view" hidden={view !== "chat"}>
-              <Suspense fallback={<Loading />}>
-                <Chat
-                  key={actualKbId}
-                  kb={kb}
-                  knowledgeBases={kbs.data || []}
-                  tags={tags.data || []}
-                  folders={folders.data || []}
-                  onCitation={openCitation}
-                  active={view === "chat"}
-                  historyOpen={historyOpen && view === "chat"}
-                  onHistoryOpenChange={setHistoryOpen}
-                />
-              </Suspense>
+            <div className="workspace-view chat-view" hidden={view !== "chat"}>
+              <div
+                className={`chat-workspace ${referencesOpen ? "references-open" : ""}`}
+              >
+                <div className="chat-main">
+                  <Suspense fallback={<Loading />}>
+                    <Chat
+                      key={actualKbId}
+                      kb={kb}
+                      knowledgeBases={kbs.data || []}
+                      folders={folders.data || []}
+                      tags={tags.data || []}
+                      onCitation={openCitation}
+                      active={view === "chat"}
+                      historyOpen={historyOpen && view === "chat"}
+                      onHistoryOpenChange={setHistoryOpen}
+                      historyAnchor={historyAnchor}
+                    />
+                  </Suspense>
+                </div>
+                {referencesOpen && (
+                  <>
+                    <div
+                      className="resize-handle reference-resize"
+                      role="separator"
+                      aria-label="调整参考资料宽度"
+                      aria-orientation="vertical"
+                      aria-valuenow={filesWidth}
+                      aria-valuemin={380}
+                      aria-valuemax={680}
+                      tabIndex={0}
+                      onPointerDown={(event) => resize("files", event)}
+                      onKeyDown={(event) => {
+                        if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+                          event.preventDefault();
+                          ui.setWidths(
+                            ui.libraryWidth,
+                            filesWidth + (event.key === "ArrowLeft" ? 20 : -20),
+                          );
+                        }
+                      }}
+                    />
+                    <ReferencePane
+                      state={references}
+                      dispatch={updateReferences}
+                      active={view === "chat"}
+                      onOpen={openDoc}
+                    />
+                  </>
+                )}
+              </div>
             </div>
           )}
           {view !== "chat" && (
@@ -475,54 +562,64 @@ export function App() {
               <Suspense fallback={<Loading />}>
                 {view === "settings" ? (
                   <Settings kbId={actualKbId} />
+                ) : view === "trash" && !kb ? (
+                  <EmptyTrash />
                 ) : !kb ? (
-                  <Empty title="欢迎来到知簇">
-                    创建知识库后即可上传文件并开始探索。
+                  <Empty title="创建一个知识库">
+                    点击“个人知识库”旁的加号，收集你的第一份资料。
                   </Empty>
-                ) : view === "agent" ? (
-                  <Agent
-                    key={actualKbId}
-                    kbId={actualKbId}
-                    folders={folders.data || []}
-                    tags={tags.data || []}
-                  />
-                ) : selectedId ? (
+                ) : view === "document" && selectedId ? (
                   <Reader
                     key={selectedId}
                     documentId={selectedId}
                     reader={reader}
-                    onReader={setReader}
-                    citation={citation}
+                    onReader={(value) =>
+                      setParams((previous) => {
+                        const next = new URLSearchParams(previous);
+                        if (value) next.set("mode", "read");
+                        else next.delete("mode");
+                        return next;
+                      })
+                    }
+                    citation={
+                      documentCitation?.document_id === selectedId
+                        ? documentCitation
+                        : undefined
+                    }
                     folders={folders.data || []}
                     tags={tags.data || []}
                   />
                 ) : (
-                  <Empty title="打开一份文档">
-                    在“浏览资料”中选择文档，查看摘要或打开阅读器。
-                    <Button onClick={() => setFilesOpen(true)}>
-                      <FolderOpen size={16} />
-                      浏览资料
-                    </Button>
-                  </Empty>
+                  <DocumentsPane
+                    key={`${actualKbId}-${view}`}
+                    kb={kb}
+                    folders={folders.data || []}
+                    tags={tags.data || []}
+                    trash={view === "trash"}
+                    layout="page"
+                    selectedId=""
+                    onOpen={openDoc}
+                  />
                 )}
               </Suspense>
             </div>
           )}
-          {view === "chat" && !kb && (
-            <Empty title="欢迎来到知簇">
-              创建知识库后即可上传文件并开始探索。
-            </Empty>
-          )}
+          {view === "chat" &&
+            !kb &&
+            (kbs.isPending ? (
+              <Loading />
+            ) : (
+              <Empty title="欢迎来到知簇">
+                创建知识库后即可上传文件并开始探索。
+              </Empty>
+            ))}
         </div>
       </main>
-      {(filesOpen || mobileLibrary) && view !== "settings" && (
+      {mobileLibrary && view !== "settings" && (
         <button
           className="mobile-overlay"
           aria-label="关闭侧栏"
-          onClick={() => {
-            setFilesOpen(false);
-            setMobileLibrary(false);
-          }}
+          onClick={() => setMobileLibrary(false)}
         />
       )}
       <SearchDialog

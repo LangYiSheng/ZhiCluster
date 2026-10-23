@@ -17,7 +17,7 @@ export const useUI = create<UIState>()(
       ...DEFAULT_APPEARANCE,
       sidebarOpen: true,
       libraryWidth: 248,
-      filesWidth: 334,
+      filesWidth: 480,
       setTheme: (theme) => set({ theme }),
       setAppearance: (appearance) =>
         set((state) => normalizeAppearance({ ...state, ...appearance })),
@@ -25,19 +25,19 @@ export const useUI = create<UIState>()(
       setWidths: (libraryWidth, filesWidth) =>
         set({
           libraryWidth: Math.min(360, Math.max(200, libraryWidth)),
-          filesWidth: Math.min(500, Math.max(280, filesWidth)),
+          filesWidth: Math.min(680, Math.max(380, filesWidth)),
         }),
     }),
     {
       name: "zhicluster-ui",
-      version: 1,
+      version: 2,
       migrate: (saved) => {
         const state = (saved || {}) as Partial<UIState>;
         return {
           ...normalizeAppearance(state),
           sidebarOpen: state.sidebarOpen ?? true,
           libraryWidth: Math.min(360, Math.max(200, state.libraryWidth || 248)),
-          filesWidth: Math.min(500, Math.max(280, state.filesWidth || 334)),
+          filesWidth: Math.min(680, Math.max(480, state.filesWidth || 480)),
         };
       },
       partialize: (state) => ({

@@ -38,6 +38,7 @@ export function Reader({
   onReader,
   folders,
   tags,
+  active = true,
 }: {
   documentId: string;
   citation?: Citation;
@@ -45,6 +46,7 @@ export function Reader({
   onReader: (v: boolean) => void;
   folders: Folder[];
   tags: Tag[];
+  active?: boolean;
 }) {
   const qc = useQueryClient();
   const body = useRef<HTMLDivElement>(null);
@@ -113,7 +115,7 @@ export function Reader({
     );
   }, [citation]);
   useEffect(() => {
-    if (!citation || !content.data || !body.current) return;
+    if (!active || !citation || !content.data || !body.current) return;
     const a = citation.anchors || {};
     const sections = content.data.sections;
     const target = sections.find((s) => {
@@ -134,7 +136,7 @@ export function Reader({
       );
       element?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
-  }, [citation, content.data, reader]);
+  }, [active, citation, content.data, reader]);
   if (doc.isPending) return <Loading />;
   if (doc.isError)
     return <ErrorState error={doc.error} retry={() => void doc.refetch()} />;

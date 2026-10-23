@@ -16,11 +16,8 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   try {
-    await page.goto(`/chat?kb=${kb.id}`);
-    await expect(
-      page.getByRole("heading", { name: "让知识产生连接" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "浏览资料", exact: true }).click();
+    await page.goto(`/document?kb=${kb.id}`);
+    await expect(page.locator(".documents-page")).toBeVisible();
     await page.getByRole("button", { name: "新建文件夹", exact: true }).click();
     await page
       .getByRole("dialog")
@@ -63,13 +60,8 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       .getByRole("button", { name: new RegExp(filename) })
       .first()
       .click();
-    await expect(
-      page.getByRole("heading", { name: filename, exact: true }),
-    ).toBeVisible();
-    await page
-      .getByRole("button", { name: "打开阅读器", exact: true })
-      .last()
-      .click();
+    await expect(page).toHaveURL(/\/document\?.*document=/);
+    await expect(page.locator(".reader-toolbar")).toContainText(filename);
     await expect(page.locator(".text-reader")).toContainText(marker);
     expect(
       await page.evaluate(
@@ -77,6 +69,7 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       ),
     ).toBeUndefined();
     await expect(page.locator('a[href^="javascript:"]')).toHaveCount(0);
+    await page.goto(`/document?kb=${kb.id}`);
     await row
       .getByRole("button", { name: `${filename}文档菜单`, exact: true })
       .click();
@@ -128,7 +121,7 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       path: "test-results/workspace-light-1440.png",
       fullPage: true,
     });
-    await page.getByRole("button", { name: "浏览资料", exact: true }).click();
+    await page.goto(`/document?kb=${kb.id}`);
     await row.click({ button: "right" });
     await expect(
       page.getByRole("menuitem", { name: "移到回收站", exact: true }),
@@ -142,6 +135,8 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       .click();
     await expect(row).toHaveCount(0);
     await page.getByRole("button", { name: "回收站", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/trash\\?kb=${kb.id}$`));
+    await expect(page.locator(".documents-page")).toBeVisible();
     const deletedBases = page.locator(".deleted-kbs");
     if (await deletedBases.count()) {
       await expect(deletedBases).not.toHaveAttribute("open");
@@ -157,7 +152,7 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       .click();
     await page.getByRole("menuitem", { name: "恢复文档", exact: true }).click();
     await expect(trashed).toHaveCount(0);
-    await page.getByRole("button", { name, exact: true }).click();
+    await page.goto(`/document?kb=${kb.id}`);
     await expect(
       page.locator(".document-row").filter({ hasText: filename }),
     ).toBeVisible();
@@ -172,9 +167,7 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       ),
     ).toBeTruthy();
     await page.setViewportSize({ width: 390, height: 844 });
-    await page
-      .getByRole("button", { name: "关闭资料浏览", exact: true })
-      .click();
+    await page.goto(`/chat?kb=${kb.id}`);
     await page
       .getByRole("button", { name: "展开知识库栏", exact: true })
       .click();
@@ -222,6 +215,9 @@ test("真实PDF页码与DOCX段落来源定位", async ({ page, request }) => {
   const kb = (await response.json()) as { id: string };
   try {
     await page.goto(`/chat?kb=${kb.id}`);
+    const reference = page
+      .getByRole("complementary", { name: "参考资料" })
+      .getByRole("tabpanel");
     await page.getByRole("button", { name: "浏览资料", exact: true }).click();
     await page
       .getByLabel("上传文档", { exact: true })
@@ -243,15 +239,15 @@ test("真实PDF页码与DOCX段落来源定位", async ({ page, request }) => {
       .fill("PositionCheckPDF");
     await expect(page.getByRole("option").first()).toContainText("第 2 页");
     await page.getByRole("option").first().click();
-    await expect(page.locator(".pdf-canvas")).toHaveAttribute(
+    await expect(reference.locator(".pdf-canvas")).toHaveAttribute(
       "data-rendered-page",
       "2",
     );
-    await expect(page.locator('[data-pdf-text="2"]')).toContainText(
+    await expect(reference.locator('[data-pdf-text="2"]')).toContainText(
       "PositionCheckPDF",
     );
     expect(
-      await page.locator(".pdf-canvas").evaluate((node) => {
+      await reference.locator(".pdf-canvas").evaluate((node) => {
         const canvas = node as HTMLCanvasElement;
         const pixels = canvas
           .getContext("2d")!
@@ -268,8 +264,11 @@ test("真实PDF页码与DOCX段落来源定位", async ({ page, request }) => {
         return ink > 10;
       }),
     ).toBeTruthy();
-    await expect(page.locator(".citation-banner")).toContainText("第 2 页");
-    const downloadUrl = await page
+    await expect(reference.locator(".citation-banner")).toContainText(
+      "第 2 页",
+    );
+    await expect(page).toHaveURL(new RegExp(`/chat\\?kb=${kb.id}$`));
+    const downloadUrl = await reference
       .locator(".reader-toolbar>a")
       .getAttribute("href");
     const download = await request.get(`${downloadUrl}?inline=true`);
@@ -286,9 +285,9 @@ test("真实PDF页码与DOCX段落来源定位", async ({ page, request }) => {
       .fill("PositionCheckDOCX");
     await expect(page.getByRole("option").first()).toContainText("段");
     await page.getByRole("option").first().click();
-    await expect(page.locator(".citation-banner")).toContainText("段");
-    await expect(page.locator(".pdf-canvas")).toHaveCount(0);
-    await expect(page.locator(".text-reader")).toContainText(
+    await expect(reference.locator(".citation-banner")).toContainText("段");
+    await expect(reference.locator(".pdf-canvas")).toHaveCount(0);
+    await expect(reference.locator(".text-reader")).toContainText(
       "PositionCheckDOCX",
     );
     await page.screenshot({
@@ -314,11 +313,8 @@ test("真实拖放上传、复选批量标签与移动、文件夹子树循环�
   const kb = (await response.json()) as { id: string };
   const filenames = [`A-拖放资料-${suffix}.txt`, `B-拖放资料-${suffix}.txt`];
   try {
-    await page.goto(`/chat?kb=${kb.id}`);
-    await expect(
-      page.getByRole("heading", { name: "让知识产生连接" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "浏览资料", exact: true }).click();
+    await page.goto(`/document?kb=${kb.id}`);
+    await expect(page.locator(".documents-page")).toBeVisible();
     for (const name of ["资料归档", "研究主题"]) {
       await page
         .getByRole("button", { name: "新建文件夹", exact: true })

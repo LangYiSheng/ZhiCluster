@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, BookOpen, MessageSquare, Sparkles } from "lucide-react";
+import { ArrowUp, MessageSquare, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
@@ -29,6 +29,7 @@ export function Chat({
   onCitation,
   active = true,
   historyOpen = false,
+  historyAnchor,
   onHistoryOpenChange = ignoreHistoryChange,
 }: {
   kb: KnowledgeBase;
@@ -38,6 +39,7 @@ export function Chat({
   onCitation: (citation: Citation) => void;
   active?: boolean;
   historyOpen?: boolean;
+  historyAnchor?: HTMLElement | null;
   onHistoryOpenChange?: (open: boolean) => void;
 }) {
   const qc = useQueryClient();
@@ -159,11 +161,17 @@ export function Chat({
         m.status || "",
       ),
     );
+  const isEmpty =
+    !messages.data?.length &&
+    !messages.isError &&
+    !(messages.isPending && conversationId) &&
+    !stream;
   return (
-    <div className="chat-container">
+    <div className={`chat-container ${isEmpty ? "chat-is-empty" : ""}`}>
       <ConversationHistory
         open={active && historyOpen}
         onOpenChange={onHistoryOpenChange}
+        anchorElement={historyAnchor}
         conversations={conversations.data || []}
         currentId={conversationId}
         knowledgeBases={knowledgeBases}
@@ -194,26 +202,8 @@ export function Chat({
             <div className="welcome-symbol">
               <Sparkles size={28} />
             </div>
-            <span className="eyebrow">AI KNOWLEDGE WORKSPACE</span>
             <h1>让知识产生连接</h1>
-            <p>
-              从你的文档出发，寻找答案、发现线索。
-              <br />
-              每一个回答，都能追溯到真实来源。
-            </p>
-            <div className="welcome-scope">
-              <BookOpen size={17} />
-              <span>{conversationId ? "会话知识范围" : "当前知识库"}</span>
-              <strong>
-                {selectedKbIds
-                  .map(
-                    (id) =>
-                      knowledgeBases.find((k) => k.id === id)?.name ||
-                      "无权访问的知识库",
-                  )
-                  .join("、") || "正在读取范围"}
-              </strong>
-            </div>
+            <p>从你的文档出发，寻找答案、发现线索。</p>
           </div>
         ) : (
           messages.data.map((m) => (

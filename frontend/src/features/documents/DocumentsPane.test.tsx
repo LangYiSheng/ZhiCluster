@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -256,4 +257,127 @@ it("标签版本冲突时保留编辑内容", async () => {
     expect(screen.getByRole("button", { name: "保存" })).toBeEnabled(),
   );
   expect(screen.getByLabelText("名称")).toHaveValue("研究草稿");
+});
+
+it("完整文档页保留文件夹筛选、批量选择，并直接打开文档阅读器", async () => {
+  const fetch = vi.fn(
+    async (path: string) =>
+      new Response(
+        JSON.stringify(
+          path.includes("/documents")
+            ? { items: [doc], total: 1, page_size: 50 }
+            : [],
+        ),
+      ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const onOpen = vi.fn();
+  render(
+    <QueryClientProvider client={client()}>
+      <DocumentsPane
+        kb={{ ...kb, description: "阅读与研究资料" }}
+        folders={[
+          {
+            id: "folder-1",
+            kb_id: kb.id,
+            name: "研究资料",
+            parent_id: null,
+            version: 1,
+          },
+        ]}
+        tags={[tag]}
+        trash={false}
+        layout="page"
+        onOpen={onOpen}
+        selectedId=""
+      />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  await screen.findByText(doc.display_name);
+  expect(screen.getByRole("heading", { name: kb.name })).toBeInTheDocument();
+  expect(screen.getByText("阅读与研究资料")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "研究资料" }));
+  await waitFor(() =>
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("folder_id=folder-1"),
+      expect.anything(),
+    ),
+  );
+  await user.click(screen.getByRole("checkbox", { name: "全选当前页" }));
+  expect(screen.getByText("已选 1 项")).toBeInTheDocument();
+  await user.click(screen.getByText(doc.display_name));
+  expect(onOpen).toHaveBeenCalledWith(doc, true);
+});
+
+it("独立回收站可恢复文档和知识库，拖入文件不会触发上传", async () => {
+  const deletedKb = {
+    ...kb,
+    id: "kb-deleted",
+    name: "旧研究库",
+    deleted_at: "2026-10-22T00:00:00Z",
+  };
+  const fetch = vi.fn(
+    async (path: string, init?: RequestInit) =>
+      new Response(
+        JSON.stringify(
+          init?.method === "POST"
+            ? {}
+            : path.includes("/documents")
+              ? { items: [doc], total: 1, page_size: 50 }
+              : path.includes("include_deleted=true")
+                ? [deletedKb]
+                : [],
+        ),
+      ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  render(
+    <QueryClientProvider client={client()}>
+      <DocumentsPane
+        kb={kb}
+        folders={[]}
+        tags={[tag]}
+        trash
+        layout="page"
+        onOpen={vi.fn()}
+        selectedId=""
+      />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  await screen.findByText(doc.display_name);
+  expect(screen.getByRole("heading", { name: "回收站" })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "添加知识" }),
+  ).not.toBeInTheDocument();
+  fireEvent.drop(screen.getByRole("region", { name: "回收站内容" }), {
+    dataTransfer: {
+      files: [new File(["content"], "研究.txt", { type: "text/plain" })],
+      getData: vi.fn(() => ""),
+    },
+  });
+  expect(fetch.mock.calls.some(([path]) => path.includes("/uploads"))).toBe(
+    false,
+  );
+  fireEvent.contextMenu(document.querySelector(".document-row")!);
+  const contextMenu = screen.getByRole("menu");
+  expect(
+    within(contextMenu).queryByRole("menuitem", { name: "重命名" }),
+  ).not.toBeInTheDocument();
+  await user.click(within(contextMenu).getByRole("menuitem", { name: "恢复" }));
+  await waitFor(() =>
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/documents/doc-1/restore",
+      expect.objectContaining({ method: "POST" }),
+    ),
+  );
+  await user.click(screen.getByText("已删除知识库 · 1"));
+  await user.click(screen.getByRole("button", { name: "恢复" }));
+  await waitFor(() =>
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/knowledge-bases/kb-deleted/restore",
+      expect.objectContaining({ method: "POST" }),
+    ),
+  );
 });

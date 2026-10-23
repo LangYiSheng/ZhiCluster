@@ -8,11 +8,21 @@ import { Chat } from "./Chat";
 
 function HistoryChat(props: ComponentProps<typeof Chat>) {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyAnchor, setHistoryAnchor] = useState<HTMLButtonElement | null>(
+    null,
+  );
   return (
     <>
-      <button onClick={() => setHistoryOpen(true)}>历史</button>
+      <button
+        ref={setHistoryAnchor}
+        aria-expanded={historyOpen}
+        onClick={() => setHistoryOpen((value) => !value)}
+      >
+        历史
+      </button>
       <Chat
         {...props}
+        historyAnchor={historyAnchor}
         historyOpen={historyOpen}
         onHistoryOpenChange={setHistoryOpen}
       />
@@ -24,6 +34,58 @@ afterEach(() => {
   vi.unstubAllGlobals();
   localStorage.clear();
   sessionStorage.clear();
+});
+
+it("历史与范围为锚定的非模态卡片，Esc还原焦点且点击外部不阻挡输入", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response("[]")),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const kb = { id: "kb-1", name: "研究库", description: "", version: 1 };
+  render(
+    <QueryClientProvider client={client}>
+      <HistoryChat
+        kb={kb}
+        knowledgeBases={[kb]}
+        folders={[]}
+        tags={[]}
+        onCitation={vi.fn()}
+      />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  const historyTrigger = screen.getByRole("button", { name: "历史" });
+  await user.click(historyTrigger);
+  const history = screen.getByRole("dialog", { name: "历史对话" });
+  expect(history).toHaveClass("popover-content", "history-popover");
+  expect(history).toHaveAttribute("data-align", "end");
+  expect(history).not.toHaveAttribute("aria-modal", "true");
+  expect(document.querySelector(".dialog-overlay")).toBeNull();
+  expect(document.body.style.pointerEvents).toBe("");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await vi.waitFor(() => expect(historyTrigger).toHaveFocus());
+
+  const scopeTrigger = screen.getByRole("button", { name: "调整问答范围" });
+  await user.click(scopeTrigger);
+  const scope = screen.getByRole("dialog", { name: "问答范围" });
+  expect(scope).toHaveClass("popover-content", "scope-popover");
+  expect(scope).toHaveAttribute("data-align", "start");
+  expect(scope).not.toHaveAttribute("aria-modal", "true");
+  expect(scopeTrigger).toHaveAttribute("aria-expanded", "true");
+  await user.click(screen.getByLabelText("知识库问题"));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("知识库问题")).toHaveFocus();
+  await user.type(screen.getByLabelText("知识库问题"), "继续提问");
+  expect(screen.getByLabelText("知识库问题")).toHaveValue("继续提问");
+
+  await user.click(historyTrigger);
+  await user.click(historyTrigger);
+  expect(historyTrigger).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
 it("草稿在页面卸载和会话切换后按知识库与会话隔离恢复", async () => {
