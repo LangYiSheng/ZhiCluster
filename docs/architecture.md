@@ -115,7 +115,7 @@ LangChain 只读工具可列举和搜索授权范围内资料，没有 Shell/SQL
 
 前端使用 React、TypeScript、Vite、React Router、TanStack Query、Zustand、Tailwind、Radix/shadcn 风格组件、Lucide、Sonner 和安全 Markdown 预览。远端状态来自 API；主题、面板宽度和折叠状态保存在 localStorage。Nginx 代理 `/api` 并关闭 SSE 缓冲。
 
-聊天来源默认单行展示并渐隐，可展开全部；问答范围按知识库、目录和标签分页签展示，输入区显示实际范围名称。资料侧栏的收起状态与已打开标签分离，保留文档和引用位置，右侧操作轨道始终可用。左右栏使用网格宽度和透明度过渡，拖动调整时禁用动画，并尊重减少动态效果设置。整理页列表和详情各自持有滚动容器。`DocumentReading` 与 `PdfNavigation` 分离阅读模式和页导航，PDF原件与当前页文字分开展示；渲染任务串行取消，避免快速缩放/换页同时占用同一canvas，收起时暂停轮询及渲染。
+聊天来源默认单行展示并渐隐，可展开全部；问答范围按知识库、目录和标签分页签展示，输入区显示实际范围名称。资料侧栏的收起状态与已打开标签分离，保留文档和引用位置；右栏收起不占宽，开关位于“浏览资料”旁。左栏收起保留独立的图标导航，支持页面跳转及展开完整知识库栏。左右栏使用网格宽度和透明度过渡，拖动调整时禁用动画，并尊重减少动态效果设置。整理页列表和详情各自持有滚动容器。`DocumentReading` 与 `PdfNavigation` 分离阅读模式和页导航，PDF原件与当前页文字分开展示；渲染任务串行取消，避免快速缩放/换页同时占用同一canvas，收起时暂停轮询及渲染。
 
 Compose 完整模式构建静态前端，开发覆盖文件 bind mount 前后端源码并启用 Vite HMR、Uvicorn reload 和 worker 文件监听重启。应用状态位于 PostgreSQL、uploads 和 runtime 三个持久卷；开发模式也保留共享 uploads/runtime 挂载。runtime 只供后端使用，不通过 Web 静态发布。
 

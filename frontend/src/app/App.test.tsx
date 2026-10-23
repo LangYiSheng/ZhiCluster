@@ -12,6 +12,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import type { Citation, Document } from "../lib/api";
 import { App } from "./App";
+import { useUI } from "../stores/ui";
 
 const fixtures = vi.hoisted(() => {
   const document = (id: string, name: string) => ({
@@ -115,6 +116,7 @@ beforeEach(() => {
   documents = new Map();
   localStorage.clear();
   sessionStorage.clear();
+  useUI.setState({ sidebarOpen: true });
   vi.stubGlobal(
     "matchMedia",
     vi.fn((media: string) => ({
@@ -164,7 +166,7 @@ it("来源A等待GET时打开资料管理，A迟到不会抢占资料管理", as
   await mount();
   await user.click(screen.getByRole("button", { name: "查看来源A" }));
   await waitFor(() => expect(documents.has("doc-a")).toBe(true));
-  await user.click(screen.getByRole("button", { name: "打开资料管理" }));
+  await user.click(screen.getByRole("button", { name: "浏览资料" }));
   expect(await screen.findByText("资料管理测试内容")).toBeVisible();
   await deliver("a");
   const pane = screen.getByRole("complementary", { name: "参考资料" });
@@ -177,7 +179,7 @@ it("来源A等待GET时打开资料管理，A迟到不会抢占资料管理", as
 it("来源A等待GET时收起侧栏，A迟到不会重新展开", async () => {
   const user = userEvent.setup();
   await mount();
-  await user.click(screen.getByRole("button", { name: "打开资料管理" }));
+  await user.click(screen.getByRole("button", { name: "浏览资料" }));
   await user.click(screen.getByRole("button", { name: "查看来源A" }));
   await waitFor(() => expect(documents.has("doc-a")).toBe(true));
   await user.click(screen.getByRole("button", { name: "收起资料侧栏" }));
@@ -210,7 +212,7 @@ it("来源B先返回并打开后，较早的来源A迟到不会覆盖B", async (
 it("来源A等待GET时从资料管理直接打开B，A迟到不会抢占B", async () => {
   const user = userEvent.setup();
   await mount();
-  await user.click(screen.getByRole("button", { name: "打开资料管理" }));
+  await user.click(screen.getByRole("button", { name: "浏览资料" }));
   await user.click(screen.getByRole("button", { name: "查看来源A" }));
   await waitFor(() => expect(documents.has("doc-a")).toBe(true));
   await user.click(screen.getByRole("button", { name: "在资料管理中打开B" }));
@@ -237,11 +239,51 @@ it("打开引用文档后关闭资料侧栏，焦点返回侧栏展开按钮", a
 it("关闭当前文档标签只剩资料管理时，焦点落到仍可见的侧栏关闭按钮", async () => {
   const user = userEvent.setup();
   await mount();
-  await user.click(screen.getByRole("button", { name: "打开资料管理" }));
+  await user.click(screen.getByRole("button", { name: "浏览资料" }));
   await user.click(screen.getByRole("button", { name: "在资料管理中打开B" }));
   expect(await screen.findByText("阅读文档 doc-b")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "关闭 来源B.md" }));
   expect(screen.getByRole("button", { name: "关闭参考资料" })).toHaveFocus();
   expect(screen.getByRole("tabpanel", { name: "资料管理" })).toBeVisible();
   expect(screen.queryByText("阅读文档 doc-b")).not.toBeInTheDocument();
+});
+
+it("左栏收起后图标导航仍可切换页面，并保持收起状态", async () => {
+  const user = userEvent.setup();
+  await mount();
+  await user.click(screen.getByRole("button", { name: "折叠知识库栏" }));
+  const rail = screen.getByRole("navigation", { name: "折叠导航" });
+  expect(rail).not.toHaveAttribute("inert");
+  expect(
+    screen.getByRole("complementary", { name: "知识库与主导航" }),
+  ).toHaveAttribute("inert");
+  await user.click(within(rail).getByRole("button", { name: "文档管理" }));
+  expect(
+    await within(screen.getByRole("main")).findByText("文档管理", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(
+    within(rail).getByRole("button", { name: "文档管理" }),
+  ).toHaveAttribute("aria-current", "page");
+  expect(useUI.getState().sidebarOpen).toBe(false);
+});
+
+it("右栏只在浏览资料旁保留开关，重新展开恢复此前文档", async () => {
+  const user = userEvent.setup();
+  await mount();
+  const browse = screen.getByRole("button", { name: "浏览资料" });
+  const toggle = screen.getByRole("button", { name: "展开资料侧栏" });
+  expect(toggle.parentElement).toBe(browse.parentElement);
+  expect(
+    screen.queryByRole("navigation", { name: "资料侧栏快捷操作" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "查看来源B" }));
+  await waitFor(() => expect(documents.has("doc-b")).toBe(true));
+  await deliver("b");
+  expect(await screen.findByText("阅读文档 doc-b")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "收起资料侧栏" }));
+  await user.click(screen.getByRole("button", { name: "展开资料侧栏" }));
+  expect(screen.getByRole("tabpanel", { name: "来源B.md" })).toBeVisible();
+  expect(screen.getByText("阅读文档 doc-b")).toBeVisible();
 });

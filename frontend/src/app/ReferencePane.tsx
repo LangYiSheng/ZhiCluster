@@ -84,7 +84,7 @@ export function ReferencePane({
       ? pane.current?.querySelector<HTMLElement>(
           '[role="tab"][aria-selected="true"]',
         ) || pane.current?.querySelector<HTMLElement>(".reference-close")
-      : document.querySelector<HTMLElement>(".reference-rail button");
+      : document.querySelector<HTMLElement>(".reference-toggle");
     target?.focus();
   }, [active, state.activeId, state.tabs.length]);
   useEffect(() => {
@@ -108,7 +108,7 @@ export function ReferencePane({
           previous?.isConnected &&
           !element.contains(previous)
             ? previous
-            : document.querySelector<HTMLElement>(".reference-rail button");
+            : document.querySelector<HTMLElement>(".reference-toggle");
         target?.focus();
       }
     };

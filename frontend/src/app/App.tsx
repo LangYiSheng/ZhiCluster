@@ -43,6 +43,7 @@ import { SearchDialog } from "../features/search/SearchDialog";
 import { Button } from "../components/ui/button";
 import { Empty, ErrorState, Loading } from "../components/common";
 import { ReferencePane } from "./ReferencePane";
+import { NavigationRail } from "./NavigationRail";
 import { emptyReferences, referenceReducer } from "./referenceWorkspace";
 import type { ReferenceAction } from "./referenceWorkspace";
 const Reader = lazy(() =>
@@ -136,9 +137,6 @@ export function App() {
               ? "文档管理"
               : "知识对话";
   const referencesOpen = references.tabs.length > 0 && !references.collapsed;
-  const lastDocument = references.tabs
-    .filter((tab) => tab.kind === "document")
-    .at(-1);
   const [resizing, setResizing] = useState(false);
   const filesWidth = Math.max(380, ui.filesWidth);
   useEffect(() => {
@@ -297,23 +295,28 @@ export function App() {
     document.addEventListener("pointercancel", stop, { once: true });
   }
   const layoutStyle = {
-    "--library-width": `${ui.sidebarOpen ? ui.libraryWidth : 0}px`,
+    "--library-width": `${ui.sidebarOpen ? ui.libraryWidth : 56}px`,
     "--library-panel-width": `${ui.libraryWidth}px`,
     "--reference-width": `${filesWidth}px`,
     "--reference-column":
-      view === "chat" && kb
-        ? referencesOpen
-          ? "calc(min(var(--reference-width), 43vw) + 56px)"
-          : "56px"
+      view === "chat" && kb && referencesOpen
+        ? "calc(min(var(--reference-width), 43vw) + 14px)"
         : "0px",
   } as CSSProperties;
   if (location.pathname === "/agent")
     return <Navigate replace to={`/chat${kbId ? `?kb=${kbId}` : ""}`} />;
   return (
     <div
-      className={`app-shell ${!ui.sidebarOpen ? "sidebar-collapsed" : ""} ${mobileLibrary ? "mobile-library-open" : ""} ${view === "settings" ? "settings-mode" : ""} ${referencesOpen && view === "chat" ? "references-open" : ""} ${view === "chat" && kb ? "has-reference-dock" : ""} ${resizing ? "is-resizing" : ""}`}
+      className={`app-shell ${!ui.sidebarOpen ? "sidebar-collapsed" : ""} ${mobileLibrary ? "mobile-library-open" : ""} ${view === "settings" ? "settings-mode" : ""} ${referencesOpen && view === "chat" ? "references-open" : ""} ${resizing ? "is-resizing" : ""}`}
       style={layoutStyle}
     >
+      <NavigationRail
+        view={view}
+        onNavigate={to}
+        onExpand={toggleLibrary}
+        hidden={view === "settings"}
+        inert={mobileLibrary}
+      />
       <aside
         className="library-slot"
         aria-label="知识库与主导航"
@@ -496,17 +499,39 @@ export function App() {
               </Button>
             )}
             {view === "chat" && kb && (
-              <Button
-                className="browse-files"
-                variant="ghost"
-                size="sm"
-                aria-expanded={referencesOpen}
-                aria-label="浏览资料"
-                onClick={openLibrary}
-              >
-                <FolderOpen size={16} />
-                <span>浏览资料</span>
-              </Button>
+              <div className="browse-actions">
+                <Button
+                  className="browse-files"
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={referencesOpen}
+                  aria-label="浏览资料"
+                  onClick={openLibrary}
+                >
+                  <FolderOpen size={16} />
+                  <span>浏览资料</span>
+                </Button>
+                <Button
+                  className="reference-toggle"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={referencesOpen ? "收起资料侧栏" : "展开资料侧栏"}
+                  title={referencesOpen ? "收起资料侧栏" : "展开资料侧栏"}
+                  aria-expanded={referencesOpen}
+                  onClick={() =>
+                    referencesOpen
+                      ? updateReferences({ type: "collapse" })
+                      : references.tabs.length
+                        ? updateReferences({ type: "expand" })
+                        : openLibrary()
+                  }
+                >
+                  <PanelRightOpen
+                    size={17}
+                    className={referencesOpen ? "reference-collapse-icon" : ""}
+                  />
+                </Button>
+              </div>
             )}
           </div>
         </header>
@@ -628,59 +653,6 @@ export function App() {
               active={view === "chat" && referencesOpen}
               onOpen={openDoc}
             />
-            <nav className="reference-rail" aria-label="资料侧栏快捷操作">
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={referencesOpen ? "收起资料侧栏" : "展开资料侧栏"}
-                title={referencesOpen ? "收起资料侧栏" : "展开资料侧栏"}
-                aria-expanded={referencesOpen}
-                onClick={() =>
-                  referencesOpen
-                    ? updateReferences({ type: "collapse" })
-                    : references.tabs.length
-                      ? updateReferences({ type: "expand" })
-                      : openLibrary()
-                }
-              >
-                <PanelRightOpen
-                  size={17}
-                  className={referencesOpen ? "rail-collapse-icon" : ""}
-                />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="打开资料管理"
-                title="资料管理"
-                onClick={openLibrary}
-              >
-                <FolderOpen size={17} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="恢复最近打开的文档"
-                title={lastDocument?.title || "打开一份文档后可在这里恢复"}
-                disabled={!lastDocument}
-                onClick={() =>
-                  lastDocument &&
-                  updateReferences({ type: "activate", id: lastDocument.id })
-                }
-              >
-                <BookOpen size={17} />
-              </Button>
-              <div className="rail-spacer" />
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="前往整理审阅"
-                title="整理审阅"
-                onClick={() => to("review")}
-              >
-                <ListChecks size={17} />
-              </Button>
-            </nav>
           </div>
         </>
       )}

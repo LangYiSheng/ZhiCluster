@@ -30,22 +30,25 @@
 }
 @media (max-width: 1023px) {
   .app-shell:not(.settings-mode) {
-    grid-template-columns: 0 0 minmax(0, 1fr);
+    grid-template-columns: 56px 0 minmax(0, 1fr) 0 var(--reference-column, 0px);
   }
   .app-shell.references-open {
-    grid-template-columns: 0 0 minmax(0, 1fr) 0 minmax(
-        0,
-        min(var(--reference-width), 48vw)
-      );
+    grid-template-columns: 56px 0 minmax(0, 1fr) 0 var(--reference-column, 0px);
   }
   .workspace,
   .sidebar-collapsed .workspace {
-    margin: 12px;
+    margin: 12px 12px 12px 0;
     border-radius: var(--radius-shell);
+  }
+  .settings-mode .workspace {
+    margin: 12px;
   }
   .library-slot,
   .library-resize {
     visibility: hidden;
+  }
+  .navigation-rail {
+    display: flex;
   }
   .desktop-sidebar-toggle {
     display: none;
@@ -80,8 +83,9 @@
   }
 }
 @media (max-width: 780px) {
+  .app-shell:not(.settings-mode),
   .app-shell.references-open {
-    grid-template-columns: 0 0 minmax(0, 1fr);
+    grid-template-columns: 56px 0 minmax(0, 1fr) 0 0;
   }
 }
 @media (max-width: 720px) {
@@ -301,38 +305,44 @@
     scroll-behavior: auto !important;
   }
 }
-/* Keep the dock column present while the drawer opens; mobile uses an overlay. */
+/* Keep five grid tracks during transitions; narrow readers use an overlay. */
 @media (min-width: 781px) and (max-width: 1023px) {
   .app-shell:not(.settings-mode),
   .app-shell.references-open {
-    grid-template-columns: 0 0 minmax(0, 1fr) 0 var(--reference-column, 0px);
+    grid-template-columns: 56px 0 minmax(0, 1fr) 0 var(--reference-column, 0px);
   }
-  .has-reference-dock .workspace {
+  .references-open .workspace {
     margin-right: 0;
     border-top-right-radius: 0;
     border-bottom-right-radius: 0;
   }
 }
 @media (max-width: 780px) {
-  .app-shell.has-reference-dock {
-    --reference-column: 56px !important;
-    grid-template-columns: 0 0 minmax(0, 1fr) 0 56px;
-  }
   .reference-dock {
     overflow: visible;
   }
-  .has-reference-dock .workspace {
-    margin-right: 0;
+  .references-open .reference-dock {
+    margin: 0;
+    border: 0;
   }
   .reference-pane {
-    right: 56px;
+    right: 12px;
     width: min(520px, calc(100% - 68px));
   }
 }
 @media (max-width: 720px) {
-  .app-shell.has-reference-dock {
-    --reference-column: 44px !important;
-    grid-template-columns: 0 0 minmax(0, 1fr) 0 44px;
+  .app-shell:not(.settings-mode),
+  .app-shell.references-open {
+    grid-template-columns: 48px 0 minmax(0, 1fr) 0 0;
+  }
+  .navigation-rail {
+    width: 48px;
+    padding: 8px 4px;
+    gap: 8px;
+  }
+  .navigation-rail-main,
+  .navigation-rail-tools {
+    gap: 4px;
   }
   .reference-dock {
     margin: 0;
@@ -341,8 +351,8 @@
     border-radius: 0;
   }
   .reference-pane {
-    right: 44px;
-    width: calc(100% - 44px);
+    right: 0;
+    width: calc(100% - 48px);
   }
 }
 @media (max-width: 1023px) {
