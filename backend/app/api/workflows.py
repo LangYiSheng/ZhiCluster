@@ -5,7 +5,7 @@ from fastapi import APIRouter, Body, Depends, Header, Query
 from sqlalchemy import and_, exists, func, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.ai.gateway import ModelGateway
+from app.ai.gateway import ModelCatalogError, ModelGateway
 from app.api.events import event_stream
 from app.core.config import get_settings
 from app.core.errors import AppError
@@ -28,7 +28,7 @@ from app.db.session import get_db
 from app.retrieval.search import scoped_query, search_knowledge
 from app.schemas.requests import ChatMessage, ConversationCreate, ConversationUpdate, Rebuild, Search
 from app.schemas.responses import ConversationOut, JobOut, SearchOut
-from app.schemas.settings import ConfigurationSave, ModelTestRequest
+from app.schemas.settings import ConfigurationDraft, ConfigurationSave, ModelListRequest, ModelTestRequest
 from app.services.chat import emit_chat
 from app.services.library import get_document, snapshot
 from app.services.permissions import accessible_kb_ids, assert_can_edit_kb, assert_can_read_kb, get_actor
@@ -84,6 +84,29 @@ def test_models(body: ModelTestRequest | None = Body(None), db: Session = Depend
     settings = get_runtime_settings(db, get_settings())
     settings = apply_draft(settings, body.draft if body else None)
     return ModelGateway(settings).test_models(scope=body.scope if body else None)
+
+
+@router.post("/settings/models")
+def model_catalog(body: ModelListRequest, db: Session = Depends(get_db, scope="function")):
+    get_actor(db)
+    settings = get_runtime_settings(db, get_settings())
+    patch = getattr(body.draft, body.scope) if body.draft else None
+    if patch and patch.base_url is not None:
+        saved_url = str(getattr(settings, f"{body.scope}_base_url", "")).strip().rstrip("/")
+        if patch.base_url != saved_url and not (patch.api_key and patch.api_key.get_secret_value()):
+            raise AppError("model_list_key_required", "服务地址已变更，请重新填写 API Key 后获取模型列表", 422)
+    # A catalog lookup neither saves drafts nor applies the other provider's
+    # unsaved fields (including unrelated processing configuration).
+    draft = ConfigurationDraft(**{body.scope: getattr(body.draft, body.scope)}) if body.draft else None
+    settings = apply_draft(settings, draft)
+    try:
+        identifiers = ModelGateway(settings).list_models(body.scope)
+    except ModelCatalogError as error:
+        raise AppError(error.code, str(error), error.status) from error
+    result = {"models": [{"id": identifier} for identifier in identifiers]}
+    if not identifiers:
+        result["message"] = "此服务没有返回可用模型，可以刷新列表或手动填写模型 ID"
+    return result
 
 
 @router.post("/settings/rebuild-embeddings")

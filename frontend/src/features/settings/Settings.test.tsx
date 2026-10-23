@@ -74,6 +74,7 @@ function setup(initialPath = "/settings") {
 async function models(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByRole("heading", { name: "外观与布局" });
   await user.click(screen.getByRole("button", { name: "模型连接" }));
+  await user.click(chatFields().getByRole("button", { name: "手动填写" }));
 }
 function chatFields() {
   return within(screen.getByRole("region", { name: "聊天模型" }));
@@ -151,6 +152,14 @@ beforeEach(() => {
           }),
         );
       }
+      if (path.endsWith("/settings/models"))
+        return new Response(
+          JSON.stringify({
+            models: [
+              { id: body.scope === "llm" ? "chat-catalog" : "vector-catalog" },
+            ],
+          }),
+        );
       return new Response(JSON.stringify({ status: "queued" }));
     }),
   );
@@ -162,9 +171,51 @@ afterEach(() => {
 });
 
 describe("网页设置草稿", () => {
+  it("只在模型连接分类自动拉目录，分别选择模型保留草稿且不重新拉取", async () => {
+    const { user } = setup();
+    await screen.findByRole("heading", { name: "外观与布局" });
+    expect(
+      requests.some((request) => request.path.endsWith("/settings/models")),
+    ).toBe(false);
+    await user.click(screen.getByRole("button", { name: "模型连接" }));
+    await waitFor(
+      () =>
+        expect(
+          requests.filter((request) =>
+            request.path.endsWith("/settings/models"),
+          ),
+        ).toHaveLength(2),
+      { timeout: 2000 },
+    );
+    await user.click(chatFields().getByRole("combobox", { name: "模型名称" }));
+    await user.click(screen.getByRole("option", { name: "chat-catalog" }));
+    expect(
+      chatFields().getByRole("combobox", { name: "模型名称" }),
+    ).toHaveTextContent("chat-catalog");
+    expect(
+      within(screen.getByRole("region", { name: "向量模型" })).getByRole(
+        "combobox",
+        { name: "模型名称" },
+      ),
+    ).toHaveTextContent("vector-old");
+    await user.click(screen.getByRole("button", { name: "知识处理" }));
+    await new Promise((resolve) => setTimeout(resolve, 850));
+    expect(
+      requests.filter((request) => request.path.endsWith("/settings/models")),
+    ).toHaveLength(2);
+    expect(requests.filter((request) => request.method === "PUT")).toHaveLength(
+      0,
+    );
+    await user.click(screen.getByRole("button", { name: "模型连接" }));
+    expect(
+      chatFields().getByRole("combobox", { name: "模型名称" }),
+    ).toHaveTextContent("chat-catalog");
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeEnabled();
+  });
   it("任务列表可直接定位模型连接，站内跳转定位保留已有草稿", async () => {
     const { user, router } = setup("/settings?section=models");
     await screen.findByRole("heading", { name: "模型连接" });
+    await user.click(chatFields().getByRole("button", { name: "手动填写" }));
     await user.type(chatFields().getByLabelText("模型名称"), "-draft");
     await user.click(screen.getByRole("button", { name: "外观与布局" }));
     await act(async () => {

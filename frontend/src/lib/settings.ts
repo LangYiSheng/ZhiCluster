@@ -28,6 +28,11 @@ export type RuntimeDraft = {
   processing: RuntimeConfig["processing"];
 };
 export type ProbeScope = "llm" | "embedding" | "tool_calling";
+export type ModelScope = "llm" | "embedding";
+export type ModelCatalog = {
+  models: { id: string }[];
+  message?: string;
+};
 export type ProbeResult = {
   ok: boolean;
   configured?: boolean;

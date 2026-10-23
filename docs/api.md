@@ -1,6 +1,6 @@
 # API 说明
 
-本文按实际 FastAPI OpenAPI 路由核对，当前共 **57 个 HTTP 操作**。完整输入及响应模型以运行后的 `http://localhost:8000/openapi.json` 为准；Swagger 位于 `http://localhost:8000/docs`。
+本文按实际 FastAPI OpenAPI 路由核对，当前共 **58 个 HTTP 操作**。完整输入及响应模型以运行后的 `http://localhost:8000/openapi.json` 为准；Swagger 位于 `http://localhost:8000/docs`。
 
 Web 代理将 `/api` 原样转发至 API 服务。业务路由统一使用 `/api` 前缀；OpenAPI 和 Swagger 使用上面的 API 直连地址。
 
@@ -68,6 +68,7 @@ Web 代理将 `/api` 原样转发至 API 服务。业务路由统一使用 `/api
 | GET | `/api/settings/config` | 当前运行配置及 `revision`；密钥仅返回是否配置 |
 | PUT | `/api/settings/config` | `{revision,llm?,embedding?,processing?}`；版本校验后保存，新请求/新领取任务生效 |
 | POST | `/api/settings/test-models` | 可选 `{scope,draft}`；仅测试指定能力且不保存；空请求保持三项测试 |
+| POST | `/api/settings/models` | `{scope:"llm"\|"embedding",draft?}`；使用所选连接 GET `/models`，返回 `{models:[{id}]}`，不保存 |
 | POST | `/api/settings/rebuild-embeddings` | `{kb_id}`；为已解析文档创建 reindex 后台任务 |
 | GET | `/api/ingestion/jobs` | 可选 `kb_id`，返回可访问库最新 200 个任务 |
 | GET | `/api/ingestion/jobs/{job_id}` | 持久状态、阶段、进度、尝试次数、错误 |
@@ -78,6 +79,8 @@ Web 代理将 `/api` 原样转发至 API 服务。业务路由统一使用 `/api
 未配置模型时解析、阅读、管理及关键词检索仍可使用；AI 阶段显示 `unconfigured`/`partial_ready`，不会返回假摘要或假向量。Embedding 重建仅处理向量，目录/标签/改名不会触发重新解析。
 
 ### 运行配置读取与保存
+
+模型目录使用当前所选连接的草稿或已保存配置。省略密钥时，同一服务地址可复用后端密钥；地址改变且未提供新密钥时返回 `422 model_list_key_required`，不会发送请求。获取无需预先选择模型，不探测生成能力；空列表返回 `models:[]` 与提示，不凭名称分类。鉴权失败、服务不支持、超时或无效响应均返回脱敏错误，保留前端手动填写入口。
 
 `GET /api/settings/config` 返回示例：
 

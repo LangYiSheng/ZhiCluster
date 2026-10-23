@@ -14,6 +14,7 @@ import type { KnowledgeBase } from "../../lib/api";
 import { configDraft, rangeRules } from "../../lib/settings";
 import type {
   ModelStatus,
+  ModelScope,
   ProbeResult,
   ProbeScope,
   RuntimeConfig,
@@ -126,6 +127,12 @@ function SettingsEditor({
     {},
   );
   const [draftVersions, setDraftVersions] = useState({ llm: 0, embedding: 0 });
+  const [manualModels, setManualModels] = useState<Record<ModelScope, boolean>>(
+    {
+      llm: false,
+      embedding: false,
+    },
+  );
   const focusTarget = useRef("");
   const client = useQueryClient();
   const status = useQuery({
@@ -483,6 +490,13 @@ function SettingsEditor({
                 change={change}
                 embeddingChanged={embeddingChanged}
                 probeButton={probeButton}
+                manualModels={manualModels}
+                onManualModelChange={(group, manual) =>
+                  setManualModels((previous) => ({
+                    ...previous,
+                    [group]: manual,
+                  }))
+                }
               />
             )}
             {section === "processing" && (

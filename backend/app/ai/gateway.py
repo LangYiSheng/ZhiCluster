@@ -23,7 +23,16 @@ class ProviderError(RuntimeError):
         self.retryable = retryable
 
 
+class ModelCatalogError(ProviderError):
+    def __init__(self, code: str, message: str, status: int = 502):
+        super().__init__(message)
+        self.code, self.status = code, status
+
+
 class ModelGateway:
+    MODEL_LIST_MAX_BYTES = 1024 * 1024
+    MODEL_LIST_TIMEOUT_SECONDS = 15
+
     def __init__(self, settings: Any, *, transport: httpx.BaseTransport | None = None):
         self.settings = settings
         self.transport = transport
@@ -55,6 +64,59 @@ class ModelGateway:
         base_url, _, model, _, _ = self._config("embedding")
         dimension = int(getattr(self.settings, "embedding_dimension", 0))
         return hashlib.sha256(f"{base_url}|{model}|{dimension}".encode()).hexdigest()
+
+    def list_models(self, prefix: str) -> list[str]:
+        """Read the provider catalog without selecting or probing a model.
+
+        Catalogs do not have a standard capability field, so callers receive
+        identifiers only. Never expose provider response bodies in errors.
+        """
+        if prefix not in {"llm", "embedding"}:
+            raise ValueError("Invalid provider scope")
+        base_url, key, _, configured_timeout, _ = self._config(prefix)
+        if not base_url or not key:
+            raise ModelCatalogError("model_list_unconfigured", "请先填写服务地址和 API 密钥", 422)
+        timeout = min(configured_timeout, self.MODEL_LIST_TIMEOUT_SECONDS)
+        started = time.monotonic()
+        try:
+            with httpx.Client(timeout=timeout, transport=self.transport, follow_redirects=False) as client:
+                with client.stream("GET", f"{base_url}/models", headers={"Authorization": f"Bearer {key}"}) as response:
+                    if response.status_code in {401, 403}:
+                        raise ModelCatalogError("model_list_auth_failed", "模型列表获取失败：API 密钥无效或没有访问权限，请检查密钥与服务地址")
+                    if response.status_code in {404, 405}:
+                        raise ModelCatalogError("model_list_unsupported", "此服务未提供模型列表接口，请检查服务地址，或手动填写模型 ID")
+                    if response.status_code == 429:
+                        raise ModelCatalogError("model_list_rate_limited", "模型列表请求过于频繁，请稍后重试", 429)
+                    if not response.is_success:
+                        raise ModelCatalogError("model_list_provider_error", f"模型列表服务返回 HTTP {response.status_code}，请检查服务地址后重试")
+                    payload = bytearray()
+                    for chunk in response.iter_bytes():
+                        if time.monotonic() - started > timeout:
+                            raise ModelCatalogError("model_list_timeout", "获取模型列表超时，请检查服务地址或稍后重试", 504)
+                        if len(payload) + len(chunk) > self.MODEL_LIST_MAX_BYTES:
+                            raise ModelCatalogError("model_list_invalid_response", "模型列表响应过大，请联系服务提供方确认接口")
+                        payload.extend(chunk)
+            result = json.loads(payload)
+        except httpx.TimeoutException as error:
+            raise ModelCatalogError("model_list_timeout", "获取模型列表超时，请检查服务地址或稍后重试", 504) from error
+        except httpx.RequestError as error:
+            raise ModelCatalogError("model_list_network_error", "无法连接模型列表服务，请检查服务地址和网络", 502) from error
+        except (ValueError, UnicodeError) as error:
+            raise ModelCatalogError("model_list_invalid_response", "模型服务返回了无效的模型列表 JSON") from error
+        if not isinstance(result, dict) or not isinstance(result.get("data"), list):
+            raise ModelCatalogError("model_list_invalid_response", "模型列表格式不兼容，需要 data 数组和模型 id 字段")
+        entries = result["data"]
+        ids = set()
+        for entry in entries:
+            identifier = entry.get("id") if isinstance(entry, dict) else None
+            if not isinstance(identifier, str):
+                continue
+            identifier = identifier.strip()
+            if identifier and len(identifier) <= 512 and not any(ord(char) < 32 or ord(char) == 127 for char in identifier):
+                ids.add(identifier)
+        if entries and not ids:
+            raise ModelCatalogError("model_list_invalid_response", "模型列表中没有有效的模型 ID，请联系服务提供方确认接口")
+        return sorted(ids, key=lambda identifier: (identifier.casefold(), identifier))
 
     def _request(self, prefix: str, route: str, payload: dict) -> dict:
         base_url, key, model, timeout, retries = self._config(prefix)

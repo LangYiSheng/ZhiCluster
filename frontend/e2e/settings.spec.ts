@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator } from "@playwright/test";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { RuntimeConfig } from "../src/lib/settings";
@@ -6,6 +6,25 @@ import { configDraft } from "../src/lib/settings";
 import { chooseOption, waitForParsed } from "./helpers";
 
 type JobState = { kind: string; status: string; error: string };
+
+async function fillManualModel(region: Locator, value: string) {
+  if (
+    await region
+      .getByRole("combobox", { name: "模型名称", exact: true })
+      .isVisible()
+  )
+    await region.getByRole("button", { name: "手动填写", exact: true }).click();
+  await region
+    .getByRole("textbox", { name: "模型名称", exact: true })
+    .fill(value);
+}
+
+async function expectModel(region: Locator, value: string) {
+  const field = region.getByLabel("模型名称", { exact: true });
+  if ((await field.getAttribute("role")) === "combobox")
+    await expect(field).toContainText(value);
+  else await expect(field).toHaveValue(value);
+}
 
 test("字体、按需资料栏、草稿延续与桌面/手机/横屏布局", async ({
   page,
@@ -163,6 +182,20 @@ test("隔离库真实HTTP：草稿连接测试、网页保存、密钥保留清�
     authorization: string;
   }[] = [];
   const server = createServer(async (req, res) => {
+    if (req.method === "GET" && req.url === "/v1/models") {
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          data: [
+            "http-test-chat",
+            "http-test-chat-v2",
+            "http-test-vector-v1",
+            "http-test-vector-v2",
+          ].map((id) => ({ id })),
+        }),
+      );
+      return;
+    }
     let raw = "";
     for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw) as {
@@ -243,9 +276,7 @@ test("隔离库真实HTTP：草稿连接测试、网页保存、密钥保留清�
     await page.goto(`/settings?kb=${kb.id}`);
     await page.getByRole("button", { name: "模型连接", exact: true }).click();
     await chatModel.getByLabel("服务地址", { exact: true }).fill(baseUrl);
-    await chatModel
-      .getByLabel("模型名称", { exact: true })
-      .fill("http-test-chat");
+    await fillManualModel(chatModel, "http-test-chat");
     await chatModel.getByLabel("API 密钥", { exact: true }).fill(key);
     await page
       .getByRole("button", { name: "测试聊天连接", exact: true })
@@ -267,9 +298,7 @@ test("隔离库真实HTTP：草稿连接测试、网页保存、密钥保留清�
       ).revision,
     ).toBe(initial.revision);
     await vectorModel.getByLabel("服务地址", { exact: true }).fill(baseUrl);
-    await vectorModel
-      .getByLabel("模型名称", { exact: true })
-      .fill("http-test-vector-v1");
+    await fillManualModel(vectorModel, "http-test-vector-v1");
     await vectorModel.getByLabel("API 密钥", { exact: true }).fill(key);
     await vectorModel.getByLabel("向量维度", { exact: true }).fill("3");
     await page
@@ -300,9 +329,7 @@ test("隔离库真实HTTP：草稿连接测试、网页保存、密钥保留清�
     await expect(
       chatModel.getByText("已配置密钥", { exact: true }),
     ).toBeVisible();
-    await chatModel
-      .getByLabel("模型名称", { exact: true })
-      .fill("http-test-chat-v2");
+    await fillManualModel(chatModel, "http-test-chat-v2");
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await expect(page.getByText("修改已保存", { exact: true })).toBeVisible();
     await page
@@ -323,9 +350,7 @@ test("隔离库真实HTTP：草稿连接测试、网页保存、密钥保留清�
     await expect(
       chatModel.getByText("未配置密钥", { exact: true }),
     ).toBeVisible();
-    await vectorModel
-      .getByLabel("模型名称", { exact: true })
-      .fill("http-test-vector-v2");
+    await fillManualModel(vectorModel, "http-test-vector-v2");
     const latest = (await (
       await request.get("/api/settings/config")
     ).json()) as RuntimeConfig;
@@ -335,21 +360,15 @@ test("隔离库真实HTTP：草稿连接测试、网页保存、密钥保留清�
     expect(external.ok()).toBeTruthy();
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await expect(page.getByRole("alert")).toContainText("其他窗口更新");
-    await expect(
-      vectorModel.getByLabel("模型名称", { exact: true }),
-    ).toHaveValue("http-test-vector-v2");
+    await expectModel(vectorModel, "http-test-vector-v2");
     await page
       .getByRole("button", { name: "重新读取最新设置", exact: true })
       .click();
     await page
       .getByRole("button", { name: "放弃草稿并重新读取", exact: true })
       .click();
-    await expect(
-      vectorModel.getByLabel("模型名称", { exact: true }),
-    ).toHaveValue("http-test-vector-v1");
-    await vectorModel
-      .getByLabel("模型名称", { exact: true })
-      .fill("http-test-vector-v2");
+    await expectModel(vectorModel, "http-test-vector-v1");
+    await fillManualModel(vectorModel, "http-test-vector-v2");
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await expect(page.getByText("修改已保存", { exact: true })).toBeVisible();
     const storage = await page.evaluate(() =>
@@ -362,11 +381,10 @@ test("隔离库真实HTTP：草稿连接测试、网页保存、密钥保留清�
     const peer = await context.newPage();
     await peer.goto(`/settings?kb=${kb.id}`);
     await peer.getByRole("button", { name: "模型连接", exact: true }).click();
-    await expect(
-      peer
-        .getByRole("region", { name: "向量模型", exact: true })
-        .getByLabel("模型名称", { exact: true }),
-    ).toHaveValue("http-test-vector-v2");
+    await expectModel(
+      peer.getByRole("region", { name: "向量模型", exact: true }),
+      "http-test-vector-v2",
+    );
     await peer.close();
     await page.getByRole("button", { name: "返回工作区", exact: true }).click();
     await page.getByRole("button", { name: "浏览资料", exact: true }).click();

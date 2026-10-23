@@ -96,3 +96,8 @@ class ConfigurationSave(ConfigurationDraft):
 class ModelTestRequest(RuntimeInput):
     scope: Literal["llm", "embedding", "tool_calling"] | None = None
     draft: ConfigurationDraft | None = None
+
+
+class ModelListRequest(RuntimeInput):
+    scope: Literal["llm", "embedding"]
+    draft: ConfigurationDraft | None = None

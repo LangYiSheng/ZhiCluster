@@ -2,6 +2,7 @@ import { useId, type ReactNode } from "react";
 import type { Appearance } from "../../lib/appearance";
 import { PALETTES, FONT_PAIRINGS } from "../../lib/appearance";
 import type {
+  ModelScope,
   ProbeScope,
   RuntimeConfig,
   RuntimeDraft,
@@ -10,6 +11,7 @@ import { rangeRules } from "../../lib/settings";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Radio } from "../../components/ui/radio";
 import { Select } from "../../components/ui/select";
+import { ModelPicker } from "./ModelPicker";
 
 const fieldId = (group: string, key: string) => `setting-${group}-${key}`;
 
@@ -239,10 +241,14 @@ export function ConnectionForm({
   change,
   embeddingChanged,
   probeButton,
+  manualModels,
+  onManualModelChange,
 }: FormProps & {
   loaded: RuntimeConfig;
   embeddingChanged: boolean;
   probeButton: (scope: ProbeScope, label: string) => ReactNode;
+  manualModels: Record<ModelScope, boolean>;
+  onManualModelChange: (scope: ModelScope, manual: boolean) => void;
 }) {
   const props = { draft, errors, change };
   return (
@@ -287,24 +293,6 @@ export function ConnectionForm({
                 />
               </Field>
               <Field
-                id={fieldId(group, "model")}
-                label="模型名称"
-                help="填写服务方提供的模型 ID。"
-              >
-                <input
-                  id={fieldId(group, "model")}
-                  value={connection.model}
-                  maxLength={512}
-                  placeholder={
-                    group === "llm" ? "例如 chat-model" : "例如 embedding-model"
-                  }
-                  spellCheck={false}
-                  onChange={(event) =>
-                    change(group, "model", event.target.value)
-                  }
-                />
-              </Field>
-              <Field
                 id={fieldId(group, "api_key")}
                 label="API 密钥"
                 help={
@@ -340,6 +328,15 @@ export function ConnectionForm({
                   </label>
                 )}
               </Field>
+              <ModelPicker
+                scope={group}
+                connection={connection}
+                saved={loaded[group]}
+                revision={loaded.revision}
+                manual={manualModels[group]}
+                onManualChange={(value) => onManualModelChange(group, value)}
+                onChange={(value) => change(group, "model", value)}
+              />
               {group === "embedding" && (
                 <NumberField
                   {...props}

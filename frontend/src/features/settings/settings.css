@@ -509,6 +509,28 @@
 .zc-maintenance-status {
   margin: 22px 0;
 }
+.zc-model-picker-heading,
+.zc-model-picker-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.zc-model-picker-heading {
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+}
+.zc-model-picker-heading > label {
+  margin: 0;
+  font-size: var(--text-control);
+  font-weight: 550;
+  line-height: 1.6;
+}
+.zc-model-picker-heading .button {
+  min-height: 26px;
+  padding: 3px 6px;
+  font-size: var(--text-caption);
+}
 .zc-maintenance-status > div {
   display: flex;
   justify-content: space-between;
