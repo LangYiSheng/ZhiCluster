@@ -14,6 +14,7 @@ import {
   FileText,
   FolderOpen,
   History,
+  ListTodo,
   Menu as MenuIcon,
   MessageSquare,
   PanelLeftClose,
@@ -52,6 +53,9 @@ const Settings = lazy(() =>
   import("../features/settings/Settings").then((m) => ({
     default: m.Settings,
   })),
+);
+const Tasks = lazy(() =>
+  import("../features/tasks/Tasks").then((m) => ({ default: m.Tasks })),
 );
 
 function EmptyTrash() {
@@ -152,17 +156,21 @@ export function App() {
       ? "settings"
       : location.pathname === "/trash"
         ? "trash"
-        : location.pathname === "/document"
-          ? "document"
-          : "chat";
+        : location.pathname === "/tasks"
+          ? "tasks"
+          : location.pathname === "/document"
+            ? "document"
+            : "chat";
   const viewName =
     view === "settings"
       ? "设置"
       : view === "trash"
         ? "回收站"
-        : view === "document"
-          ? "文档管理"
-          : "知识对话";
+        : view === "tasks"
+          ? "任务列表"
+          : view === "document"
+            ? "文档管理"
+            : "知识对话";
   const referencesOpen = references.tabs.length > 0;
   const filesWidth = Math.max(380, ui.filesWidth);
   useEffect(() => {
@@ -318,7 +326,7 @@ export function App() {
     return <Navigate replace to={`/chat${kbId ? `?kb=${kbId}` : ""}`} />;
   return (
     <div
-      className={`app-shell ${!ui.sidebarOpen ? "sidebar-collapsed" : ""} ${mobileLibrary ? "mobile-library-open" : ""} ${view === "settings" ? "settings-mode" : ""}`}
+      className={`app-shell ${!ui.sidebarOpen ? "sidebar-collapsed" : ""} ${mobileLibrary ? "mobile-library-open" : ""} ${view === "settings" ? "settings-mode" : ""} ${referencesOpen && view === "chat" ? "references-open" : ""}`}
       style={layoutStyle}
     >
       <aside
@@ -373,6 +381,13 @@ export function App() {
           )}
         </div>
         <div className="sidebar-tools">
+          <button
+            aria-current={view === "tasks" ? "page" : undefined}
+            onClick={() => to("tasks")}
+          >
+            <ListTodo size={17} />
+            任务列表
+          </button>
           <button
             aria-current={view === "trash" ? "page" : undefined}
             onClick={() => to("trash")}
@@ -505,9 +520,7 @@ export function App() {
         <div className="workspace-content">
           {kb && (
             <div className="workspace-view chat-view" hidden={view !== "chat"}>
-              <div
-                className={`chat-workspace ${referencesOpen ? "references-open" : ""}`}
-              >
+              <div className="chat-workspace">
                 <div className="chat-main">
                   <Suspense fallback={<Loading />}>
                     <Chat
@@ -524,36 +537,6 @@ export function App() {
                     />
                   </Suspense>
                 </div>
-                {referencesOpen && (
-                  <>
-                    <div
-                      className="resize-handle reference-resize"
-                      role="separator"
-                      aria-label="调整参考资料宽度"
-                      aria-orientation="vertical"
-                      aria-valuenow={filesWidth}
-                      aria-valuemin={380}
-                      aria-valuemax={680}
-                      tabIndex={0}
-                      onPointerDown={(event) => resize("files", event)}
-                      onKeyDown={(event) => {
-                        if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
-                          event.preventDefault();
-                          ui.setWidths(
-                            ui.libraryWidth,
-                            filesWidth + (event.key === "ArrowLeft" ? 20 : -20),
-                          );
-                        }
-                      }}
-                    />
-                    <ReferencePane
-                      state={references}
-                      dispatch={updateReferences}
-                      active={view === "chat"}
-                      onOpen={openDoc}
-                    />
-                  </>
-                )}
               </div>
             </div>
           )}
@@ -562,6 +545,8 @@ export function App() {
               <Suspense fallback={<Loading />}>
                 {view === "settings" ? (
                   <Settings kbId={actualKbId} />
+                ) : view === "tasks" ? (
+                  <Tasks kb={kb || null} documentId={selectedId || undefined} />
                 ) : view === "trash" && !kb ? (
                   <EmptyTrash />
                 ) : !kb ? (
@@ -615,6 +600,37 @@ export function App() {
             ))}
         </div>
       </main>
+      {referencesOpen && (
+        <>
+          <div
+            className="resize-handle reference-resize"
+            hidden={view !== "chat"}
+            role="separator"
+            aria-label="调整参考资料宽度"
+            aria-orientation="vertical"
+            aria-valuenow={filesWidth}
+            aria-valuemin={380}
+            aria-valuemax={680}
+            tabIndex={0}
+            onPointerDown={(event) => resize("files", event)}
+            onKeyDown={(event) => {
+              if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+                event.preventDefault();
+                ui.setWidths(
+                  ui.libraryWidth,
+                  filesWidth + (event.key === "ArrowLeft" ? 20 : -20),
+                );
+              }
+            }}
+          />
+          <ReferencePane
+            state={references}
+            dispatch={updateReferences}
+            active={view === "chat"}
+            onOpen={openDoc}
+          />
+        </>
+      )}
       {mobileLibrary && view !== "settings" && (
         <button
           className="mobile-overlay"

@@ -21,6 +21,8 @@ import { useEvents } from "../../lib/events";
 import { useSessionDraft } from "../../lib/useSessionDraft";
 import { Button } from "../../components/ui/button";
 import { Dialog } from "../../components/ui/dialog";
+import { Checkbox } from "../../components/ui/checkbox";
+import { Select } from "../../components/ui/select";
 import { ErrorState, Status } from "../../components/common";
 type PlanPayload = {
   summary: string;
@@ -251,9 +253,8 @@ export function Agent({
                       key={op.operation_id}
                     >
                       <div className="row gap">
-                        <input
+                        <Checkbox
                           aria-label={`选择操作 ${index + 1}`}
-                          type="checkbox"
                           disabled={!reviewing}
                           checked={op.enabled !== false}
                           onChange={(e) =>
@@ -293,66 +294,58 @@ export function Agent({
                       {op.type === "move_documents" && (
                         <label>
                           目标文件夹
-                          <select
+                          <Select
                             disabled={!reviewing}
                             value={String(op.params.folder_id || "")}
-                            onChange={(e) =>
+                            onValueChange={(value) =>
                               change(index, {
                                 params: {
                                   ...op.params,
-                                  folder_id: e.target.value || null,
+                                  folder_id: value || null,
                                 },
                               })
                             }
-                          >
-                            <option value="">根目录 / 未分类</option>
-                            {folders
-                              .filter((f) => !f.deleted_at)
-                              .map((f) => (
-                                <option key={f.id} value={f.id}>
-                                  {f.name}
-                                </option>
-                              ))}
-                            {operations
-                              .filter((o) => o.type === "create_folder")
-                              .map((o) => (
-                                <option
-                                  key={o.operation_id}
-                                  value={`ref:${o.operation_id}`}
-                                >
-                                  新建：
-                                  {String(o.params.name || o.operation_id)}
-                                </option>
-                              ))}
-                          </select>
+                            options={[
+                              { value: "", label: "根目录 / 未分类" },
+                              ...folders
+                                .filter((f) => !f.deleted_at)
+                                .map((f) => ({ value: f.id, label: f.name })),
+                              ...operations
+                                .filter((o) => o.type === "create_folder")
+                                .map((o) => ({
+                                  value: `ref:${o.operation_id}`,
+                                  label: `新建：${String(o.params.name || o.operation_id)}`,
+                                })),
+                            ]}
+                          />
                         </label>
                       )}
                       {op.type === "update_document_tags" && (
                         <>
                           <label>
                             模式
-                            <select
+                            <Select
                               disabled={!reviewing}
                               value={String(op.params.mode || "add")}
-                              onChange={(e) =>
+                              onValueChange={(value) =>
                                 change(index, {
                                   params: {
                                     ...op.params,
-                                    mode: e.target.value,
+                                    mode: value,
                                   },
                                 })
                               }
-                            >
-                              <option value="add">添加</option>
-                              <option value="remove">移除</option>
-                              <option value="set">替换</option>
-                            </select>
+                              options={[
+                                { value: "add", label: "添加" },
+                                { value: "remove", label: "移除" },
+                                { value: "set", label: "替换" },
+                              ]}
+                            />
                           </label>
                           <div className="tag-checks">
                             {tags.map((t) => (
                               <label className="checkbox-label" key={t.id}>
-                                <input
-                                  type="checkbox"
+                                <Checkbox
                                   disabled={!reviewing}
                                   checked={(
                                     (op.params.tag_ids as string[]) || []
@@ -404,27 +397,24 @@ export function Agent({
                       {op.type === "create_folder" && (
                         <label>
                           父文件夹
-                          <select
+                          <Select
                             disabled={!reviewing}
                             value={String(op.params.parent_id || "")}
-                            onChange={(e) =>
+                            onValueChange={(value) =>
                               change(index, {
                                 params: {
                                   ...op.params,
-                                  parent_id: e.target.value || null,
+                                  parent_id: value || null,
                                 },
                               })
                             }
-                          >
-                            <option value="">根目录</option>
-                            {folders
-                              .filter((f) => !f.deleted_at)
-                              .map((f) => (
-                                <option key={f.id} value={f.id}>
-                                  {f.name}
-                                </option>
-                              ))}
-                          </select>
+                            options={[
+                              { value: "", label: "根目录" },
+                              ...folders
+                                .filter((f) => !f.deleted_at)
+                                .map((f) => ({ value: f.id, label: f.name })),
+                            ]}
+                          />
                         </label>
                       )}
                     </div>

@@ -1,0 +1,186 @@
+input.ui-checkbox[type="checkbox"],
+input.ui-radio[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--color-border-strong, var(--color-muted));
+  border-radius: 4px;
+  background: var(--color-canvas);
+  color: var(--color-on-accent);
+  vertical-align: middle;
+  cursor: pointer;
+  transition:
+    border-color 120ms,
+    background-color 120ms;
+}
+input.ui-checkbox[type="checkbox"]::before {
+  content: "";
+  width: 9px;
+  height: 5px;
+  margin-top: -2px;
+  border: solid currentColor;
+  border-width: 0 0 2px 2px;
+  transform: rotate(-45deg) scale(0);
+}
+input.ui-checkbox[type="checkbox"]:checked,
+input.ui-checkbox[type="checkbox"]:indeterminate,
+input.ui-radio[type="radio"]:checked {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+input.ui-checkbox[type="checkbox"]:checked::before {
+  transform: rotate(-45deg) scale(1);
+}
+input.ui-checkbox[type="checkbox"]:indeterminate::before {
+  width: 8px;
+  height: 0;
+  margin: 0;
+  border-width: 0 0 2px;
+  transform: none;
+}
+input.ui-radio[type="radio"] {
+  border-radius: 50%;
+}
+input.ui-radio[type="radio"]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  transform: scale(0);
+}
+input.ui-radio[type="radio"]:checked::before {
+  transform: scale(1);
+}
+input.ui-checkbox[type="checkbox"]:focus-visible,
+input.ui-radio[type="radio"]:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+input.ui-checkbox[type="checkbox"]:disabled,
+input.ui-radio[type="radio"]:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+input.ui-checkbox[type="checkbox"]:enabled:hover,
+input.ui-radio[type="radio"]:enabled:hover {
+  border-color: var(--color-accent);
+}
+.ui-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-canvas);
+  color: var(--color-text);
+  text-align: left;
+  font: inherit;
+  font-size: var(--text-control);
+  line-height: 1.5;
+  cursor: pointer;
+}
+.ui-select-trigger > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-select-trigger > svg {
+  color: var(--color-muted);
+}
+.ui-select-trigger:hover:not(:disabled),
+.ui-select-trigger[data-state="open"] {
+  border-color: var(--color-accent);
+}
+.ui-select-trigger:focus-visible {
+  outline: 2px solid var(--color-accent-soft);
+  outline-offset: 2px;
+  border-color: var(--color-accent);
+}
+.ui-select-trigger[data-placeholder] {
+  color: var(--color-muted);
+}
+.ui-select-trigger[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+.ui-select-sm {
+  width: auto;
+  min-height: 30px;
+  padding: 4px 7px;
+  gap: 6px;
+  font-size: var(--text-caption);
+  background: transparent;
+  border-color: transparent;
+}
+.ui-select-content {
+  z-index: 100;
+  min-width: var(--radix-select-trigger-width);
+  max-width: calc(100vw - 24px);
+  max-height: min(320px, var(--radix-select-content-available-height));
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-canvas);
+  color: var(--color-text);
+  box-shadow: 0 10px 30px var(--color-shadow);
+  font-family: var(--font-ui);
+  font-size: var(--text-control);
+}
+.ui-select-content .ui-select-viewport {
+  padding: 4px;
+  scrollbar-width: thin;
+}
+.ui-select-content .ui-select-viewport::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+}
+.ui-select-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 30px 7px 10px;
+  border-radius: calc(var(--radius-control) - 2px);
+  outline: none;
+  cursor: pointer;
+  user-select: none;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.ui-select-option[data-highlighted] {
+  background: var(--color-hover);
+}
+.ui-select-option[data-state="checked"] {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+.ui-select-option[data-disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ui-select-check {
+  position: absolute;
+  right: 9px;
+  display: flex;
+  align-items: center;
+}
+.ui-select-scroll {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  color: var(--color-muted);
+  background: var(--color-canvas);
+}

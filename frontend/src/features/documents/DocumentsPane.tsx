@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { DragEvent } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
@@ -21,7 +22,10 @@ import type { Document, Folder, Job, KnowledgeBase, Tag } from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { Dialog } from "../../components/ui/dialog";
 import { Menu, MenuItem } from "../../components/ui/menu";
-import { Empty, ErrorState, Loading, Status } from "../../components/common";
+import { Checkbox } from "../../components/ui/checkbox";
+import { Select } from "../../components/ui/select";
+import { Empty, ErrorState, Loading } from "../../components/common";
+import { isActiveJob, jobNeedsAttention, jobProgress } from "../../lib/jobs";
 import { FolderTree } from "./FolderTree";
 import type { FolderAction } from "./FolderTree";
 import { TagManager } from "./TagManager";
@@ -281,6 +285,7 @@ export function DocumentsPane({
         ) : (
           <>
             <MenuItem onSelect={() => onOpen(doc, true)}>打开阅读器</MenuItem>
+            <MenuItem onSelect={() => onOpen(doc, false)}>查看属性</MenuItem>
             <MenuItem
               onSelect={() =>
                 setForm({
@@ -518,48 +523,51 @@ export function DocumentsPane({
           </div>
           <div className="file-filters">
             <ListFilter size={13} />
-            <select
+            <Select
               aria-label="文件类型筛选"
               value={ext}
-              onChange={(e) => {
-                setExt(e.target.value);
+              size="sm"
+              onValueChange={(value) => {
+                setExt(value);
                 setPage(1);
               }}
-            >
-              <option value="">全部类型</option>
-              {["pdf", "docx", "md", "txt"].map((t) => (
-                <option key={t}>{t}</option>
-              ))}
-            </select>
-            <select
+              options={[
+                { value: "", label: "全部类型" },
+                ...["pdf", "docx", "md", "txt"].map((value) => ({
+                  value,
+                  label: value.toUpperCase(),
+                })),
+              ]}
+            />
+            <Select
               aria-label="处理状态筛选"
               value={status}
-              onChange={(e) => {
-                setStatus(e.target.value);
+              size="sm"
+              onValueChange={(value) => {
+                setStatus(value);
                 setPage(1);
               }}
-            >
-              <option value="">全部状态</option>
-              <option value="ready">已就绪</option>
-              <option value="queued">排队中</option>
-              <option value="failed">失败</option>
-            </select>
-            <select
+              options={[
+                { value: "", label: "全部状态" },
+                { value: "ready", label: "已处理" },
+                { value: "queued", label: "未处理" },
+                { value: "failed", label: "处理失败" },
+              ]}
+            />
+            <Select
               aria-label="标签筛选"
               value={tagId}
-              onChange={(event) => {
-                setTagFilter({ kbId: kb.id, id: event.target.value });
+              size="sm"
+              onValueChange={(value) => {
+                setTagFilter({ kbId: kb.id, id: value });
                 setPage(1);
                 setSelected(new Set());
               }}
-            >
-              <option value="">全部标签</option>
-              {tags.map((tag) => (
-                <option key={tag.id} value={tag.id}>
-                  {tag.name}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: "", label: "全部标签" },
+                ...tags.map((tag) => ({ value: tag.id, label: tag.name })),
+              ]}
+            />
             {!trash && (
               <Button
                 size="sm"
@@ -572,10 +580,13 @@ export function DocumentsPane({
           </div>
           <div className="selection-bar">
             <label className="checkbox-label">
-              <input
-                type="checkbox"
+              <Checkbox
                 aria-label="全选当前页"
                 checked={!!rows.length && rows.every((d) => selected.has(d.id))}
+                indeterminate={
+                  rows.some((d) => selected.has(d.id)) &&
+                  !rows.every((d) => selected.has(d.id))
+                }
                 onChange={(e) =>
                   setSelected(
                     e.target.checked
@@ -706,8 +717,7 @@ export function DocumentsPane({
                     });
                   }}
                 >
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     aria-label={`选择 ${doc.display_name}`}
                     checked={selected.has(doc.id)}
                     onChange={(e) =>
@@ -721,10 +731,7 @@ export function DocumentsPane({
                   />
                   <button
                     className="document-open"
-                    onClick={() =>
-                      onOpen(doc, layout === "page" ? true : undefined)
-                    }
-                    onDoubleClick={() => onOpen(doc, true)}
+                    onClick={() => onOpen(doc, true)}
                   >
                     <span className={`file-icon file-${doc.ext}`}>
                       <FileText size={19} />
@@ -736,7 +743,10 @@ export function DocumentsPane({
                         {new Date(doc.created_at).toLocaleDateString("zh-CN")} ·{" "}
                         {formatSize(doc.size_bytes)}
                       </small>
-                      <Status value={doc.parse_status} />
+                      <DocumentProcessing
+                        document={doc}
+                        jobs={jobs.data || []}
+                      />
                       {!!doc.tag_ids?.length && (
                         <span className="document-tags">
                           {tags
@@ -794,12 +804,13 @@ export function DocumentsPane({
           )}
           <div className="document-footer">
             <small>{total} 个文档</small>
-            <span>
-              {jobs.data?.filter((j) =>
-                ["queued", "running"].includes(j.status),
-              ).length || 0}{" "}
-              项任务
-            </span>
+            <Link to={`/tasks?kb=${kb.id}`} className="document-tasks-link">
+              任务列表
+              {!!jobs.data?.filter(isActiveJob).length &&
+                ` · ${jobs.data.filter(isActiveJob).length} 项进行中`}
+              {!!jobs.data?.filter(jobNeedsAttention).length &&
+                ` · ${jobs.data.filter(jobNeedsAttention).length} 项待处理`}
+            </Link>
           </div>
           {dragging && (
             <div className="drop-overlay">
@@ -892,51 +903,48 @@ export function DocumentsPane({
             (form?.kind === "folder" && form.action !== "rename")) && (
             <label>
               目标文件夹
-              <select
+              <Select
+                aria-label="目标文件夹"
                 value={form.parent_id || ""}
-                onChange={(e) =>
+                onValueChange={(value) =>
                   setForm((v) =>
-                    v ? { ...v, parent_id: e.target.value || null } : null,
+                    v ? { ...v, parent_id: value || null } : null,
                   )
                 }
-              >
-                <option value="">根目录 / 未分类</option>
-                {folders
-                  .filter(
-                    (f) =>
-                      !f.deleted_at &&
-                      (form.action !== "move" || f.id !== form.folder?.id),
-                  )
-                  .map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.name}
-                    </option>
-                  ))}
-              </select>
+                options={[
+                  { value: "", label: "根目录 / 未分类" },
+                  ...folders
+                    .filter(
+                      (f) =>
+                        !f.deleted_at &&
+                        (form.action !== "move" || f.id !== form.folder?.id),
+                    )
+                    .map((f) => ({ value: f.id, label: f.name })),
+                ]}
+              />
             </label>
           )}
           {form?.kind === "tags" && (
             <>
               <label>
                 操作
-                <select
-                  value={form.tag_mode}
-                  onChange={(e) =>
-                    setForm((v) =>
-                      v ? { ...v, tag_mode: e.target.value } : null,
-                    )
+                <Select
+                  aria-label="标签操作"
+                  value={form.tag_mode || "add"}
+                  onValueChange={(value) =>
+                    setForm((v) => (v ? { ...v, tag_mode: value } : null))
                   }
-                >
-                  <option value="add">添加标签</option>
-                  <option value="set">替换全部标签</option>
-                  <option value="remove">移除标签</option>
-                </select>
+                  options={[
+                    { value: "add", label: "添加标签" },
+                    { value: "set", label: "替换全部标签" },
+                    { value: "remove", label: "移除标签" },
+                  ]}
+                />
               </label>
               <div className="tag-checks">
                 {tags.map((t) => (
                   <label className="checkbox-label" key={t.id}>
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={form.tag_ids?.includes(t.id) || false}
                       onChange={(e) =>
                         setForm((v) =>
@@ -1115,6 +1123,35 @@ export function DocumentsPane({
       )}
     </section>
   );
+}
+function DocumentProcessing({
+  document,
+  jobs,
+}: {
+  document: Document;
+  jobs: Job[];
+}) {
+  const related = jobs.filter((job) => job.document_id === document.id);
+  const running = related.find(isActiveJob);
+  if (running) {
+    const pending = running.status === "queued";
+    return (
+      <span className="status status-processing">
+        {pending
+          ? "未处理"
+          : running.status === "retry_wait"
+            ? "等待重试"
+            : `正在处理 ${jobProgress(running)}%`}
+      </span>
+    );
+  }
+  if (document.parse_status === "failed")
+    return <span className="status status-failed">处理失败</span>;
+  if (document.parse_status !== "ready")
+    return <span className="status status-queued">未处理</span>;
+  if (related[0] && jobNeedsAttention(related[0]))
+    return <span className="status status-partial_ready">任务待处理</span>;
+  return null;
 }
 function formatSize(size: number) {
   return size < 1024

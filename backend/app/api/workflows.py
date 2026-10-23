@@ -1,7 +1,8 @@
 from datetime import UTC, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Body, Depends, Header, Query
-from sqlalchemy import exists, func, or_, select, text
+from sqlalchemy import and_, exists, func, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.gateway import ModelGateway
@@ -107,12 +108,26 @@ def search(body: Search, db: Session = Depends(get_db, scope="function")):
 
 
 @router.get("/ingestion/jobs", response_model=list[JobOut])
-def jobs(kb_id: str | None = None, db: Session = Depends(get_db, scope="function")):
+def jobs(kb_id: str | None = None, document_id: str | None = None, group: Literal["attention", "active", "completed"] | None = None, db: Session = Depends(get_db, scope="function")):
     actor = get_actor(db)
     allowed = [kb_id] if kb_id else accessible_kb_ids(db, actor)
     if kb_id:
         assert_can_read_kb(db, actor, kb_id)
-    return list(db.scalars(select(IngestionJob).where(IngestionJob.kb_id.in_(allowed)).order_by(IngestionJob.created_at.desc()).limit(200)))
+    stmt = select(IngestionJob, Document).outerjoin(Document, IngestionJob.document_id == Document.id).where(IngestionJob.kb_id.in_(allowed))
+    own_conversation = exists(select(Conversation.id).where(Conversation.id == IngestionJob.payload["conversation_id"].as_string(), Conversation.user_id == actor.id, Conversation.deleted_at.is_(None)))
+    stmt = stmt.where(or_(IngestionJob.kind != "chat", own_conversation))
+    if document_id:
+        document = get_document(db, actor, document_id)
+        if kb_id and document.kb_id != kb_id:
+            raise AppError("scope_mismatch", "文档不属于当前知识库", 400)
+        stmt = stmt.where(IngestionJob.document_id == document_id)
+    if group == "attention":
+        stmt = stmt.where(or_(IngestionJob.status.in_(["failed", "partial_ready"]), and_(IngestionJob.status == "retry_wait", IngestionJob.error.is_not(None), IngestionJob.error != "")))
+    elif group == "active":
+        stmt = stmt.where(IngestionJob.status.in_(["queued", "running", "processing", "retry_wait"]))
+    elif group == "completed":
+        stmt = stmt.where(IngestionJob.status == "completed")
+    return [{**snapshot(job), "document_name": document.display_name if document and not document.deleted_at else None, "document_available": not job.document_id or bool(document and not document.deleted_at)} for job, document in db.execute(stmt.order_by(IngestionJob.created_at.desc()).limit(200))]
 
 
 def checked_job(db, job_id, edit=False):
@@ -120,6 +135,8 @@ def checked_job(db, job_id, edit=False):
     if not job:
         raise AppError("not_found", "任务不存在", 404)
     (assert_can_edit_kb if edit else assert_can_read_kb)(db, get_actor(db), job.kb_id)
+    if job.kind == "chat":
+        checked_conversation(db, job.payload.get("conversation_id"))
     return job
 
 
@@ -134,6 +151,22 @@ def retry_job(job_id: str, db: Session = Depends(get_db, scope="function")):
     db.refresh(job, with_for_update=True)
     if job.status not in {"failed", "partial_ready", "cancelled", "completed"}:
         raise AppError("job_running", "任务正在执行", 409)
+    if job.document_id:
+        get_document(db, get_actor(db), job.document_id)
+    if job.kind == "chat":
+        conversation = db.scalar(select(Conversation).where(Conversation.id == job.payload.get("conversation_id")).with_for_update())
+        if not conversation or conversation.deleted_at or conversation.user_id != get_actor(db).id:
+            raise AppError("not_found", "对话不存在", 404)
+        message = db.get(Message, job.payload.get("message_id"))
+        if not message or message.status == "completed":
+            raise AppError("chat_already_completed", "此回答已经完成", 409)
+        active = db.scalar(select(Message).where(Message.conversation_id == conversation.id, Message.id != message.id, Message.status.in_(["queued", "processing"])))
+        if active:
+            raise AppError("conversation_busy", "请等待当前回复完成后重试", 409)
+        later = db.scalar(select(Message.id).where(Message.conversation_id == conversation.id, Message.created_at > message.created_at).limit(1))
+        if later:
+            raise AppError("chat_turn_is_past", "此回答之后已有新对话，请回到知识对话重新提问", 409)
+        message.status, message.error = "queued", None
     if job.kind == "agent":
         run = db.scalar(select(AgentRun).where(AgentRun.id == job.payload.get("run_id")).with_for_update().execution_options(populate_existing=True))
         if db.scalar(select(AgentPlan.id).where(AgentPlan.run_id == job.payload.get("run_id"))):
@@ -141,10 +174,11 @@ def retry_job(job_id: str, db: Session = Depends(get_db, scope="function")):
         if run:
             run.status, run.error = "queued", None
     job.status, job.error, job.attempts = "queued", None, 0
+    job.stage, job.progress = "queued", 0
     job.lease_until, job.lease_owner, job.next_attempt_at = None, None, None
     if job.document_id:
         doc = db.get(Document, job.document_id)
-        for field in ("index_status", "summary_status", "classification_status"):
+        for field in ("parse_status", "index_status", "summary_status", "classification_status"):
             if getattr(doc, field) in {"failed", "unconfigured"}:
                 setattr(doc, field, "queued")
     return job
@@ -154,7 +188,7 @@ def retry_job(job_id: str, db: Session = Depends(get_db, scope="function")):
 def cancel_job(job_id: str, db: Session = Depends(get_db, scope="function")):
     job = checked_job(db, job_id, True)
     db.refresh(job, with_for_update=True)
-    if job.status not in {"queued", "running", "processing"}:
+    if job.status not in {"queued", "running", "processing", "retry_wait"}:
         raise AppError("job_terminal", "任务已经结束", 409)
     job.status = "cancelled"
     if job.kind == "chat":

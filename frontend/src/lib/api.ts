@@ -128,12 +128,19 @@ export type StreamEvent = {
 };
 export type Job = {
   id: string;
-  document_id: string;
+  kb_id?: string;
+  document_id: string | null;
+  document_name?: string | null;
+  document_available?: boolean;
+  kind?: string;
   status: string;
   stage?: string;
   progress: number;
-  error?: string;
+  error?: string | null;
   attempts: number;
+  created_at?: string;
+  updated_at?: string;
+  next_attempt_at?: string | null;
 };
 export type Suggestion = {
   id?: string;

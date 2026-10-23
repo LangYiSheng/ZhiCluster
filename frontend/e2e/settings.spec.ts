@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { RuntimeConfig } from "../src/lib/settings";
 import { configDraft } from "../src/lib/settings";
+import { chooseOption, waitForParsed } from "./helpers";
 
 type JobState = { kind: string; status: string; error: string };
 
@@ -28,8 +29,8 @@ test("字体、按需资料栏、草稿延续与桌面/手机/横屏布局", asy
     ).toBeVisible();
     await expect(page.locator(".reference-pane:visible")).toHaveCount(0);
     await expect(page.locator(".library-slot")).toBeHidden();
-    await page.getByLabel("显示模式", { exact: true }).selectOption("dark");
-    await page.getByLabel("字体搭配", { exact: true }).selectOption("sans");
+    await chooseOption(page, "显示模式", "深色");
+    await chooseOption(page, "字体搭配", "清晰黑体");
     await page.getByRole("button", { name: "返回工作区", exact: true }).click();
     await expect(page.getByRole("dialog")).toContainText("放弃未保存的修改");
     await page.getByRole("button", { name: "继续编辑", exact: true }).click();
@@ -41,11 +42,11 @@ test("字体、按需资料栏、草稿延续与桌面/手机/横屏布局", asy
       "sans",
     );
     await page.reload();
-    await expect(page.getByLabel("字体搭配", { exact: true })).toHaveValue(
-      "sans",
+    await expect(page.getByLabel("字体搭配", { exact: true })).toContainText(
+      "清晰黑体",
     );
-    await page.getByLabel("显示模式", { exact: true }).selectOption("light");
-    await page.getByLabel("字体搭配", { exact: true }).selectOption("mixed");
+    await chooseOption(page, "显示模式", "浅色");
+    await chooseOption(page, "字体搭配", "宋黑搭配");
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await expect(page.getByText("修改已保存", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "返回工作区", exact: true }).click();
@@ -378,9 +379,8 @@ test("隔离库真实HTTP：草稿连接测试、网页保存、密钥保留清�
       ),
     });
     const row = page.locator(".document-row").filter({ hasText: filename });
-    await expect(row.getByText("已就绪", { exact: true })).toBeVisible({
-      timeout: 30000,
-    });
+    await expect(row).toBeVisible();
+    await waitForParsed(request, kb.id, [filename]);
     await expect
       .poll(
         () =>

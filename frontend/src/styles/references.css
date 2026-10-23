@@ -6,11 +6,17 @@
   position: relative;
   overflow: hidden;
 }
-.chat-workspace.references-open {
-  grid-template-columns: minmax(0, 1fr) 0 minmax(
+.app-shell.references-open {
+  grid-template-columns: var(--library-width) 0 minmax(0, 1fr) 0 minmax(
       0,
-      min(var(--reference-width), 46%)
+      min(var(--reference-width), 43vw)
     );
+}
+.references-open .workspace {
+  margin-right: 0;
+  border-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
 }
 .chat-main {
   min-width: 0;
@@ -19,43 +25,42 @@
   grid-row: 1;
 }
 .reference-resize {
-  grid-column: 2;
+  grid-column: 4;
   grid-row: 1;
   z-index: 30;
 }
 .reference-pane {
-  grid-column: 3;
+  grid-column: 5;
   grid-row: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-left: 1px solid var(--border);
   background: var(--color-canvas);
   overflow: hidden;
+  position: relative;
+  margin: 12px 12px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 0 var(--radius-shell) var(--radius-shell) 0;
 }
-.reference-pane-heading {
-  min-height: 48px;
-  padding: 7px 12px 7px 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-bottom: 1px solid var(--border);
+.reference-close {
+  position: absolute;
+  z-index: 4;
+  right: 8px;
+  top: 12px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
   color: var(--muted);
+  background: var(--color-canvas);
 }
-.reference-pane-heading > span {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: var(--text-control);
+.reference-pane:not(.has-tabs) .pane-header,
+.reference-pane:not(.has-tabs) .reader-toolbar {
+  padding-right: 46px;
 }
-.reference-pane-heading strong {
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.reference-pane.has-tabs .reference-close {
+  top: 7px;
 }
 .reference-tabs {
   display: flex;
@@ -64,7 +69,7 @@
   overscroll-behavior-x: contain;
   border-bottom: 1px solid var(--border);
   background: var(--color-surface);
-  padding: 5px 6px 0;
+  padding: 5px 42px 0 6px;
   gap: 4px;
 }
 .reference-tab {
@@ -154,18 +159,24 @@
   overflow-wrap: anywhere;
 }
 @media (max-width: 780px) {
-  .chat-workspace.references-open {
-    grid-template-columns: minmax(0, 1fr);
+  .app-shell.references-open {
+    grid-template-columns: var(--library-width) 0 minmax(0, 1fr);
+  }
+  .references-open .workspace {
+    margin-right: 12px;
+    border-right: 1px solid var(--border);
+    border-radius: var(--radius-shell);
   }
   .reference-resize {
     display: none;
   }
   .reference-pane {
-    position: absolute;
+    position: fixed;
     z-index: 35;
-    top: 0;
-    bottom: 0;
-    right: 0;
+    top: 12px;
+    bottom: 12px;
+    right: 12px;
+    margin: 0;
     width: min(520px, calc(100% - 20px));
     border-radius: 14px 0 0 14px;
     box-shadow: -12px 0 40px var(--color-shadow);
@@ -175,5 +186,24 @@
   }
   .empty-trash-page {
     padding: 24px 20px;
+  }
+}
+@media (max-width: 720px) {
+  .references-open .workspace {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .reference-pane {
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: min(520px, 100%);
+  }
+}
+@media (max-height: 540px) and (orientation: landscape) {
+  .reference-pane {
+    margin: 0;
+    border-radius: 0;
   }
 }

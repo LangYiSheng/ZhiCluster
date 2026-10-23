@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useBlocker } from "react-router-dom";
+import { useBlocker, useLocation, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
@@ -22,6 +22,7 @@ import type {
 import type { Appearance } from "../../lib/appearance";
 import { useUI } from "../../stores/ui";
 import { Button } from "../../components/ui/button";
+import { Select } from "../../components/ui/select";
 import { Dialog } from "../../components/ui/dialog";
 import { ErrorState, Loading } from "../../components/common";
 import {
@@ -92,6 +93,9 @@ function SettingsEditor({
   kbId: string;
 }) {
   const ui = useUI();
+  const [params] = useSearchParams();
+  const location = useLocation();
+  const requestedSection = params.get("section");
   const currentAppearance: Appearance = {
     theme: ui.theme,
     palette: ui.palette,
@@ -105,7 +109,10 @@ function SettingsEditor({
   const [draft, setDraft] = useState<RuntimeDraft>(() =>
     configDraft(initialConfig),
   );
-  const [section, setSection] = useState<Section>("appearance");
+  const [section, setSection] = useState<Section>(
+    () =>
+      sections.find((item) => item.id === requestedSection)?.id || "appearance",
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -139,6 +146,11 @@ function SettingsEditor({
     loaded.embedding.base_url !== draft.embedding.base_url ||
     loaded.embedding.model !== draft.embedding.model ||
     loaded.embedding.dimension !== draft.embedding.dimension;
+
+  useEffect(() => {
+    const target = sections.find((item) => item.id === requestedSection);
+    if (target) setSection(target.id);
+  }, [requestedSection, location.key]);
 
   useEffect(() => {
     if (initialConfig.revision !== loaded.revision && !runtimeDirty) {
@@ -482,22 +494,21 @@ function SettingsEditor({
                 description="重建时使用已保存的向量配置。"
               >
                 <Field id="maintenance-kb" label="要维护的知识库">
-                  <select
+                  <Select
                     id="maintenance-kb"
                     value={maintenanceKb}
-                    onChange={(event) => {
-                      setMaintenanceKb(event.target.value);
+                    onValueChange={(value) => {
+                      setMaintenanceKb(value);
                       setRebuildNotice("");
                     }}
-                  >
-                    <option value="">请选择知识库</option>
-                    {bases.data?.map((base) => (
-                      <option key={base.id} value={base.id}>
-                        {base.name}
-                        {base.id === kbId ? "（当前库）" : ""}
-                      </option>
-                    ))}
-                  </select>
+                    options={[
+                      { value: "", label: "请选择知识库" },
+                      ...(bases.data || []).map((base) => ({
+                        value: base.id,
+                        label: `${base.name}${base.id === kbId ? "（当前库）" : ""}`,
+                      })),
+                    ]}
+                  />
                 </Field>
                 {bases.isError && (
                   <ErrorState

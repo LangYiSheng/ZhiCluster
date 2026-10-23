@@ -36,11 +36,23 @@ EMBEDDING_MODEL=your-embedding-model
 EMBEDDING_DIMENSION=实际返回维度
 ```
 
-BASE_URL 包含兼容 API 前缀 `/v1`，不包含 `/chat/completions` 或 `/embeddings`。两个服务可来自不同提供方。`EMBEDDING_DIMENSION` 必须与真实返回长度一致，示例 1024 不代表任何厂商默认值。密钥仅在后端，不能写入前端环境变量。
+BASE_URL 填写服务方实际 API 前缀（常见为 `/v1`），不包含 `/chat/completions` 或 `/embeddings`。两个服务可来自不同提供方。`EMBEDDING_DIMENSION` 必须与真实返回长度一致，示例 1024 不代表任何厂商默认值。密钥仅在后端，不能写入前端环境变量。
+
+目前接入的是 **OpenAI 兼容 HTTP API**，不能直接导入 GGUF、safetensors 等权重文件。本地模型需先由推理服务提供兼容接口。服务地址填写提供方实际前缀，例如 `https://api.example.com/v1`；程序自动追加下表路径，密钥通过 `Authorization: Bearer ...` 发送。
+
+| 用途 | 接口及必要能力 | 数据格式 |
+| --- | --- | --- |
+| 聊天、知识问答 | `POST /chat/completions`，支持普通文本与 `stream: true` 的 SSE | 请求 `model`、`messages`；普通响应读取 `choices[0].message.content`，流响应读取 `choices[0].delta.content` |
+| 摘要、分类建议 | 同一聊天接口，额外支持 `response_format: {"type":"json_object"}` | 返回可解析的 JSON 文本；非流式请求还会发送 `temperature`、`max_tokens` |
+| 向量检索 | `POST /embeddings`，支持批量文本输入 | 请求 `model`、`input: string[]`；响应 `data: [{index, embedding: number[]}]`，维度必须与设置一致 |
+
+仅提供 Responses、Anthropic Messages 或 Gemini 原生协议的服务，目前需要先通过兼容转换层。连接测试验证普通聊天或向量请求，不等于验证流式回答、JSON 模式和所有模型参数；最终还需用一条问答及一份文档任务检查实际能力。协议参考 [Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)、[流式事件](https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events) 与 [Embeddings](https://developers.openai.com/api/reference/resources/embeddings/methods/create)。
+
+当前使用 Docker 运行后端。连接宿主机上的本地模型时，服务地址应使用容器可访问的地址（通常为 `http://host.docker.internal:端口/v1`），`localhost` 会指向后端容器本身。参见 [Docker Desktop 宿主机连接说明](https://docs.docker.com/desktop/features/networking/networking-how-tos/)。
 
 网页保存的配置优先于 `.env` 默认值。只有修改数据库、存储目录等基础设施配置，或尚未保存网页配置时调整环境默认值，才需要 `docker compose up -d --force-recreate api worker`。当前界面暂未开放智能整理；高级选项的工具调用配置为后端流程保留，不影响普通知识问答。无认证的本地兼容服务也需要按服务说明填写占位密钥，才能启用连接。
 
-旧文档可以通过任务“重试”补做未配置阶段。更换 Embedding 服务/模型/维度后，在设置里为当前库“重建向量索引”，或调用 `POST /api/settings/rebuild-embeddings`，请求体 `{"kb_id":"..."}`。旧 profile 与新 profile 隔离；查询只用当前指纹，不混用不同维度。默认精确 cosine 检索，适合小规模本地知识库。超长摘要可通过 `SUMMARY_INPUT_TOKENS` 和 `SUMMARY_MAX_CALLS` 限制单次上下文与总请求预算；预算耗尽明确报错并保留已生成的章节摘要。
+旧文档可以在左侧「任务列表」统一查看错误并重试，补做未配置阶段。更换 Embedding 服务/模型/维度后，在设置里为当前库“重建向量索引”，或调用 `POST /api/settings/rebuild-embeddings`，请求体 `{"kb_id":"..."}`。旧 profile 与新 profile 隔离；查询只用当前指纹，不混用不同维度。默认精确 cosine 检索，适合小规模本地知识库。超长摘要可通过 `SUMMARY_INPUT_TOKENS` 和 `SUMMARY_MAX_CALLS` 限制单次上下文与总请求预算；预算耗尽明确报错并保留已生成的章节摘要。
 
 ## 使用
 

@@ -73,6 +73,7 @@ test("按钮旁的非模态历史与范围卡片，保持会话、草稿和路�
     ).toHaveCount(0);
     await expect(page.getByRole("button", { name: "切换主题" })).toHaveCount(0);
     await expect(page.locator(".sidebar-tools > button")).toHaveText([
+      "任务列表",
       "回收站",
       "设置",
     ]);
@@ -93,6 +94,16 @@ test("按钮旁的非模态历史与范围卡片，保持会话、草稿和路�
       exact: true,
     });
     await expectAnchored(page, historyButton, history);
+    const historyRow = history
+      .locator(".history-card")
+      .filter({ hasText: title });
+    expect((await historyRow.boundingBox())!.height).toBeLessThanOrEqual(40);
+    await expect(history.locator(".history-card-meta")).toHaveCount(0);
+    const plus = history.getByRole("button", { name: "新建对话", exact: true });
+    const close = history.getByRole("button", { name: "关闭", exact: true });
+    expect(
+      Math.abs((await plus.boundingBox())!.y - (await close.boundingBox())!.y),
+    ).toBeLessThanOrEqual(2);
     await expect(historyButton).toHaveAttribute("aria-expanded", "true");
     await page
       .getByRole("button", { name: `打开对话：${title}`, exact: true })

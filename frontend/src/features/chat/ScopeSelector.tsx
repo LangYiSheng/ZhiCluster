@@ -3,6 +3,7 @@ import { BookOpen, ChevronDown, FolderOpen, Tags } from "lucide-react";
 import type { Folder, KnowledgeBase, Tag } from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { Popover } from "../../components/ui/popover";
+import { Checkbox } from "../../components/ui/checkbox";
 
 function toggle(ids: string[], id: string, checked: boolean) {
   return checked ? [...ids, id] : ids.filter((value) => value !== id);
@@ -93,8 +94,7 @@ export function ScopeSelector({
                   className={`scope-choice ${kbIds.includes(kb.id) ? "is-selected" : ""}`}
                   key={kb.id}
                 >
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     disabled={readOnly}
                     checked={kbIds.includes(kb.id)}
                     onChange={(event) =>
@@ -120,8 +120,7 @@ export function ScopeSelector({
                 className={`scope-choice ${folderIds.includes(folder.id) ? "is-selected" : ""}`}
                 key={folder.id}
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   disabled={foldersDisabled}
                   checked={folderIds.includes(folder.id)}
                   onChange={(event) =>
@@ -141,8 +140,7 @@ export function ScopeSelector({
             <p className="scope-empty">选择当前知识库后可筛选文件夹。</p>
           ) : (
             <label className="checkbox-label scope-descendants">
-              <input
-                type="checkbox"
+              <Checkbox
                 disabled={foldersDisabled}
                 checked={includeDescendants}
                 onChange={(event) =>
@@ -171,8 +169,7 @@ export function ScopeSelector({
                   className={`scope-choice ${tagIds.includes(tag.id) ? "is-selected" : ""}`}
                   key={tag.id}
                 >
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     disabled={readOnly || !currentKbSelected}
                     checked={tagIds.includes(tag.id)}
                     onChange={(event) =>

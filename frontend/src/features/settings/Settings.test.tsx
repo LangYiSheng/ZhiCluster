@@ -52,7 +52,7 @@ let deferProbe = false;
 let deferSave = false;
 let pendingSave: ((response: Response) => void) | undefined;
 const routers: ReturnType<typeof createMemoryRouter>[] = [];
-function setup() {
+function setup(initialPath = "/settings") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -61,7 +61,7 @@ function setup() {
       { path: "/settings", element: <Settings kbId="kb-1" /> },
       { path: "/chat", element: <p>已返回知识对话</p> },
     ],
-    { initialEntries: ["/settings"] },
+    { initialEntries: [initialPath] },
   );
   routers.push(router);
   render(
@@ -162,6 +162,18 @@ afterEach(() => {
 });
 
 describe("网页设置草稿", () => {
+  it("任务列表可直接定位模型连接，站内跳转定位保留已有草稿", async () => {
+    const { user, router } = setup("/settings?section=models");
+    await screen.findByRole("heading", { name: "模型连接" });
+    await user.type(chatFields().getByLabelText("模型名称"), "-draft");
+    await user.click(screen.getByRole("button", { name: "外观与布局" }));
+    await act(async () => {
+      await router.navigate("/settings?section=models");
+    });
+    expect(chatFields().getByLabelText("模型名称")).toHaveValue(
+      "chat-old-draft",
+    );
+  });
   it("配色卡片保留键盘单选操作，选择后需要保存", async () => {
     const { user } = setup();
     await screen.findByRole("heading", { name: "外观与布局" });
@@ -360,7 +372,8 @@ describe("网页设置草稿", () => {
     const { user } = setup();
     await screen.findByRole("heading", { name: "外观与布局" });
     await user.click(screen.getByRole("button", { name: "索引维护" }));
-    await user.selectOptions(screen.getByLabelText("要维护的知识库"), "kb-2");
+    await user.click(screen.getByRole("combobox", { name: "要维护的知识库" }));
+    await user.click(screen.getByRole("option", { name: "另一知识库" }));
     await user.click(
       screen.getByRole("button", { name: "重建所选知识库向量索引" }),
     );
@@ -419,7 +432,8 @@ describe("网页设置草稿", () => {
   it("外观单独保存到当前浏览器，无须写入模型配置", async () => {
     const { user } = setup();
     await screen.findByRole("heading", { name: "外观与布局" });
-    await user.selectOptions(screen.getByLabelText("显示模式"), "dark");
+    await user.click(screen.getByRole("combobox", { name: "显示模式" }));
+    await user.click(screen.getByRole("option", { name: "深色" }));
     expect(useUI.getState().theme).toBe("light");
     await user.click(screen.getByRole("button", { name: "保存修改" }));
     await screen.findByText(/设置已保存/);

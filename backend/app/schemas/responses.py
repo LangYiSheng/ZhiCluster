@@ -89,6 +89,8 @@ class JobOut(EntityOut):
     attempts: int
     error: str | None
     next_attempt_at: datetime | None
+    document_name: str | None = None
+    document_available: bool = True
 
 
 class SearchItem(BaseModel):

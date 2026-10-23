@@ -161,7 +161,7 @@
 }
 .zc-settings-form
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
-.zc-settings-form select {
+.zc-settings-form .ui-select-trigger {
   display: block;
   width: 100%;
   min-width: 0;
@@ -180,19 +180,20 @@
   color: var(--color-muted);
   opacity: 0.8;
 }
+.zc-settings-form .ui-select-trigger {
+  display: flex;
+}
 .zc-settings-form input[type="number"] {
   font-variant-numeric: tabular-nums;
 }
-.zc-settings-form select {
-  cursor: pointer;
-}
 .zc-settings-form input:focus,
-.zc-settings-form select:focus {
+.zc-settings-form .ui-select-trigger:focus-visible {
   border-color: var(--color-accent);
   outline: 2px solid var(--color-accent-soft);
   outline-offset: 1px;
 }
-.zc-settings-form input[aria-invalid="true"] {
+.zc-settings-form input[aria-invalid="true"],
+.zc-settings-form .ui-select-trigger[aria-invalid="true"] {
   border-color: var(--color-danger);
 }
 .zc-settings-page button:focus-visible,

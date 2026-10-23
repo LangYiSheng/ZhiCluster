@@ -1,8 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
+import type { ReactElement } from "react";
+import { MemoryRouter } from "react-router-dom";
 import {
   cleanup,
   fireEvent,
-  render,
+  render as renderView,
   screen,
   waitFor,
   within,
@@ -12,6 +14,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DocumentsPane } from "./DocumentsPane";
 import { TagManager } from "./TagManager";
 import type { Document, Tag } from "../../lib/api";
+function render(ui: ReactElement) {
+  return renderView(ui, { wrapper: MemoryRouter });
+}
 
 const kb = { id: "kb-1", name: "研究库", description: "", version: 1 };
 const tag: Tag = {
@@ -81,7 +86,8 @@ it("文档显示标签，标签筛选进入查询并在知识库切换时清除"
   const user = userEvent.setup();
   await screen.findByText(doc.display_name);
   expect(document.querySelector(".document-tags")).toHaveTextContent(tag.name);
-  await user.selectOptions(screen.getByLabelText("标签筛选"), tag.id);
+  await user.click(screen.getByRole("combobox", { name: "标签筛选" }));
+  await user.click(screen.getByRole("option", { name: tag.name }));
   await waitFor(() =>
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("tag_ids=tag-1"),
@@ -89,7 +95,7 @@ it("文档显示标签，标签筛选进入查询并在知识库切换时清除"
     ),
   );
   mounted.rerender(view("kb-2"));
-  expect(screen.getByLabelText("标签筛选")).toHaveValue("");
+  expect(screen.getByLabelText("标签筛选")).toHaveTextContent("全部标签");
   await waitFor(() => {
     const path = fetch.mock.calls
       .map(([path]) => path)
@@ -131,7 +137,8 @@ it("关闭资料区清除标签和文档弹层，重新打开保留筛选且不�
   const mounted = render(view(true));
   const user = userEvent.setup();
   await screen.findByText(doc.display_name);
-  await user.selectOptions(screen.getByLabelText("标签筛选"), tag.id);
+  await user.click(screen.getByRole("combobox", { name: "标签筛选" }));
+  await user.click(screen.getByRole("option", { name: tag.name }));
   await user.click(screen.getByRole("button", { name: "管理标签" }));
   await user.click(screen.getByRole("button", { name: "新建标签" }));
   await user.type(screen.getByLabelText("名称"), "未保存标签");
@@ -139,7 +146,7 @@ it("关闭资料区清除标签和文档弹层，重新打开保留筛选且不�
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   mounted.rerender(view(true));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("标签筛选")).toHaveValue(tag.id);
+  expect(screen.getByLabelText("标签筛选")).toHaveTextContent(tag.name);
   await user.click(screen.getByRole("button", { name: "管理标签" }));
   expect(screen.getByRole("dialog")).toHaveAccessibleName("管理标签");
   await user.click(screen.getByRole("button", { name: "新建标签" }));
@@ -308,6 +315,83 @@ it("完整文档页保留文件夹筛选、批量选择，并直接打开文档�
   expect(screen.getByText("已选 1 项")).toBeInTheDocument();
   await user.click(screen.getByText(doc.display_name));
   expect(onOpen).toHaveBeenCalledWith(doc, true);
+});
+
+it("侧栏文档直接阅读，成功状态隐藏，属性由菜单打开", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async (path: string) =>
+        new Response(
+          JSON.stringify(
+            path.includes("/documents")
+              ? { items: [doc], total: 1, page_size: 50 }
+              : [],
+          ),
+        ),
+    ),
+  );
+  const onOpen = vi.fn();
+  render(
+    <QueryClientProvider client={client()}>
+      <DocumentsPane
+        kb={kb}
+        folders={[]}
+        tags={[tag]}
+        trash={false}
+        onOpen={onOpen}
+        selectedId=""
+      />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByText(doc.display_name));
+  expect(onOpen).toHaveBeenCalledWith(doc, true);
+  expect(screen.queryByText("已就绪")).not.toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", { name: `${doc.display_name}文档菜单` }),
+  );
+  await user.click(screen.getByRole("menuitem", { name: "查看属性" }));
+  expect(onOpen).toHaveBeenLastCalledWith(doc, false);
+});
+
+it("文档进度使用后端百分比，1以下不会放大为100%", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async (path: string) =>
+        new Response(
+          JSON.stringify(
+            path.includes("/documents")
+              ? { items: [doc], total: 1, page_size: 50 }
+              : [
+                  {
+                    id: "job-progress",
+                    document_id: doc.id,
+                    status: "running",
+                    stage: "parsing",
+                    progress: 0.5,
+                    attempts: 1,
+                  },
+                ],
+          ),
+        ),
+    ),
+  );
+  render(
+    <QueryClientProvider client={client()}>
+      <DocumentsPane
+        kb={kb}
+        folders={[]}
+        tags={[]}
+        trash={false}
+        onOpen={vi.fn()}
+        selectedId=""
+      />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByText("正在处理 1%")).toBeInTheDocument();
+  expect(screen.queryByText("正在处理 50%")).not.toBeInTheDocument();
 });
 
 it("独立回收站可恢复文档和知识库，拖入文件不会触发上传", async () => {

@@ -422,86 +422,55 @@ label.scope-descendants {
   gap: 16px;
 }
 .history-popover {
-  width: min(390px, calc(100vw - 24px));
+  width: min(340px, calc(100vw - 24px));
+  padding: 12px;
 }
-.history-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  font-size: var(--text-caption);
+.history-popover .popover-heading {
+  margin-bottom: 8px;
+  margin-left: 6px;
 }
 .history-list {
   display: grid;
   overflow: auto;
   overscroll-behavior: contain;
-  gap: 8px;
-  padding-right: 4px;
+  gap: 2px;
 }
 .history-card {
   display: flex;
   align-items: center;
   min-width: 0;
   gap: 6px;
-  padding-right: 8px;
-  border: 1px solid var(--border);
+  padding-right: 4px;
+  min-height: 36px;
   border-radius: var(--radius-control);
-  background: var(--panel-subtle);
-  transition:
-    background 0.15s,
-    border-color 0.15s;
+  transition: background 0.15s;
 }
 .history-card:hover {
   background: var(--hover);
 }
 .history-card.is-current {
-  border-color: var(--primary);
   background: var(--primary-soft);
+  color: var(--primary);
 }
 .history-card-select {
   flex: 1;
   min-width: 0;
-  padding: 12px;
+  padding: 8px 10px;
   text-align: left;
   border-radius: var(--radius-control);
 }
-.history-card-heading {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-.history-card-heading strong {
-  min-width: 0;
+.history-card-select > span {
+  display: block;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: var(--text-body);
-  font-weight: 500;
+  font-size: var(--text-control);
 }
-.history-card-heading > svg {
-  color: var(--muted);
-}
-.history-card-heading > svg:last-child:not(:first-child) {
-  margin-left: auto;
-  color: var(--primary);
-}
-.history-card-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-top: 7px;
-  color: var(--muted);
-  font-size: var(--text-caption);
-}
-.history-card-meta > span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-.history-card-meta:empty {
-  display: none;
+.history-card > .button {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  min-height: 26px;
 }
 @media (max-width: 520px) {
   .scope-choice-grid {

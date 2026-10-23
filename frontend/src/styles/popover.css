@@ -30,7 +30,12 @@
   font-size: var(--text-body);
   font-weight: 600;
 }
-.popover-heading > .button {
+.popover-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.popover-heading-actions > .button {
   width: 28px;
   height: 28px;
   min-width: 28px;

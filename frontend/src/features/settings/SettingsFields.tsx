@@ -7,6 +7,9 @@ import type {
   RuntimeDraft,
 } from "../../lib/settings";
 import { rangeRules } from "../../lib/settings";
+import { Checkbox } from "../../components/ui/checkbox";
+import { Radio } from "../../components/ui/radio";
+import { Select } from "../../components/ui/select";
 
 const fieldId = (group: string, key: string) => `setting-${group}-${key}`;
 
@@ -125,20 +128,21 @@ export function AppearanceForm({
     <div className="zc-settings-sections">
       <SettingsSection title="显示与配色">
         <Field id="appearance-theme" label="显示模式">
-          <select
+          <Select
             id="appearance-theme"
             value={appearance.theme}
-            onChange={(event) =>
+            onValueChange={(value) =>
               onChange({
                 ...appearance,
-                theme: event.target.value as Appearance["theme"],
+                theme: value as Appearance["theme"],
               })
             }
-          >
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
-            <option value="system">跟随系统</option>
-          </select>
+            options={[
+              { value: "light", label: "浅色" },
+              { value: "dark", label: "深色" },
+              { value: "system", label: "跟随系统" },
+            ]}
+          />
         </Field>
         <fieldset className="zc-choice-field">
           <legend>配色</legend>
@@ -148,8 +152,7 @@ export function AppearanceForm({
                 className={`zc-palette-choice ${appearance.palette === item.id ? "is-selected" : ""}`}
                 key={item.id}
               >
-                <input
-                  type="radio"
+                <Radio
                   name="palette"
                   value={item.id}
                   checked={appearance.palette === item.id}
@@ -173,22 +176,20 @@ export function AppearanceForm({
       <SettingsSection title="文字与阅读">
         <div className="zc-settings-grid">
           <Field id="appearance-font" label="字体搭配">
-            <select
+            <Select
               id="appearance-font"
               value={appearance.fontPairing}
-              onChange={(event) =>
+              onValueChange={(value) =>
                 onChange({
                   ...appearance,
-                  fontPairing: event.target.value as Appearance["fontPairing"],
+                  fontPairing: value as Appearance["fontPairing"],
                 })
               }
-            >
-              {FONT_PAIRINGS.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
+              options={FONT_PAIRINGS.map((item) => ({
+                value: item.id,
+                label: item.name,
+              }))}
+            />
           </Field>
           <Field
             id="appearance-scale"
@@ -246,6 +247,10 @@ export function ConnectionForm({
   const props = { draft, errors, change };
   return (
     <div className="zc-settings-sections">
+      <p className="zc-field-help">
+        使用兼容 OpenAI 的接口，系统会自动追加 /chat/completions 或
+        /embeddings。
+      </p>
       {(["llm", "embedding"] as const).map((group) => {
         const connection = draft[group];
         const configured = loaded[group].api_key_configured;
@@ -255,7 +260,7 @@ export function ConnectionForm({
             title={group === "llm" ? "聊天模型" : "向量模型"}
             description={
               group === "llm"
-                ? "用于知识问答、摘要与智能整理。"
+                ? "用于知识问答与内容摘要。"
                 : "用于文档向量化与语义检索。"
             }
           >
@@ -263,7 +268,7 @@ export function ConnectionForm({
               <Field
                 id={fieldId(group, "base_url")}
                 label="服务地址"
-                help="填写完整 Base URL；留空表示未配置。"
+                help="填写接口前缀，例如 https://api.example.com/v1。"
                 error={errors[fieldId(group, "base_url")]}
               >
                 <input
@@ -305,7 +310,7 @@ export function ConnectionForm({
                 help={
                   configured
                     ? "已配置。留空保留原密钥，填写新值后替换。"
-                    : "尚未配置。无需认证的服务可按服务方说明填写。"
+                    : "无认证的本地服务可填写占位值，如 local。"
                 }
               >
                 <input
@@ -324,8 +329,7 @@ export function ConnectionForm({
                 />
                 {configured && (
                   <label className="zc-checkbox">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={!!connection.clear_api_key}
                       onChange={(event) => {
                         change(group, "clear_api_key", event.target.checked);
@@ -368,12 +372,11 @@ export function ConnectionForm({
                 <Field
                   id="setting-llm-supports_tools"
                   label="工具调用"
-                  help="智能整理需要此能力，可在下方单独测试。"
+                  help="服务是否支持兼容的工具调用，可单独测试。"
                 >
                   <label className="zc-checkbox">
-                    <input
+                    <Checkbox
                       id="setting-llm-supports_tools"
-                      type="checkbox"
                       checked={draft.llm.supports_tools}
                       onChange={(event) =>
                         change("llm", "supports_tools", event.target.checked)

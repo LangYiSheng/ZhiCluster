@@ -1,10 +1,4 @@
-import {
-  Check,
-  MessageSquare,
-  MoreHorizontal,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { MessageSquare, MoreHorizontal, Plus, Trash2 } from "lucide-react";
 import type { Conversation, KnowledgeBase } from "../../lib/api";
 import { Empty, ErrorState, Loading } from "../../components/common";
 import { Button } from "../../components/ui/button";
@@ -17,7 +11,6 @@ export function ConversationHistory({
   anchorElement,
   conversations,
   currentId,
-  knowledgeBases,
   loading,
   error,
   disabled,
@@ -47,15 +40,20 @@ export function ConversationHistory({
       anchorElement={anchorElement}
       title="历史对话"
       className="history-popover"
+      actions={
+        <Button
+          size="icon"
+          variant="ghost"
+          disabled={disabled}
+          aria-label="新建对话"
+          title="新建对话"
+          onClick={() => onSelect("")}
+        >
+          <Plus size={16} />
+        </Button>
+      }
     >
       <div className="conversation-history">
-        <div className="history-actions">
-          <span className="muted">{conversations.length} 个对话</span>
-          <Button disabled={disabled} onClick={() => onSelect("")}>
-            <Plus size={16} />
-            新建对话
-          </Button>
-        </div>
         {loading ? (
           <Loading />
         ) : error ? (
@@ -68,14 +66,6 @@ export function ConversationHistory({
           <div className="history-list">
             {conversations.map((conversation) => {
               const selected = conversation.id === currentId;
-              const kbIds = (conversation.scope?.kb_ids as string[]) || [];
-              const scope = kbIds
-                .map((id) => knowledgeBases.find((kb) => kb.id === id)?.name)
-                .filter(Boolean)
-                .join("、");
-              const createdAt = conversation.created_at
-                ? new Date(conversation.created_at)
-                : null;
               return (
                 <article
                   key={conversation.id}
@@ -88,22 +78,7 @@ export function ConversationHistory({
                     disabled={disabled}
                     onClick={() => onSelect(conversation.id)}
                   >
-                    <span className="history-card-heading">
-                      <MessageSquare size={16} />
-                      <strong>{conversation.title}</strong>
-                      {selected && <Check size={15} aria-label="当前对话" />}
-                    </span>
-                    <span className="history-card-meta">
-                      {scope && <span>{scope}</span>}
-                      {createdAt && !Number.isNaN(createdAt.getTime()) && (
-                        <time dateTime={conversation.created_at}>
-                          {createdAt.toLocaleDateString("zh-CN", {
-                            month: "short",
-                            day: "numeric",
-                          })}
-                        </time>
-                      )}
-                    </span>
+                    <span>{conversation.title}</span>
                   </button>
                   <Menu
                     trigger={

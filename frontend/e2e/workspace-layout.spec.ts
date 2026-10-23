@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { waitForParsed } from "./helpers";
 
 async function expectNoOverflow(page: Page) {
   expect(
@@ -42,13 +43,10 @@ test("完整文档页、独立回收站和聊天右侧按需资料标签", async
         ),
       })),
     );
-    for (const name of names)
-      await expect(
-        page
-          .locator(".document-row")
-          .filter({ hasText: name })
-          .getByText("已就绪", { exact: true }),
-      ).toBeVisible({ timeout: 30000 });
+    await waitForParsed(request, kb.id, names);
+    await expect(
+      page.locator(".document-row").getByText("已就绪", { exact: true }),
+    ).toHaveCount(0);
     await page.getByRole("button", { name: "知识对话", exact: true }).click();
     const composer = page.getByRole("textbox", { name: "知识库问题" });
     await expect(composer).toBeVisible();
@@ -63,15 +61,15 @@ test("完整文档页、独立回收站和聊天右侧按需资料标签", async
     const chatBox = await page.locator(".chat-main").boundingBox();
     const paneBox = await pane.boundingBox();
     expect(paneBox!.x).toBeGreaterThanOrEqual(chatBox!.x + chatBox!.width - 1);
+    await expect(page.locator("main .reference-pane")).toHaveCount(0);
+    const mainBox = await page.locator("main").boundingBox();
+    expect(paneBox!.y).toBe(mainBox!.y);
+    expect(paneBox!.height).toBe(mainBox!.height);
+    await expect(pane.locator(".reference-pane-heading")).toHaveCount(0);
 
     async function openReader(name: string) {
       const row = pane.locator(".document-row").filter({ hasText: name });
-      await row
-        .getByRole("button", { name: `${name}文档菜单`, exact: true })
-        .click();
-      await page
-        .getByRole("menuitem", { name: "打开阅读器", exact: true })
-        .click();
+      await row.locator(".document-open").click();
     }
 
     await openReader(names[0]);
@@ -129,6 +127,16 @@ test("完整文档页、独立回收站和聊天右侧按需资料标签", async
       expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
       expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height);
       await expectNoOverflow(page);
+      if (width <= 780) {
+        const closeReference = pane.getByRole("button", {
+          name: "关闭参考资料",
+          exact: true,
+        });
+        await expect(closeReference).toBeFocused();
+        await page.keyboard.press("Shift+Tab");
+        await page.keyboard.press("Tab");
+        await expect(closeReference).toBeFocused();
+      }
       await page.screenshot({
         path: `test-results/workspace-reference-${width}x${height}.png`,
         fullPage: true,
@@ -137,6 +145,10 @@ test("完整文档页、独立回收站和聊天右侧按需资料标签", async
         .getByRole("button", { name: "关闭参考资料", exact: true })
         .click();
       await expect(composer).toBeVisible();
+      if (width <= 780)
+        await expect(
+          page.getByRole("button", { name: "浏览资料", exact: true }),
+        ).toBeFocused();
       await expectNoOverflow(page);
     }
 

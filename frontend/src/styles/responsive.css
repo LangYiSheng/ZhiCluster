@@ -32,6 +32,12 @@
   .app-shell:not(.settings-mode) {
     grid-template-columns: 0 0 minmax(0, 1fr);
   }
+  .app-shell.references-open {
+    grid-template-columns: 0 0 minmax(0, 1fr) 0 minmax(
+        0,
+        min(var(--reference-width), 48vw)
+      );
+  }
   .workspace,
   .sidebar-collapsed .workspace {
     margin: 12px;
@@ -71,6 +77,11 @@
   }
   .workspace-header {
     padding: 0 20px;
+  }
+}
+@media (max-width: 780px) {
+  .app-shell.references-open {
+    grid-template-columns: 0 0 minmax(0, 1fr);
   }
 }
 @media (max-width: 720px) {

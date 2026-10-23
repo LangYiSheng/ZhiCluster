@@ -13,6 +13,7 @@ export function Popover({
   side = "bottom",
   align = "end",
   className = "",
+  actions,
   children,
 }: {
   open: boolean;
@@ -23,6 +24,7 @@ export function Popover({
   side?: "top" | "right" | "bottom" | "left";
   align?: "start" | "center" | "end";
   className?: string;
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   const titleId = useId();
@@ -69,12 +71,15 @@ export function Popover({
         >
           <div className="popover-heading">
             <h2 id={titleId}>{title}</h2>
-            <PopoverPrimitive.Close
-              className="button button-ghost button-icon"
-              aria-label="关闭"
-            >
-              <X size={16} />
-            </PopoverPrimitive.Close>
+            <div className="popover-heading-actions">
+              {actions}
+              <PopoverPrimitive.Close
+                className="button button-ghost button-icon"
+                aria-label="关闭"
+              >
+                <X size={16} />
+              </PopoverPrimitive.Close>
+            </div>
           </div>
           {children}
         </PopoverPrimitive.Content>

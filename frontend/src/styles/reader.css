@@ -44,6 +44,12 @@
 .reader-toolbar > a {
   font-size: var(--text-caption);
 }
+.reader-actions {
+  flex-shrink: 0;
+}
+.reader-actions > a {
+  font-size: var(--text-caption);
+}
 .reader-container > .page-scroll {
   flex: 1;
   min-height: 0;
@@ -52,6 +58,63 @@
 .document-detail {
   margin: 0 auto;
   max-width: 800px;
+}
+.document-detail > .detail-summary {
+  margin-top: 0;
+}
+.document-processing {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 14px;
+  font-size: var(--text-caption);
+  background: var(--panel-subtle);
+}
+.document-processing h3 {
+  font-size: var(--text-body);
+}
+.document-processing-job {
+  margin-top: 13px;
+}
+.document-processing progress {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 4px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--hover);
+}
+.document-processing progress::-webkit-progress-bar {
+  background: var(--hover);
+}
+.document-processing progress::-webkit-progress-value {
+  background: var(--primary);
+}
+.document-processing progress::-moz-progress-bar {
+  background: var(--primary);
+}
+.document-task-notice {
+  display: block;
+  margin-top: 24px;
+  padding: 12px 0;
+  border-block: 1px solid var(--border);
+  font-size: var(--text-caption);
+  color: var(--muted);
+}
+.document-task-history {
+  display: grid;
+  gap: 10px;
+  font-size: var(--text-caption);
+  color: var(--muted);
+}
+.document-task-history > a {
+  justify-self: start;
+  margin-top: 5px;
+}
+.document-task-history .row {
+  gap: 12px;
 }
 .detail-file-icon {
   display: flex;
@@ -81,10 +144,8 @@
   margin-top: 15px;
 }
 .document-properties {
-  margin-top: 27px;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  padding: 11px 0;
+  margin-top: 12px;
+  padding: 0;
 }
 .document-properties > div {
   display: flex;
@@ -100,6 +161,8 @@
 }
 .document-properties strong {
   font-weight: 400;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .detail-section {
   margin-top: 25px;

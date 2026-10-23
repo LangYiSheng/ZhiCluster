@@ -1,6 +1,6 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { FileText, FolderOpen, X } from "lucide-react";
+import { X } from "lucide-react";
 import type { Dispatch, KeyboardEvent } from "react";
 import { api } from "../lib/api";
 import type { Document, Folder, Tag } from "../lib/api";
@@ -75,6 +75,26 @@ export function ReferencePane({
   active: boolean;
   onOpen: (doc: Document, reader?: boolean) => void;
 }) {
+  const pane = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const element = pane.current;
+    if (!active || !element) return;
+    const narrow = window.matchMedia("(max-width: 780px)");
+    const previous = document.activeElement as HTMLElement | null;
+    let focusedOnMobile = false;
+    const focusClose = () => {
+      if (!narrow.matches) return;
+      focusedOnMobile = true;
+      element.querySelector<HTMLButtonElement>(".reference-close")?.focus();
+    };
+    focusClose();
+    narrow.addEventListener("change", focusClose);
+    return () => {
+      narrow.removeEventListener("change", focusClose);
+      if (focusedOnMobile && previous?.getClientRects().length)
+        previous.focus();
+    };
+  }, [active]);
   const multiple = state.tabs.length > 1;
   const selected = state.tabs.find((tab) => tab.id === state.activeId);
   if (!selected) return null;
@@ -96,25 +116,50 @@ export function ReferencePane({
     buttons?.[next].focus();
   }
   return (
-    <aside className="reference-pane" aria-label="参考资料">
-      <header className="reference-pane-heading">
-        <span>
-          {selected.kind === "library" ? (
-            <FolderOpen size={16} />
-          ) : (
-            <FileText size={16} />
-          )}
-          <strong>{multiple ? "参考资料" : selected.title}</strong>
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="关闭参考资料"
-          onClick={() => dispatch({ type: "clear" })}
-        >
-          <X size={17} />
-        </Button>
-      </header>
+    <aside
+      ref={pane}
+      className={`reference-pane ${multiple ? "has-tabs" : ""}`}
+      aria-label="参考资料"
+      hidden={!active}
+      onKeyDown={(event) => {
+        if (
+          !window.matchMedia("(max-width: 780px)").matches ||
+          event.defaultPrevented ||
+          !event.currentTarget.contains(event.target as Node)
+        )
+          return;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          dispatch({ type: "clear" });
+        }
+        if (event.key !== "Tab") return;
+        const controls = Array.from(
+          event.currentTarget.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+          ),
+        ).filter(
+          (element) => element.tabIndex >= 0 && element.getClientRects().length,
+        );
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }}
+    >
+      <Button
+        className="reference-close"
+        variant="ghost"
+        size="icon"
+        aria-label="关闭参考资料"
+        onClick={() => dispatch({ type: "clear" })}
+      >
+        <X size={17} />
+      </Button>
       {multiple && (
         <div className="reference-tabs" role="tablist" aria-label="打开的资料">
           {state.tabs.map((tab, index) => (

@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
+import { chooseOption, waitForParsed } from "./helpers";
 test("真实后端：知识管理、入库、中文搜索、回收恢复与响应式主题", async ({
   page,
   request,
@@ -53,9 +54,7 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
     });
     const row = page.locator(".document-row").filter({ hasText: filename });
     await expect(row).toBeVisible();
-    await expect(row.getByText("已就绪", { exact: true })).toBeVisible({
-      timeout: 30000,
-    });
+    await waitForParsed(request, kb.id, [filename]);
     await row
       .getByRole("button", { name: new RegExp(filename) })
       .first()
@@ -87,10 +86,7 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       .getByRole("button", { name: `${filename}文档菜单`, exact: true })
       .click();
     await page.getByRole("menuitem", { name: "移动到…", exact: true }).click();
-    await page
-      .getByRole("dialog")
-      .getByLabel("目标文件夹")
-      .selectOption({ label: "研究资料" });
+    await chooseOption(page, "目标文件夹", "研究资料");
     await page
       .getByRole("dialog")
       .getByRole("button", { name: "保存", exact: true })
@@ -103,7 +99,7 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
     await expect(page.locator(".citation-banner")).toContainText("行");
     await expect(page.locator(".text-reader")).toContainText(marker);
     await page.getByRole("button", { name: "设置", exact: true }).click();
-    await page.getByLabel("显示模式", { exact: true }).selectOption("dark");
+    await chooseOption(page, "显示模式", "深色");
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await expect(page.getByText("修改已保存", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "返回工作区", exact: true }).click();
@@ -113,7 +109,7 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       fullPage: true,
     });
     await page.getByRole("button", { name: "设置", exact: true }).click();
-    await page.getByLabel("显示模式", { exact: true }).selectOption("light");
+    await chooseOption(page, "显示模式", "浅色");
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
     await expect(page.getByText("修改已保存", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "返回工作区", exact: true }).click();
@@ -225,13 +221,7 @@ test("真实PDF页码与DOCX段落来源定位", async ({ page, request }) => {
         resolve(import.meta.dirname, "fixtures/anchors.pdf"),
         resolve(import.meta.dirname, "fixtures/anchors.docx"),
       ]);
-    for (const file of ["anchors.pdf", "anchors.docx"])
-      await expect(
-        page
-          .locator(".document-row")
-          .filter({ hasText: file })
-          .getByText("已就绪", { exact: true }),
-      ).toBeVisible({ timeout: 30000 });
+    await waitForParsed(request, kb.id, ["anchors.pdf", "anchors.docx"]);
     await page.keyboard.press("Control+k");
     await page
       .getByRole("dialog")
@@ -269,7 +259,7 @@ test("真实PDF页码与DOCX段落来源定位", async ({ page, request }) => {
     );
     await expect(page).toHaveURL(new RegExp(`/chat\\?kb=${kb.id}$`));
     const downloadUrl = await reference
-      .locator(".reader-toolbar>a")
+      .getByRole("link", { name: "下载原文件", exact: true })
       .getAttribute("href");
     const download = await request.get(`${downloadUrl}?inline=true`);
     expect(download.headers()["content-disposition"]).toContain("inline");
@@ -387,11 +377,9 @@ test("真实拖放上传、复选批量标签与移动、文件夹子树循环�
     expect((await uploadResponse).ok()).toBeTruthy();
     await transfer.dispose();
     await page.locator(".upload-results > summary").click();
+    await waitForParsed(request, kb.id, filenames);
     for (const name of filenames) {
       const row = page.locator(".document-row").filter({ hasText: name });
-      await expect(row.getByText("已就绪", { exact: true })).toBeVisible({
-        timeout: 30000,
-      });
       await row
         .getByRole("checkbox", { name: `选择 ${name}`, exact: true })
         .check();
@@ -493,16 +481,16 @@ test("真实拖放上传、复选批量标签与移动、文件夹子树循环�
         url.searchParams.get("tag_ids") === tag.id
       );
     });
-    await page.getByLabel("标签筛选", { exact: true }).selectOption(tag.id);
+    await chooseOption(page, "标签筛选", "批量验收");
     expect((await filtered).ok()).toBeTruthy();
     await expect(page.locator(".document-row .document-tag")).toHaveText([
       "批量验收",
       "批量验收",
     ]);
-    await page.getByLabel("标签筛选", { exact: true }).selectOption("");
-    await page.getByLabel("文件类型筛选", { exact: true }).selectOption("pdf");
+    await chooseOption(page, "标签筛选", "全部标签");
+    await chooseOption(page, "文件类型筛选", "PDF");
     await expect(page.locator(".document-row")).toHaveCount(0);
-    await page.getByLabel("文件类型筛选", { exact: true }).selectOption("txt");
+    await chooseOption(page, "文件类型筛选", "TXT");
     await expect(page.locator(".document-row")).toHaveCount(2);
     await page.getByRole("button", { name: "排序文件", exact: true }).click();
     await page.getByRole("menuitem", { name: "按名称", exact: false }).click();
