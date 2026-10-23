@@ -2,12 +2,24 @@
 .app-shell {
   height: 100dvh;
   display: grid;
-  grid-template-columns: var(--library-width) 0 minmax(0, 1fr);
+  grid-template-columns: var(--library-width) 0 minmax(0, 1fr) 0 var(
+      --reference-column,
+      0px
+    );
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   background: var(--color-background);
+  transition: grid-template-columns 240ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.app-shell.is-resizing {
+  transition: none;
 }
 .library-slot {
+  width: var(--library-panel-width, 248px);
+  transition:
+    opacity 180ms ease,
+    transform 240ms ease,
+    visibility 0s;
   grid-column: 1;
   grid-row: 1;
   min-width: 0;
@@ -36,7 +48,15 @@
 .sidebar-collapsed .workspace {
   margin-left: 12px;
 }
-.sidebar-collapsed .library-slot,
+.sidebar-collapsed .library-slot {
+  visibility: hidden;
+  opacity: 0;
+  transform: translateX(-12px);
+  transition:
+    opacity 120ms ease,
+    transform 240ms ease,
+    visibility 0s 240ms;
+}
 .sidebar-collapsed .library-resize {
   visibility: hidden;
 }

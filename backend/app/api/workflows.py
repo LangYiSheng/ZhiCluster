@@ -339,10 +339,11 @@ def send_message(conversation_id: str, body: ChatMessage, db: Session = Depends(
     message = Message(conversation_id=item.id, role="assistant", status="queued", created_at=created_at + timedelta(microseconds=1))
     db.add(message)
     db.flush()
-    job = IngestionJob(kb_id=item.scope["kb_ids"][0], kind="chat", payload={"conversation_id": item.id, "message_id": message.id})
+    job = IngestionJob(kb_id=item.scope["kb_ids"][0], kind="chat", payload={"conversation_id": item.id, "message_id": message.id,
+        "retrieval_mode": body.retrieval_mode})
     db.add(job)
     sequence = emit_chat(db, item.id, "status", {"message_id": message.id, "message": "已排队，等待检索资料"})
-    message.retrieval = {"stream_sequence": sequence}
+    message.retrieval = {"stream_sequence": sequence, "retrieval_mode": body.retrieval_mode}
     return message
 
 

@@ -1,9 +1,16 @@
 """Permission-checked, versioned metadata transactions and conflict-safe undo."""
 
-from datetime import datetime
-
 from sqlalchemy import delete, func, select
 
+from app.agent.metadata_deletion import (
+    capture_tag_links,
+    check_deleted_tag_restore,
+    check_tag_links,
+    require_empty_folder,
+    restore_deleted_tag,
+    restore_folder,
+    validate_deletions,
+)
 from app.agent.plans import AgentPlanData, PlanDraft, PlanEdit
 from app.core.errors import AppError
 from app.db.models import (
@@ -82,7 +89,8 @@ def references(draft: PlanDraft):
     for operation in draft.operations:
         if not operation.enabled:
             continue
-        kind = "folder" if operation.type == "rename_folder" else "document"
+        kind = ("folder" if operation.type in {"rename_folder", "trash_empty_folders"}
+                else "tag" if operation.type == "delete_tags" else "document")
         keys.update(f"{kind}:{target}" for target in operation.target_ids)
         folder_id = getattr(operation.params, "folder_id", None)
         if operation.type == "create_folder":
@@ -94,7 +102,7 @@ def references(draft: PlanDraft):
     return sorted(keys)
 
 
-def capture_versions(db, kb_id, draft, observed=None):
+def capture_versions(db, kb_id, draft, observed=None, tag_links=None):
     observed = observed or {}
     versions = {}
     for key in references(draft):
@@ -103,10 +111,18 @@ def capture_versions(db, kb_id, draft, observed=None):
             raise AppError("version_conflict", "规划期间资料发生了变化，请重新生成计划", 409,
                            {"resource": key})
         versions[key] = resource.version
+    for identifier in sorted({doc for ids in (tag_links or {}).values() for doc in ids}):
+        key = f"document:{identifier}"
+        resource = entity(db, key, kb_id, include_deleted=True)
+        if key in observed and resource.version != observed[key]:
+            raise AppError("version_conflict", "规划期间标签关联的资料发生了变化，请重新生成计划", 409,
+                           {"resource": key})
+        versions[key] = resource.version
     return versions
 
 
 def validate_parameters(db, data):
+    validate_deletions(db, data)
     namespace = set()
     for operation in data.operations:
         if not operation.enabled:
@@ -130,6 +146,7 @@ def check_versions(db, data, lock=True):
         if key not in data.base_versions or resource.version != data.base_versions[key]:
             raise AppError("version_conflict", "审批期间资料发生了变化，请重新生成并审阅计划", 409,
                            {"resource": key, "current_version": resource.version})
+    check_tag_links(db, data)
 
 
 def store_operations(db, plan):
@@ -139,15 +156,18 @@ def store_operations(db, plan):
                                   payload=operation, status="pending" if operation["enabled"] else "skipped"))
 
 
-def persist_plan(db, actor, run, draft: PlanDraft, observed=None):
+def persist_plan(db, actor, run, draft: PlanDraft, observed=None, observed_tag_usage=None):
     assert_can_edit_kb(db, actor, run.kb_id)
     if run.status == "cancelled":
         raise AppError("invalid_run_state", "已取消的整理任务不能生成或批准计划", 409)
     existing = db.scalar(select(AgentPlan).where(AgentPlan.run_id == run.id))
     if existing:
         return existing
-    data = AgentPlanData(kb_id=run.kb_id, goal=run.goal, **draft.model_dump(),
-                         base_versions=capture_versions(db, run.kb_id, draft, observed))
+    tag_links = capture_tag_links(db, run.kb_id, draft)
+    if observed_tag_usage is not None and any(len(ids) != observed_tag_usage.get(tag_id) for tag_id, ids in tag_links.items()):
+        raise AppError("version_conflict", "规划期间标签使用数量已变化，请重新生成并审阅计划", 409)
+    data = AgentPlanData(kb_id=run.kb_id, goal=run.goal, **draft.model_dump(), base_tag_links=tag_links,
+                         base_versions=capture_versions(db, run.kb_id, draft, observed, tag_links))
     validate_parameters(db, data)
     plan = AgentPlan(id=data.plan_id, run_id=run.id, kb_id=run.kb_id,
                      payload=data.model_dump(mode="json"), status="pending_review")
@@ -171,8 +191,15 @@ def edit_plan(db, actor, plan_id, edit: PlanEdit):
     if any(original_types.get(op.operation_id) != op.type for op in edit.operations):
         raise AppError("invalid_plan_edit", "编辑不能更换操作类型或添加未经规划的操作")
     draft = PlanDraft(summary=edit.summary or previous.summary, operations=edit.operations)
+    # Destructive targets are review authority, not a free-form metadata editor.
+    original_targets = {op.operation_id: set(op.target_ids) for op in previous.operations}
+    if any(op.type in {"delete_tags", "trash_empty_folders"} and
+           not set(op.target_ids) <= original_targets[op.operation_id] for op in draft.operations):
+        raise AppError("invalid_plan_edit", "删除操作只能保留或取消原方案目标，不能添加其他目标", 409)
+    tag_links = capture_tag_links(db, plan.kb_id, draft, previous.base_tag_links)
     data = AgentPlanData(**{**previous.model_dump(), **draft.model_dump(),
-                           "base_versions": capture_versions(db, plan.kb_id, draft, previous.base_versions)})
+                           "base_tag_links": tag_links,
+                           "base_versions": capture_versions(db, plan.kb_id, draft, previous.base_versions, tag_links)})
     validate_parameters(db, data)
     plan.payload = data.model_dump(mode="json")
     plan.version += 1
@@ -200,7 +227,7 @@ def execute_plan(db, actor, plan_id, plan_version, confirm_high_risk=False):
     check_versions(db, data)
     validate_parameters(db, data)
     if data.risk_level == "high" and not confirm_high_risk:
-        raise AppError("high_risk_confirmation_required", f"此计划将软删除资料，影响 {data.expected_changes} 项，请额外确认", 409)
+        raise AppError("high_risk_confirmation_required", f"此计划包含删除操作，影响 {data.expected_changes} 项；删除标签会移除关联，请额外确认", 409)
     plan.status, run.status = "executing", "executing"
     plan.approved_by, plan.approved_at = actor.id, utcnow()
     emit_event(db, run.id, "status", {"message": "正在执行已批准的最终计划"})
@@ -209,10 +236,14 @@ def execute_plan(db, actor, plan_id, plan_version, confirm_high_risk=False):
     temporary_folders = {}
     results = []
 
-    def remember(kind, value, created=False):
+    def remember(kind, value, created=False, tags_only=False):
         key = f"{kind}:{value.id}"
         if key not in initial:
             initial[key] = {"created": True} if created else _snapshot(db, kind, value)
+            if tags_only:
+                initial[key]["tags_only"] = True
+        elif not tags_only:
+            initial[key].pop("tags_only", None)
         changed[key] = value
 
     def resolve_folder(folder_id):
@@ -244,6 +275,36 @@ def execute_plan(db, actor, plan_id, plan_version, confirm_high_risk=False):
             remember("folder", folder)
             library.update_folder(db, actor, folder.id, {"name": operation.params.name})
             affected.append(("folder", folder, before))
+        elif operation.type == "trash_empty_folders":
+            for folder_id in operation.target_ids:
+                folder = entity(db, f"folder:{folder_id}", plan.kb_id, lock=True)
+                # Fresh final check under the namespace lock, never recursive.
+                require_empty_folder(db, plan.kb_id, folder.id)
+                before = _snapshot(db, "folder", folder)
+                remember("folder", folder)
+                folder.deleted_at, folder.version = utcnow(), folder.version + 1
+                affected.append(("folder", folder, before))
+        elif operation.type == "delete_tags":
+            for tag_id in operation.target_ids:
+                tag = entity(db, f"tag:{tag_id}", plan.kb_id, lock=True)
+                before = _snapshot(db, "tag", tag)
+                remember("tag", tag)
+                initial[f"tag:{tag.id}"] = {"deleted": True, "tag": initial[f"tag:{tag.id}"]}
+                document_ids = list(db.scalars(select(DocumentTag.document_id).where(
+                    DocumentTag.kb_id == plan.kb_id, DocumentTag.tag_id == tag.id).order_by(DocumentTag.document_id)))
+                for document_id in document_ids:
+                    document = entity(db, f"document:{document_id}", plan.kb_id, lock=True, include_deleted=True)
+                    document_before = _snapshot(db, "document", document)
+                    remember("document", document, tags_only=True)
+                    library.update_document(db, actor, document.id, {"tag_ids": [tag.id], "tag_mode": "remove"})
+                    affected.append(("document", document, document_before))
+                # All document associations are gone before deleting this metadata row.
+                tag.version += 1
+                db.add(AuditLog(actor_id=actor.id, kb_id=plan.kb_id, run_id=run.id, plan_id=plan.id,
+                    operation_id=operation.operation_id, action="delete_tags", entity_id=tag.id,
+                    before=before, after={"removed": True, "affected_document_ids": document_ids}))
+                db.delete(tag)
+                db.flush()
         else:
             tag_ids = []
             if operation.type == "update_document_tags":
@@ -283,7 +344,8 @@ def execute_plan(db, actor, plan_id, plan_version, confirm_high_risk=False):
         if row:
             row.status = "completed"
         results.append({"operation_id": operation.operation_id, "type": operation.type, "status": "completed",
-                        "affected_ids": [value.id for _, value, _ in affected]})
+                        "affected_ids": list(dict.fromkeys([value.id for _, value, _ in affected] +
+                            (operation.target_ids if operation.type == "delete_tags" else [])))})
         emit_event(db, run.id, "tool_end", {"message": f"已完成：{operation.description}", "operation_id": operation.operation_id})
     db.flush()
     for key, before in initial.items():
@@ -324,20 +386,31 @@ def undo_run(db, actor, run_id):
     if not records:
         raise AppError("nothing_to_undo", "没有可撤销的操作", 409)
     values = {}
+    deleted_tags = check_deleted_tag_restore(db, run.kb_id, records)
+    restoring_tag_ids = {record.entity_id for record in deleted_tags}
     for record in records:
         key = f"{record.entity_type}:{record.entity_id}"
+        if record in deleted_tags:
+            continue
         value = entity(db, key, run.kb_id, lock=True, include_deleted=True)
         if value.version != record.after_version:
             raise AppError("undo_conflict", "整理后已有人工修改，无法安全撤销；未覆盖任何后续更改", 409,
                            {"resource": key})
         if record.entity_type == "document":
-            if record.before.get("folder_id"):
+            if record.before.get("folder_id") and not record.before.get("tags_only"):
                 library.validate_folder(db, run.kb_id, record.before["folder_id"])
             for tag_id in record.before.get("tag_ids", []):
-                entity(db, f"tag:{tag_id}", run.kb_id, lock=True)
+                if tag_id not in restoring_tag_ids:
+                    entity(db, f"tag:{tag_id}", run.kb_id, lock=True)
         values[key] = value
+    for record in deleted_tags:
+        tag = restore_deleted_tag(db, record)
+        record.status = "used"
+        db.add(AuditLog(actor_id=actor.id, kb_id=run.kb_id, run_id=run.id, action="undo",
+                        entity_id=record.entity_id, before={"removed": True}, after=library.snapshot(tag)))
     # Restore documents before removing tags/folders created by this plan.
-    ordered = sorted(records, key=lambda r: (r.before.get("created", False), r.entity_type != "document"))
+    ordered = sorted([record for record in records if record not in deleted_tags],
+                     key=lambda r: (r.before.get("created", False), r.entity_type != "document"))
     for record in ordered:
         value = values[f"{record.entity_type}:{record.entity_id}"]
         before_undo = _snapshot(db, record.entity_type, value)
@@ -355,12 +428,13 @@ def undo_run(db, actor, run_id):
                     raise AppError("undo_conflict", "新建标签已有后续关联，不能安全撤销", 409)
                 db.delete(value)
         elif record.entity_type == "document":
-            library.update_document(db, actor, value.id, {"display_name": record.before["display_name"],
-                "folder_id": record.before["folder_id"], "tag_ids": record.before.get("tag_ids", []),
-                "deleted_at": bool(record.before.get("deleted_at"))})
+            changes = {"tag_ids": record.before.get("tag_ids", [])}
+            if not record.before.get("tags_only"):
+                changes.update(display_name=record.before["display_name"], folder_id=record.before["folder_id"],
+                               deleted_at=bool(record.before.get("deleted_at")))
+            library.update_document(db, actor, value.id, changes)
         elif record.entity_type == "folder":
-            library.update_folder(db, actor, value.id, {"name": record.before["name"], "parent_id": record.before["parent_id"]})
-            value.deleted_at = datetime.fromisoformat(record.before["deleted_at"]) if record.before.get("deleted_at") else None
+            restore_folder(db, actor, value, record.before)
         record.status = "used"
         db.add(AuditLog(actor_id=actor.id, kb_id=run.kb_id, run_id=run.id, action="undo",
                         entity_id=record.entity_id, before=before_undo,

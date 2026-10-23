@@ -24,11 +24,12 @@ def build_context(hits: list[dict], max_chars: int = 24000) -> tuple[str, list[d
         # useful prefix without allowing it to consume the entire request.
         body = body[:6000]
         block = f"[S{len(selected) + 1}] {hit.get('document_name') or '参考文档'}\n{body}"
-        if used + len(block) > max_chars:
+        size = len(block) + (2 if contexts else 0)
+        if used + size > max_chars:
             continue
         contexts.append(block)
         selected.append(hit)
-        used += len(block)
+        used += size
     return "\n\n".join(contexts), selected
 
 

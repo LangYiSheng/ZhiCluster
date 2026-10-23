@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, anchorText, query } from "../../lib/api";
+import { api, query } from "../../lib/api";
 import type {
   Citation,
   Document,
@@ -22,7 +22,7 @@ import type {
 } from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { Menu, MenuItem } from "../../components/ui/menu";
-import { Empty, ErrorState, Loading, Status } from "../../components/common";
+import { ErrorState, Loading, Status } from "../../components/common";
 import {
   isActiveJob,
   jobNeedsAttention,
@@ -30,7 +30,7 @@ import {
   jobStageLabel,
   jobStatusLabel,
 } from "../../lib/jobs";
-import { PdfViewer } from "./PdfViewer";
+import { DocumentReading } from "./DocumentReading";
 type SuggestionEnvelope = {
   id: string;
   payload: Suggestion;
@@ -59,7 +59,7 @@ export function Reader({
   const doc = useQuery({
     queryKey: ["document", documentId],
     queryFn: () => api<Document>(`/documents/${documentId}`),
-    refetchInterval: 4000,
+    refetchInterval: active ? 4000 : false,
   });
   const content = useQuery({
     queryKey: ["content", documentId],
@@ -72,7 +72,7 @@ export function Reader({
   const jobs = useQuery({
     queryKey: ["document-jobs", documentId],
     queryFn: () => api<Job[]>(`/ingestion/jobs?document_id=${documentId}`),
-    refetchInterval: 4000,
+    refetchInterval: active ? 4000 : false,
   });
   const suggestion = useQuery({
     queryKey: ["suggestion", documentId],
@@ -82,6 +82,7 @@ export function Reader({
     retry: false,
   });
   const [page, setPage] = useState(1);
+  const [locate, setLocate] = useState(0);
   useEffect(() => {
     setPage(
       citation?.page_start ||
@@ -112,7 +113,7 @@ export function Reader({
       );
       element?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
-  }, [active, citation, content.data, reader]);
+  }, [active, citation, content.data, reader, locate]);
   if (doc.isPending) return <Loading />;
   if (doc.isError)
     return <ErrorState error={doc.error} retry={() => void doc.refetch()} />;
@@ -305,57 +306,27 @@ export function Reader({
             )}
           </div>
         ) : (
-          <div className="document-reader">
-            {citation?.snippet && (
-              <div className="citation-banner">
-                <strong>{anchorText(citation)}</strong>
-                <p>{citation.snippet}</p>
-              </div>
-            )}
-            {d.ext === "pdf" && (
-              <PdfViewer
-                documentId={documentId}
-                page={page}
-                onPageChange={setPage}
-              />
-            )}
-            {content.isPending && d.parse_status === "ready" ? (
-              <Loading />
-            ) : content.isError ? (
-              <ErrorState
-                error={content.error}
-                retry={() => void content.refetch()}
-              />
-            ) : !textSections.length ? (
-              <Empty title="正文暂不可用">
-                <Link to={tasksUrl}>查看处理任务</Link>
-              </Empty>
-            ) : (
-              <div className="text-reader">
-                {textSections.map((s) => (
-                  <section
-                    data-section-id={s.id}
-                    key={s.id}
-                    className={`text-section ${citation?.snippet && s.plain_text.includes(citation.snippet.slice(0, 40)) ? "highlighted" : ""}`}
-                  >
-                    <div className="section-anchor">
-                      {s.heading && <strong>{s.heading}</strong>}
-                      <small>{anchorText(s)}</small>
-                    </div>
-                    {d.ext === "md" ? (
-                      <div className="markdown">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
-                          {s.plain_text}
-                        </ReactMarkdown>
-                      </div>
-                    ) : (
-                      <p className="plain-text">{s.plain_text}</p>
-                    )}
-                  </section>
-                ))}
-              </div>
-            )}
-          </div>
+          <DocumentReading
+            document={d}
+            sections={textSections}
+            citation={citation}
+            page={page}
+            onPageChange={setPage}
+            loading={content.isPending && d.parse_status === "ready"}
+            error={content.isError ? content.error : null}
+            retry={() => void content.refetch()}
+            tasksUrl={tasksUrl}
+            active={active}
+            onLocate={() => {
+              setPage(
+                citation?.page_start ||
+                  citation?.anchors?.page_start ||
+                  citation?.anchors?.page ||
+                  1,
+              );
+              setLocate((value) => value + 1);
+            }}
+          />
         )}
       </div>
     </div>

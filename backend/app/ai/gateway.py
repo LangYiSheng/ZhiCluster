@@ -193,6 +193,37 @@ class ModelGateway:
         except (KeyError, IndexError, TypeError, ValueError) as error:
             raise ProviderError("聊天模型没有返回可用文本") from error
 
+    def chat_tools(self, messages: list[dict], *, tools: list[dict], max_tokens: int = 600) -> dict:
+        """Return an assistant tool turn without executing any model-provided call."""
+        if not getattr(self.settings, "llm_supports_tools", False):
+            raise AIUnavailable("当前模型未声明支持工具调用")
+        result = self._request("llm", "chat/completions", {
+            "messages": messages, "tools": tools, "tool_choice": "auto", "max_tokens": max_tokens,
+            "temperature": 0.2,
+        })
+        try:
+            choice = result["choices"][0]
+            if choice.get("finish_reason") == "length":
+                raise ProviderError("检索工具规划输出不完整，已停止执行工具", code="output_truncated")
+            message = choice["message"]
+            calls = message.get("tool_calls") or []
+            if not isinstance(calls, list) or len(calls) > 3:
+                raise ValueError("invalid tool count")
+            normalized, identifiers = [], set()
+            for call in calls:
+                identifier, function = call["id"], call["function"]
+                if call.get("type") != "function" or not isinstance(identifier, str) or not 1 <= len(identifier) <= 200 or identifier in identifiers:
+                    raise ValueError("invalid call id/type")
+                if not isinstance(function["name"], str) or not isinstance(function["arguments"], str) or len(function["arguments"]) > 5000:
+                    raise ValueError("invalid function")
+                identifiers.add(identifier)
+                normalized.append({"id": identifier, "type": "function", "function": {
+                    "name": function["name"], "arguments": function["arguments"],
+                }})
+            return {"role": "assistant", "content": None, "tool_calls": normalized} if normalized else {"role": "assistant", "content": ""}
+        except (KeyError, IndexError, TypeError, ValueError, AttributeError) as error:
+            raise ProviderError("模型服务返回了无效的工具调用数据", code="invalid_tool_response") from error
+
     def stream_chat(self, messages: list[dict], *, max_tokens: int = 1800) -> Iterator[str]:
         base_url, key, model, timeout, retries = self._config("llm")
         if not self.llm_configured:

@@ -1,4 +1,5 @@
-import { memo } from "react";
+import { memo, useId, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Citation } from "../../lib/api";
@@ -117,6 +118,8 @@ export const CitationList = memo(function CitationList({
   citations?: Citation[];
   onCitation: (citation: Citation) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const listId = useId();
   const ordinals = new Set(
     [...content.matchAll(/\[S(\d+)\]/g)].map((match) => Number(match[1])),
   );
@@ -124,15 +127,20 @@ export const CitationList = memo(function CitationList({
     ordinals.has(citation.ordinal || 0),
   );
   if (!sources.length) return null;
+  const visibleSources = expanded ? sources : sources.slice(0, 3);
   return (
-    <div className="citations" aria-label="回答来源">
-      <span className="tiny muted">来源</span>
-      <ol>
-        {sources.map((citation) => (
+    <div
+      className={`citations citation-collection${expanded ? " is-expanded" : ""}`}
+      aria-label="回答来源"
+    >
+      <span className="citation-caption">来源 · {sources.length}</span>
+      <ol id={listId}>
+        {visibleSources.map((citation) => (
           <li key={`${citation.ordinal}-${citation.chunk_id}`}>
             <button
               type="button"
               disabled={citation.available === false}
+              aria-label={`${citation.available === false ? "来源不可用" : "查看来源"} ${citation.ordinal}：${citation.document_name || citation.display_name || "原文"} · ${anchorText(citation)}`}
               title={
                 citation.available === false
                   ? "来源已删除或无权访问"
@@ -153,6 +161,16 @@ export const CitationList = memo(function CitationList({
           </li>
         ))}
       </ol>
+      <button
+        type="button"
+        className="citation-toggle"
+        aria-label={expanded ? "收起来源" : `展开 ${sources.length} 项来源`}
+        aria-expanded={expanded}
+        aria-controls={listId}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <ChevronDown size={13} />
+      </button>
     </div>
   );
 });

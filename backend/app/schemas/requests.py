@@ -86,6 +86,7 @@ class ConversationUpdate(Input):
 
 class ChatMessage(Input):
     content: str = Field(min_length=1, max_length=16000)
+    retrieval_mode: Literal["direct", "model"] = "direct"
 
 
 class SuggestionAction(Input):

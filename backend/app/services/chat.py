@@ -13,6 +13,7 @@ from app.db.models import (
     Message,
     MessageCitation,
 )
+from app.retrieval.chat_tools import MAX_CONTEXT_CHARS, current_hits, model_retrieval
 from app.retrieval.search import search_knowledge
 from app.services.chat_context import ExecutionSteps, build_context, conversation_context, retrieval_query
 from app.services.permissions import assert_can_read_kb, get_actor
@@ -60,9 +61,22 @@ def process_chat_job(job_id, session_factory, settings, owner=None):
                     KnowledgeBaseMember.user_id == actor.id).execution_options(populate_existing=True))
                 assert_can_read_kb(db, actor, kb_id)
 
-        def ownership_lost():
+        def finish_if_interrupted():
+            nonlocal lost_lease
             db.refresh(job, with_for_update=True)
-            return job.status == "cancelled" or bool(claimed_owner and (job.lease_owner != claimed_owner or job.status != "running"))
+            db.refresh(conversation)
+            if job.lease_owner == claimed_owner and conversation.deleted_at and job.status not in {"completed", "failed", "cancelled"}:
+                # A provider can fail before yielding another token. Treat a
+                # concurrent deletion just like the normal active-state check.
+                db.refresh(message)
+                message.status, message.error = "failed", "对话已删除，生成已取消"
+                job.status, job.error = "cancelled", message.error
+                return True
+            if job.status == "cancelled" or bool(claimed_owner and (job.lease_owner != claimed_owner or job.status != "running")):
+                lost_lease = True
+                db.rollback()
+                return True
+            return False
 
         lost_lease = False
         execution = ExecutionSteps()
@@ -105,7 +119,8 @@ def process_chat_job(job_id, session_factory, settings, owner=None):
             check_active()
             # Retrying a partially persisted generation replaces its citations atomically.
             db.execute(delete(MessageCitation).where(MessageCitation.message_id == message.id))
-            message.content, message.error, message.status, message.retrieval = "", None, "processing", {}
+            retrieval_mode = job.payload.get("retrieval_mode", "direct")
+            message.content, message.error, message.status, message.retrieval = "", None, "processing", {"retrieval_mode": retrieval_mode}
             publish("status", {"message": "正在检查知识范围", "reset": True})
             db.commit()
             progress("scope", "检查知识范围")
@@ -119,9 +134,16 @@ def process_chat_job(job_id, session_factory, settings, owner=None):
                 labels = {"keyword": "检索关键词与文档", "embedding": "检索语义相关片段", "ranking": "合并并排序检索结果", "reranking": "核对片段与问题的关联"}
                 progress(stage, labels.get(stage, "检索资料"), **details)
 
-            results = search_knowledge(db, actor, {**scope, "query": query, "limit": 16}, settings, on_progress=search_progress)
-            message.retrieval = {**message.retrieval, **{key: results[key] for key in ("mode", "notice", "elapsed_ms", "kb_ids", "reranking") if key in results}}
-            contexts, hits = build_context(results["items"])
+            if retrieval_mode == "model":
+                results = model_retrieval(db, actor, scope, query, settings,
+                    search=lambda request, callback: search_knowledge(db, actor, request, settings, on_progress=callback),
+                    progress=progress, check_active=check_active)
+            else:
+                results = search_knowledge(db, actor, {**scope, "query": query, "limit": 16}, settings, on_progress=search_progress)
+            check_active()
+            results["items"] = current_hits(db, actor, scope, results["items"])
+            message.retrieval = {**message.retrieval, **{key: results[key] for key in ("mode", "notice", "elapsed_ms", "kb_ids", "reranking", "retrieval_strategy", "model_retrieval") if key in results}}
+            contexts, hits = build_context(results["items"], max_chars=MAX_CONTEXT_CHARS)
             progress("context", "整理参考资料", source_count=len(hits), mode=results["mode"], notice=results["notice"])
             if not hits:
                 message.content = "在当前知识范围内找不到足够依据。请调整知识库、文件夹或标签范围，或补充相关资料。"
@@ -132,6 +154,10 @@ def process_chat_job(job_id, session_factory, settings, owner=None):
                 # Cancellation/retry also locks job -> conversation. Keep that
                 # order when candidate events acquire the conversation lock.
                 check_active()
+                hits = current_hits(db, actor, scope, hits)
+                contexts, hits = build_context(hits, max_chars=MAX_CONTEXT_CHARS)
+                if not hits:
+                    raise AIUnavailable("参考资料已删除或已移出当前知识范围，请重新提问")
                 # Publish real candidates before generation so inline source
                 # markers can be opened while the answer is still streaming.
                 for ordinal, hit in enumerate(hits, 1):
@@ -157,10 +183,11 @@ def process_chat_job(job_id, session_factory, settings, owner=None):
                 flush_tokens()
                 # Keep the job -> conversation lock order while persisting citations.
                 check_active()
+                available_chunks = {hit["chunk_id"] for hit in current_hits(db, actor, scope, hits)}
                 valid_ordinals = set()
                 for matched in re.findall(r"\[S(\d+)\]", message.content):
                     ordinal = int(matched)
-                    if 1 <= ordinal <= len(hits):
+                    if 1 <= ordinal <= len(hits) and hits[ordinal - 1]["chunk_id"] in available_chunks:
                         valid_ordinals.add(ordinal)
                     else:
                         message.content = message.content.replace(f"[S{matched}]", "[引用无效]")
@@ -175,20 +202,12 @@ def process_chat_job(job_id, session_factory, settings, owner=None):
             publish("completed", {"content": message.content, "steps": execution.snapshot()})
         except ChatLeaseLost:
             db.rollback()
-            db.refresh(job, with_for_update=True)
-            db.refresh(conversation)
-            if job.lease_owner == claimed_owner and conversation.deleted_at and job.status not in {"completed", "failed", "cancelled"}:
-                # Removing a conversation cancels its own current generation;
-                # an ownership handoff must leave the new worker untouched.
-                message.status, message.error = "failed", "对话已删除，生成已取消"
-                job.status, job.error = "cancelled", message.error
-            else:
+            if not finish_if_interrupted():
                 lost_lease = True
             return
         except (AIUnavailable, ProviderError) as exc:
-            if ownership_lost():
-                db.rollback()
-                lost_lease = True
+            db.rollback()
+            if finish_if_interrupted():
                 return
             # Only flushed output was delivered to the browser. Keeping that
             # checkpoint avoids a stale worker writing its local tail after
@@ -201,9 +220,7 @@ def process_chat_job(job_id, session_factory, settings, owner=None):
             db.rollback()
             message = db.get(Message, job.payload["message_id"])
             job = db.get(IngestionJob, job_id)
-            if ownership_lost():
-                db.rollback()
-                lost_lease = True
+            if finish_if_interrupted():
                 return
             message.status, message.error = "failed", "回答生成失败，请检查任务日志后重试"
             job.status, job.error = "failed", message.error

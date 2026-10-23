@@ -21,6 +21,8 @@ import { ChatProgress } from "./ChatProgress";
 import { CitationList, MessageContent } from "./MessageContent";
 import { useChatStream } from "./useChatStream";
 import { isMessageBusy } from "./chatEvents";
+import { scopeSummary } from "./scopeSummary";
+import "./chat-ui.css";
 const ignoreHistoryChange = () => {};
 export function Chat({
   kb,
@@ -53,6 +55,9 @@ export function Chat({
   const [scopeTags, setScopeTags] = useState<string[]>([]);
   const [scopeFolders, setScopeFolders] = useState<string[]>([]);
   const [includeDescendants, setIncludeDescendants] = useState(true);
+  const [retrievalMode, setRetrievalMode] = useState<"direct" | "model">(
+    "direct",
+  );
   const [rename, setRename] = useState<Conversation | null>(null);
   useEffect(() => {
     if (!active) {
@@ -92,6 +97,18 @@ export function Chat({
     folder_ids: scopeFolders,
     include_descendants: includeDescendants,
   };
+  const selectedScopeLabel =
+    conversationId && !persistedScope
+      ? "正在读取对话范围"
+      : scopeSummary({
+          knowledgeBases,
+          folders,
+          tags,
+          kbIds: selectedKbIds,
+          folderIds: selectedFolderIds,
+          tagIds: selectedTagIds,
+          includeDescendants: selectedIncludeDescendants,
+        });
   useEffect(() => {
     localStorage.setItem(`conversation:${kb.id}`, conversationId);
   }, [conversationId, kb.id]);
@@ -110,7 +127,7 @@ export function Chat({
       }
       const message = await api<Message>(
         `/conversations/${id}/messages`,
-        json("POST", { content: text }),
+        json("POST", { content: text, retrieval_mode: retrievalMode }),
       );
       return { message, conversationId: id, draftKey };
     },
@@ -263,10 +280,26 @@ export function Chat({
             }}
           />
           <div className="row spread">
-            <small>
+            <small className="composer-scope-label" title={selectedScopeLabel}>
               <MessageSquare size={13} />
-              基于你的知识库回答
+              <span>{selectedScopeLabel}</span>
             </small>
+            <label
+              className="retrieval-mode-control"
+              title="开启后，模型会规划搜索问题，并在需要时补充查找。"
+            >
+              <input
+                type="checkbox"
+                role="switch"
+                aria-label="主动检索"
+                checked={retrievalMode === "model"}
+                disabled={busy}
+                onChange={(event) =>
+                  setRetrievalMode(event.target.checked ? "model" : "direct")
+                }
+              />
+              <span>主动检索</span>
+            </label>
             <Button
               variant="default"
               size="icon"

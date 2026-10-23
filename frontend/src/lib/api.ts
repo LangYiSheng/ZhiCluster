@@ -80,6 +80,10 @@ export type ChatStep = {
   source_count?: number;
   mode?: string;
   notice?: string;
+  query?: string;
+  tool_name?: string;
+  call_id?: string;
+  round?: number;
 };
 export type Message = {
   id: string;
@@ -121,6 +125,7 @@ export type AgentPlan = {
   version?: number;
   operations: Operation[];
   base_versions: Record<string, number>;
+  base_tag_links?: Record<string, string[]>;
   risk_level: string;
   expected_changes?: number;
 };

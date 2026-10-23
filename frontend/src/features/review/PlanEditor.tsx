@@ -9,7 +9,9 @@ import type { Folder, Operation, Tag } from "../../lib/api";
 import { useSessionDraft } from "../../lib/useSessionDraft";
 import {
   operationDestination,
+  deletionPreviewComplete,
   operationLabels,
+  operationTagDocuments,
   planStatus,
   reviewApi,
 } from "./api";
@@ -87,7 +89,16 @@ export function PlanEditor({ run }: { run: ReviewRun }) {
       ["create_folder", "move_documents"].includes(op.type) &&
       /不可用|异常/.test(operationDestination(op, folders, operations)),
   );
-  const highRisk = selected.some((op) => op.type === "trash_documents");
+  const incompleteDeletionPreview = selected.some(
+    (op) =>
+      !deletionPreviewComplete(
+        op,
+        plan?.preview?.find((item) => item.operation_id === op.operation_id),
+      ),
+  );
+  const highRisk = selected.some((op) =>
+    ["trash_documents", "trash_empty_folders", "delete_tags"].includes(op.type),
+  );
   const canApprove =
     reviewing &&
     !!selected.length &&
@@ -96,6 +107,7 @@ export function PlanEditor({ run }: { run: ReviewRun }) {
     !missingTargets &&
     !missingNames &&
     !invalidDestination &&
+    !incompleteDeletionPreview &&
     !!metadata.data;
   const mutation = useMutation({
     mutationFn: async (action: "save" | "approve" | "reject" | "undo") => {
@@ -210,6 +222,11 @@ export function PlanEditor({ run }: { run: ReviewRun }) {
       {invalidDestination && reviewing && (
         <p className="review-row-warning">移动位置不可用，请调整目标文件夹。</p>
       )}
+      {incompleteDeletionPreview && reviewing && (
+        <p className="review-row-warning">
+          标签删除的影响预览不完整，请刷新并重新审阅。
+        </p>
+      )}
       {mutation.isError && (
         <p className="review-row-warning" role="alert">
           {errorText(mutation.error)}
@@ -285,7 +302,7 @@ export function PlanEditor({ run }: { run: ReviewRun }) {
         onOpenChange={(open) =>
           !open && !mutation.isPending && setConfirmation(null)
         }
-        title={highRisk ? "确认包含回收站操作的方案" : "确认执行整理方案"}
+        title={highRisk ? "确认包含删除操作的方案" : "确认执行整理方案"}
         description="将按下面显示的位置执行所选操作。未选择的操作不会执行。"
       >
         <div className="review-confirm-list">
@@ -294,7 +311,8 @@ export function PlanEditor({ run }: { run: ReviewRun }) {
               <strong>{operationLabels[op.type] || op.type}</strong>
               {plan.preview
                 ?.find((item) => item.operation_id === op.operation_id)
-                ?.targets.map((target) => (
+                ?.targets.filter((target) => op.target_ids.includes(target.id))
+                .map((target) => (
                   <p key={target.id}>
                     {target.name}
                     {op.type === "move_documents" && (
@@ -336,6 +354,40 @@ export function PlanEditor({ run }: { run: ReviewRun }) {
               {op.type === "trash_documents" && (
                 <p className="review-row-warning">以上文档将移入回收站。</p>
               )}
+              {op.type === "trash_empty_folders" && (
+                <p className="review-row-warning">
+                  以上空文件夹将移入回收站，执行前会再次检查是否为空。
+                </p>
+              )}
+              {op.type === "delete_tags" && (
+                <div className="review-row-warning">
+                  <p>
+                    将删除以上标签，并移除{" "}
+                    {
+                      operationTagDocuments(
+                        op,
+                        plan.preview?.find(
+                          (item) => item.operation_id === op.operation_id,
+                        ),
+                      ).length
+                    }{" "}
+                    份文档上的关联；文档内容保留。
+                  </p>
+                  <ul>
+                    {operationTagDocuments(
+                      op,
+                      plan.preview?.find(
+                        (item) => item.operation_id === op.operation_id,
+                      ),
+                    ).map((document) => (
+                      <li key={document.id}>
+                        {document.name}
+                        {document.deleted ? "（回收站）" : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -359,7 +411,7 @@ export function PlanEditor({ run }: { run: ReviewRun }) {
             {mutation.isPending
               ? "正在执行…"
               : highRisk
-                ? "确认移入回收站并执行"
+                ? "确认删除并执行"
                 : "确认执行"}
           </Button>
         </div>

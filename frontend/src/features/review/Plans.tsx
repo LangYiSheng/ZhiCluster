@@ -67,7 +67,7 @@ export function Plans({
     );
   return (
     <div className="review-plan-layout">
-      <aside className="review-run-list" aria-label="整理任务记录">
+      <aside className="review-run-list" aria-label="整理任务记录" tabIndex={0}>
         <div className="row spread">
           <small>最近的整理</small>
           <Button
@@ -99,7 +99,12 @@ export function Plans({
           </button>
         ))}
       </aside>
-      <div className="review-selected-plan">
+      <div
+        className="review-selected-plan"
+        role="region"
+        aria-label="整理方案详情"
+        tabIndex={0}
+      >
         {run.isPending ? (
           <Loading />
         ) : run.isError ? (

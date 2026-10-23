@@ -9,15 +9,25 @@ export type ReferenceTab = {
   citation?: Citation;
   reader: boolean;
 };
-export type ReferenceState = { tabs: ReferenceTab[]; activeId: string };
+export type ReferenceState = {
+  tabs: ReferenceTab[];
+  activeId: string;
+  collapsed?: boolean;
+};
 export type ReferenceAction =
   | { type: "open"; tab: ReferenceTab }
   | { type: "activate"; id: string }
   | { type: "close"; id: string }
   | { type: "reader"; id: string; reader: boolean }
+  | { type: "collapse" }
+  | { type: "expand" }
   | { type: "clear" };
 
-export const emptyReferences: ReferenceState = { tabs: [], activeId: "" };
+export const emptyReferences: ReferenceState = {
+  tabs: [],
+  activeId: "",
+  collapsed: true,
+};
 
 export function referenceReducer(
   state: ReferenceState,
@@ -33,11 +43,12 @@ export function referenceReducer(
             )
           : [...state.tabs, action.tab],
         activeId: action.tab.id,
+        collapsed: false,
       };
     }
     case "activate":
       return state.tabs.some((tab) => tab.id === action.id)
-        ? { ...state, activeId: action.id }
+        ? { ...state, activeId: action.id, collapsed: false }
         : state;
     case "close": {
       const index = state.tabs.findIndex((tab) => tab.id === action.id);
@@ -45,6 +56,7 @@ export function referenceReducer(
       const tabs = state.tabs.filter((tab) => tab.id !== action.id);
       return {
         tabs,
+        collapsed: !tabs.length || state.collapsed,
         activeId:
           state.activeId === action.id
             ? tabs[Math.min(index, tabs.length - 1)]?.id || ""
@@ -60,5 +72,9 @@ export function referenceReducer(
       };
     case "clear":
       return emptyReferences;
+    case "collapse":
+      return { ...state, collapsed: true };
+    case "expand":
+      return state.tabs.length ? { ...state, collapsed: false } : state;
   }
 }

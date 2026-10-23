@@ -481,8 +481,11 @@ it("范围面板按选择创建多库会话，取消当前库会清掉其文件�
   const user = userEvent.setup();
   await user.type(screen.getByLabelText("知识库问题"), "按范围查找");
   await user.click(screen.getByRole("button", { name: "调整问答范围" }));
+  await user.click(screen.getByRole("tab", { name: /文件夹/ }));
   await user.click(screen.getByLabelText("研究目录"));
+  await user.click(screen.getByRole("tab", { name: /标签/ }));
   await user.click(screen.getByLabelText("检索", { exact: true }));
+  await user.click(screen.getByRole("tab", { name: /知识库/ }));
   await user.click(screen.getByLabelText("研究库", { exact: true }));
   expect(screen.getByLabelText("研究目录")).not.toBeChecked();
   expect(screen.getByLabelText("研究目录")).toBeDisabled();
@@ -490,10 +493,18 @@ it("范围面板按选择创建多库会话，取消当前库会清掉其文件�
   expect(screen.getByLabelText("检索", { exact: true })).toBeDisabled();
   await user.click(screen.getByLabelText("第二知识库"));
   await user.click(screen.getByLabelText("研究库", { exact: true }));
+  await user.click(screen.getByRole("tab", { name: /文件夹/ }));
   await user.click(screen.getByLabelText("研究目录"));
-  await user.click(screen.getByLabelText("检索", { exact: true }));
   await user.click(screen.getByLabelText("包含子文件夹"));
+  await user.click(screen.getByRole("tab", { name: /标签/ }));
+  await user.click(screen.getByLabelText("检索", { exact: true }));
   await user.click(screen.getByRole("button", { name: "完成" }));
+  expect(
+    screen.getByTitle(
+      "基于 第二知识库、研究库 · 文件夹：研究目录 · 标签：检索",
+    ),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("switch", { name: "主动检索" }));
   await user.click(screen.getByRole("button", { name: "发送问题" }));
   await vi.waitFor(() => expect(requests).toHaveLength(2));
   expect(requests[0].body.scope).toEqual({
@@ -502,6 +513,8 @@ it("范围面板按选择创建多库会话，取消当前库会清掉其文件�
     tag_ids: ["t-1"],
     include_descendants: false,
   });
+  expect(requests[1].body.retrieval_mode).toBe("model");
+  expect(requests[0].body.scope).not.toHaveProperty("retrieval_mode");
 });
 
 it("离开聊天会关闭Portal弹窗，返回时保留草稿且不重开范围、历史或重命名", async () => {

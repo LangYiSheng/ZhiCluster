@@ -223,6 +223,11 @@ def plan_preview(db, plan):
     docs = {doc.id: doc for doc in db.scalars(select(Document).where(Document.kb_id == plan.kb_id, Document.id.in_(target_ids), Document.deleted_at.is_(None),
         or_(Document.folder_id.is_(None), Document.folder_id.in_(paths))))}
     by_folder = {folder.id: folder for folder in folders}
+    tags = {tag.id: tag for tag in db.scalars(select(Tag).where(Tag.kb_id == plan.kb_id, Tag.id.in_(target_ids)))}
+    tag_links = plan.payload.get("base_tag_links", {})
+    linked_ids = {identifier for ids in tag_links.values() for identifier in ids}
+    linked_docs = {doc.id: doc for doc in db.scalars(select(Document).where(
+        Document.kb_id == plan.kb_id, Document.id.in_(linked_ids)))}
     result = []
     for operation in operations:
         params = operation.get("params", {})
@@ -232,10 +237,18 @@ def plan_preview(db, plan):
         destination = params.get("folder_id")
         targets = []
         for target in operation.get("target_ids", []):
-            resource = by_folder.get(target) if operation["type"] == "rename_folder" else docs.get(target)
-            targets.append({"id": target, "name": resource.name if isinstance(resource, Folder) else resource.display_name if resource else "已删除或不可访问",
-                            "kind": "folder" if operation["type"] == "rename_folder" else "document", "available": resource is not None,
-                            "folder_path": paths.get(getattr(resource, "folder_id", None), "已删除或不可访问的文件夹")})
+            kind = ("folder" if operation["type"] in {"rename_folder", "trash_empty_folders"}
+                    else "tag" if operation["type"] == "delete_tags" else "document")
+            resource = {"folder": by_folder, "tag": tags, "document": docs}[kind].get(target)
+            item = {"id": target, "name": resource.display_name if isinstance(resource, Document) else resource.name if resource else "已删除或不可访问",
+                    "kind": kind, "available": resource is not None,
+                    "folder_path": paths.get(target if kind == "folder" else getattr(resource, "folder_id", None), "知识库根目录")}
+            if kind == "tag":
+                item["usage_count"] = len(tag_links.get(target, []))
+                item["affected_documents"] = [{"id": identifier, "name": linked_docs[identifier].display_name if identifier in linked_docs else "已删除或不可访问",
+                    "available": identifier in linked_docs, "deleted": bool(linked_docs[identifier].deleted_at) if identifier in linked_docs else True}
+                    for identifier in tag_links.get(target, [])]
+            targets.append(item)
         result.append({"operation_id": operation["operation_id"], "targets": targets,
                        "destination_path": paths.get(destination, "已删除或不可访问的文件夹") if operation["type"] == "move_documents" else None})
     return result

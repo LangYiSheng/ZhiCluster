@@ -33,7 +33,7 @@ export function Review({
     });
   }
   return (
-    <div className="review-page">
+    <div className={`review-page${tab === "plans" ? " is-plans" : ""}`}>
       <header className="review-heading">
         <div>
           <h1>整理审阅</h1>

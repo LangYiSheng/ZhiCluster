@@ -5,6 +5,7 @@ import { api, anchorText } from "../../lib/api";
 import type { Citation, SearchResponse } from "../../lib/api";
 import { Dialog } from "../../components/ui/dialog";
 import { Empty, ErrorState, Loading } from "../../components/common";
+import { retrievalNotice } from "./retrievalNotice";
 export function SearchDialog({
   open,
   onOpenChange,
@@ -40,6 +41,7 @@ export function SearchDialog({
     enabled: open && !!kbId && !!debounced.trim(),
   });
   const rows = result.data?.items || [];
+  const notice = retrievalNotice(result.data?.notice);
   function choose(index: number) {
     const item = rows[index];
     if (item) {
@@ -81,12 +83,7 @@ export function SearchDialog({
         />
         <kbd>ESC</kbd>
       </div>
-      {result.data && (
-        <p className="search-mode muted">
-          {result.data.mode === "keyword" ? "仅关键词搜索" : "混合检索"}
-          {result.data.notice ? ` · ${result.data.notice}` : ""}
-        </p>
-      )}
+      {notice && <p className="search-mode muted">{notice}</p>}
       <div className="search-results" role="listbox" aria-label="搜索结果">
         {result.isFetching ? (
           <Loading />
@@ -119,9 +116,7 @@ export function SearchDialog({
                 <ArrowUpRight size={15} />
               </div>
               <p>{row.snippet || row.content}</p>
-              <small>
-                {anchorText(row)} · 相关度 {row.score.toFixed(4)}
-              </small>
+              <small>{anchorText(row)}</small>
             </button>
           ))
         )}

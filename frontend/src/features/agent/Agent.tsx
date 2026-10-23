@@ -30,6 +30,7 @@ type PlanPayload = {
   expected_changes: number;
   risk_level: string;
   base_versions: Record<string, number>;
+  base_tag_links?: Record<string, string[]>;
 };
 type Plan = {
   id: string;
@@ -52,7 +53,10 @@ const labels: Record<string, string> = {
   rename_document: "重命名文档",
   rename_folder: "重命名文件夹",
   trash_documents: "移到回收站",
+  trash_empty_folders: "删除空文件夹",
+  delete_tags: "删除标签",
 };
+const deletionTypes = ["trash_documents", "trash_empty_folders", "delete_tags"];
 export function Agent({
   kbId,
   folders,
@@ -153,8 +157,32 @@ export function Agent({
     );
   }
   const selected = operations.filter((o) => o.enabled !== false);
-  const highRisk = selected.some((o) => o.type === "trash_documents");
+  const highRisk = selected.some((o) => deletionTypes.includes(o.type));
   const impacted = new Set(selected.flatMap((o) => o.target_ids)).size;
+  const deletionTargets = (type: string) =>
+    new Set(
+      selected.filter((op) => op.type === type).flatMap((op) => op.target_ids),
+    );
+  const deletedTags = deletionTargets("delete_tags");
+  const tagImpactKnown = [...deletedTags].every((id) =>
+    Array.isArray(plan?.payload.base_tag_links?.[id]),
+  );
+  const tagDocuments = new Set(
+    [...deletedTags].flatMap((id) => plan?.payload.base_tag_links?.[id] || []),
+  );
+  const deletionImpact = [
+    deletionTargets("trash_documents").size
+      ? `${deletionTargets("trash_documents").size} 份文档将移入回收站`
+      : "",
+    deletionTargets("trash_empty_folders").size
+      ? `${deletionTargets("trash_empty_folders").size} 个空文件夹将移入回收站，执行前会再次检查是否为空`
+      : "",
+    deletedTags.size
+      ? `将删除 ${deletedTags.size} 个标签，并移除 ${tagImpactKnown ? tagDocuments.size : "未知数量"} 份文档上的关联；文档内容保留`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("；");
   return (
     <div className="agent-container page-scroll">
       <header className="agent-heading">
@@ -263,13 +291,23 @@ export function Agent({
                         />
                         <span className="operation-number">{index + 1}</span>
                         <strong>{labels[op.type] || op.type}</strong>
-                        {op.type === "trash_documents" && (
+                        {deletionTypes.includes(op.type) && (
                           <span className="status status-failed">
                             需额外确认
                           </span>
                         )}
                       </div>
                       <p>{op.description}</p>
+                      {op.type === "trash_empty_folders" && (
+                        <p className="tiny muted">
+                          仅删除执行时确认为空的文件夹，可撤销。
+                        </p>
+                      )}
+                      {op.type === "delete_tags" && (
+                        <p className="tiny muted">
+                          删除标签会移除其文档关联，可在整批撤销时恢复。
+                        </p>
+                      )}
                       <small className="muted">
                         目标 {op.target_ids.length} 项 · {op.operation_id}
                       </small>
@@ -421,34 +459,45 @@ export function Agent({
                   ))}
                 </div>
                 {reviewing && (
-                  <div className="plan-actions">
-                    <Button
-                      disabled={mutate.isPending}
-                      onClick={() => mutate.mutate({ kind: "reject" })}
-                    >
-                      <X size={15} />
-                      拒绝计划
-                    </Button>
-                    <Button
-                      disabled={mutate.isPending || !edited}
-                      onClick={() => mutate.mutate({ kind: "save" })}
-                    >
-                      <Check size={15} />
-                      保存调整
-                    </Button>
-                    <Button
-                      variant="default"
-                      disabled={mutate.isPending || !selected.length}
-                      onClick={() =>
-                        highRisk
-                          ? setRiskDialog(true)
-                          : mutate.mutate({ kind: "approve" })
-                      }
-                    >
-                      <Play size={15} />
-                      {mutate.isPending ? "执行中…" : "批准整个计划并执行"}
-                    </Button>
-                  </div>
+                  <>
+                    {!tagImpactKnown && (
+                      <p className="notice warning">
+                        标签删除的关联快照不完整，请刷新并前往整理审阅页面检查后再批准。
+                      </p>
+                    )}
+                    <div className="plan-actions">
+                      <Button
+                        disabled={mutate.isPending}
+                        onClick={() => mutate.mutate({ kind: "reject" })}
+                      >
+                        <X size={15} />
+                        拒绝计划
+                      </Button>
+                      <Button
+                        disabled={mutate.isPending || !edited}
+                        onClick={() => mutate.mutate({ kind: "save" })}
+                      >
+                        <Check size={15} />
+                        保存调整
+                      </Button>
+                      <Button
+                        variant="default"
+                        disabled={
+                          mutate.isPending ||
+                          !selected.length ||
+                          !tagImpactKnown
+                        }
+                        onClick={() =>
+                          highRisk
+                            ? setRiskDialog(true)
+                            : mutate.mutate({ kind: "approve" })
+                        }
+                      >
+                        <Play size={15} />
+                        {mutate.isPending ? "执行中…" : "批准整个计划并执行"}
+                      </Button>
+                    </div>
+                  </>
                 )}
                 {["completed", "done"].includes(run.data.status) && (
                   <div className="plan-actions">
@@ -499,13 +548,13 @@ export function Agent({
         open={riskDialog}
         onOpenChange={setRiskDialog}
         title="确认高风险操作"
-        description={`编辑后的计划包含软删除，将影响 ${selected.filter((o) => o.type === "trash_documents").flatMap((o) => o.target_ids).length} 个文档。它们会进入回收站。`}
+        description={`所选计划包含删除操作：${deletionImpact}。执行后可撤销此次整理，后续人工修改发生冲突时会阻止撤销。`}
       >
         <div className="dialog-actions">
           <Button onClick={() => setRiskDialog(false)}>返回审阅</Button>
           <Button
             variant="danger"
-            disabled={mutate.isPending}
+            disabled={mutate.isPending || !tagImpactKnown}
             onClick={() => mutate.mutate({ kind: "approve", confirmed: true })}
           >
             明确确认删除并执行整批计划

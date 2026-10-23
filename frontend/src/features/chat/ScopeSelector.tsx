@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 import { BookOpen, ChevronDown, FolderOpen, Tags } from "lucide-react";
 import type { Folder, KnowledgeBase, Tag } from "../../lib/api";
 import { Button } from "../../components/ui/button";
@@ -8,6 +8,13 @@ import { Checkbox } from "../../components/ui/checkbox";
 function toggle(ids: string[], id: string, checked: boolean) {
   return checked ? [...ids, id] : ids.filter((value) => value !== id);
 }
+
+const scopeTabs = [
+  { id: "kbs", label: "知识库", icon: BookOpen },
+  { id: "folders", label: "文件夹", icon: FolderOpen },
+  { id: "tags", label: "标签", icon: Tags },
+] as const;
+type ScopeTab = (typeof scopeTabs)[number]["id"];
 
 export function ScopeSelector({
   knowledgeBases,
@@ -41,6 +48,9 @@ export function ScopeSelector({
   onIncludeDescendantsChange: (value: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<ScopeTab>("kbs");
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const id = useId();
   const currentFolders = folders.filter(
     (folder) => !folder.deleted_at && folder.kb_id === currentKb.id,
   );
@@ -81,11 +91,54 @@ export function ScopeSelector({
             当前对话的范围已固定，可在历史中创建新对话来调整。
           </p>
         )}
-        <section className="scope-section" aria-labelledby="scope-kbs">
-          <h3 id="scope-kbs">
-            <BookOpen size={16} />
-            知识库
-          </h3>
+        <div className="scope-tabs" role="tablist" aria-label="范围分类">
+          {scopeTabs.map((item, index) => (
+            <button
+              key={item.id}
+              ref={(node) => {
+                tabRefs.current[index] = node;
+              }}
+              id={`${id}-${item.id}-tab`}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              aria-controls={`${id}-${item.id}-panel`}
+              tabIndex={tab === item.id ? 0 : -1}
+              onClick={() => setTab(item.id)}
+              onKeyDown={(event) => {
+                let next = index;
+                if (event.key === "ArrowRight")
+                  next = (index + 1) % scopeTabs.length;
+                else if (event.key === "ArrowLeft")
+                  next = (index + scopeTabs.length - 1) % scopeTabs.length;
+                else if (event.key === "Home") next = 0;
+                else if (event.key === "End") next = scopeTabs.length - 1;
+                else return;
+                event.preventDefault();
+                setTab(scopeTabs[next].id);
+                tabRefs.current[next]?.focus();
+              }}
+            >
+              <item.icon size={14} aria-hidden="true" />
+              {item.label}
+              <span>
+                {item.id === "kbs"
+                  ? kbIds.length
+                  : item.id === "folders"
+                    ? folderIds.length
+                    : tagIds.length}
+              </span>
+            </button>
+          ))}
+        </div>
+        <section
+          className="scope-section scope-tab-panel"
+          id={`${id}-kbs-panel`}
+          role="tabpanel"
+          aria-labelledby={`${id}-kbs-tab`}
+          hidden={tab !== "kbs"}
+          tabIndex={0}
+        >
           <div className="scope-choice-grid">
             {knowledgeBases
               .filter((kb) => !kb.deleted_at)
@@ -109,11 +162,15 @@ export function ScopeSelector({
             <p className="scope-empty">请至少选择一个知识库。</p>
           )}
         </section>
-        <section className="scope-section" aria-labelledby="scope-folders">
-          <h3 id="scope-folders">
-            <FolderOpen size={16} />
-            文件夹<span>{currentKb.name}</span>
-          </h3>
+        <section
+          className="scope-section scope-tab-panel"
+          id={`${id}-folders-panel`}
+          role="tabpanel"
+          aria-labelledby={`${id}-folders-tab`}
+          hidden={tab !== "folders"}
+          tabIndex={0}
+        >
+          <p className="scope-context">{currentKb.name}</p>
           <div className="scope-choice-grid">
             {currentFolders.map((folder) => (
               <label
@@ -156,11 +213,15 @@ export function ScopeSelector({
             </p>
           )}
         </section>
-        <section className="scope-section" aria-labelledby="scope-tags">
-          <h3 id="scope-tags">
-            <Tags size={16} />
-            标签<span>{currentKb.name} · 同时匹配所选标签</span>
-          </h3>
+        <section
+          className="scope-section scope-tab-panel"
+          id={`${id}-tags-panel`}
+          role="tabpanel"
+          aria-labelledby={`${id}-tags-tab`}
+          hidden={tab !== "tags"}
+          tabIndex={0}
+        >
+          <p className="scope-context">{currentKb.name} · 同时匹配所选标签</p>
           <div className="scope-choice-grid">
             {tags
               .filter((tag) => !tag.deleted_at)

@@ -60,8 +60,16 @@ export type OperationPreview = {
     kind: string;
     folder_path?: string;
     available?: boolean;
+    usage_count?: number;
+    affected_documents?: AffectedDocument[];
   }[];
   destination_path?: string;
+};
+export type AffectedDocument = {
+  id: string;
+  name: string;
+  available: boolean;
+  deleted: boolean;
 };
 export type ReviewPlan = {
   id: string;
@@ -73,6 +81,7 @@ export type ReviewPlan = {
     expected_changes: number;
     risk_level: string;
     base_versions: Record<string, number>;
+    base_tag_links?: Record<string, string[]>;
   };
   preview?: OperationPreview[];
 };
@@ -231,4 +240,37 @@ export const operationLabels: Record<string, string> = {
   rename_document: "重命名文档",
   rename_folder: "重命名文件夹",
   trash_documents: "移到回收站",
+  trash_empty_folders: "删除空文件夹",
+  delete_tags: "删除标签",
 };
+
+export function operationTagDocuments(
+  op: Operation,
+  preview?: OperationPreview,
+) {
+  return [
+    ...new Map(
+      (preview?.targets || [])
+        .filter((target) => op.target_ids.includes(target.id))
+        .flatMap((target) => target.affected_documents || [])
+        .map((document) => [document.id, document]),
+    ).values(),
+  ];
+}
+
+export function deletionPreviewComplete(
+  op: Operation,
+  preview?: OperationPreview,
+) {
+  if (op.type !== "delete_tags") return true;
+  return op.target_ids.every((id) => {
+    const target = preview?.targets.find((item) => item.id === id);
+    return (
+      !!target &&
+      typeof target.usage_count === "number" &&
+      target.usage_count >= 0 &&
+      target.affected_documents?.length === target.usage_count &&
+      target.affected_documents.every((document) => document.available)
+    );
+  });
+}

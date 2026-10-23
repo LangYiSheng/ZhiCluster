@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Agent } from "./Agent";
+import type { Operation } from "../../lib/api";
 const operations = [
   {
     operation_id: "rename-1",
@@ -20,13 +21,17 @@ let requests: {
   method: string;
   body: Record<string, unknown>;
 }[] = [];
-function setup(ops = operations) {
+function setup(
+  ops: Operation[] = operations,
+  extraPayload: { base_tag_links?: Record<string, string[]> } = {},
+) {
   const payload = {
     summary: "待审批计划",
     operations: ops,
     expected_changes: 1,
     risk_level: "low",
     base_versions: { "doc-1": 1 },
+    ...extraPayload,
   };
   let version = 1;
   vi.stubGlobal(
@@ -136,6 +141,48 @@ describe("Agent整批审批前端（明确使用受控测试响应）", () => {
         requests.find((r) => r.path.endsWith("/approve"))?.body
           .confirm_high_risk,
       ).toBe(true),
+    );
+  });
+  it("新标签删除先显示影响关联，再经独立确认批准", async () => {
+    setup(
+      [
+        {
+          ...operations[0],
+          type: "delete_tags",
+          target_ids: ["tag-1"],
+          params: {},
+          description: "删除废弃标签",
+        },
+      ],
+      { base_tag_links: { "tag-1": ["doc-1", "doc-2"] } },
+    );
+    const user = userEvent.setup();
+    await screen.findByText("删除标签");
+    await user.click(
+      screen.getByRole("button", { name: "批准整个计划并执行" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "确认高风险操作" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/删除 1 个标签，并移除 2 份文档上的关联/),
+    ).toBeVisible();
+    expect(
+      requests.some(
+        (request) =>
+          request.method === "PATCH" || request.path.endsWith("/approve"),
+      ),
+    ).toBe(false);
+    await user.click(
+      screen.getByRole("button", { name: "明确确认删除并执行整批计划" }),
+    );
+    await waitFor(() =>
+      expect(
+        requests.find((request) => request.path.endsWith("/approve"))?.body,
+      ).toEqual({
+        plan_version: 1,
+        confirm_high_risk: true,
+      }),
     );
   });
 });

@@ -20,6 +20,7 @@ import {
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightOpen,
   Search,
   Settings2,
   Trash2,
@@ -134,7 +135,11 @@ export function App() {
             : view === "document"
               ? "文档管理"
               : "知识对话";
-  const referencesOpen = references.tabs.length > 0;
+  const referencesOpen = references.tabs.length > 0 && !references.collapsed;
+  const lastDocument = references.tabs
+    .filter((tab) => tab.kind === "document")
+    .at(-1);
+  const [resizing, setResizing] = useState(false);
   const filesWidth = Math.max(380, ui.filesWidth);
   useEffect(() => {
     const system = window.matchMedia("(prefers-color-scheme: dark)");
@@ -174,7 +179,7 @@ export function App() {
   }, [actualKbId]);
 
   function updateReferences(action: ReferenceAction) {
-    if (action.type === "clear") citationRequest.current += 1;
+    citationRequest.current += 1;
     dispatchReference(action);
   }
   function chooseKb(id: string) {
@@ -198,6 +203,7 @@ export function App() {
   }
   function openLibrary() {
     if (!kb) return;
+    citationRequest.current += 1;
     setMobileLibrary(false);
     dispatchReference({
       type: "open",
@@ -230,6 +236,7 @@ export function App() {
     });
   }
   function openDoc(doc: Document, read = false) {
+    citationRequest.current += 1;
     if (view === "chat") {
       referenceDocument(doc, read);
       return;
@@ -268,6 +275,7 @@ export function App() {
     event: PointerEvent<HTMLDivElement>,
   ) {
     event.preventDefault();
+    setResizing(true);
     const start = event.clientX;
     const initial = kind === "library" ? ui.libraryWidth : filesWidth;
     function move(pointer: globalThis.PointerEvent) {
@@ -281,25 +289,36 @@ export function App() {
     function stop() {
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", stop);
+      document.removeEventListener("pointercancel", stop);
+      setResizing(false);
     }
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", stop, { once: true });
+    document.addEventListener("pointercancel", stop, { once: true });
   }
   const layoutStyle = {
     "--library-width": `${ui.sidebarOpen ? ui.libraryWidth : 0}px`,
+    "--library-panel-width": `${ui.libraryWidth}px`,
     "--reference-width": `${filesWidth}px`,
+    "--reference-column":
+      view === "chat" && kb
+        ? referencesOpen
+          ? "calc(min(var(--reference-width), 43vw) + 56px)"
+          : "56px"
+        : "0px",
   } as CSSProperties;
   if (location.pathname === "/agent")
     return <Navigate replace to={`/chat${kbId ? `?kb=${kbId}` : ""}`} />;
   return (
     <div
-      className={`app-shell ${!ui.sidebarOpen ? "sidebar-collapsed" : ""} ${mobileLibrary ? "mobile-library-open" : ""} ${view === "settings" ? "settings-mode" : ""} ${referencesOpen && view === "chat" ? "references-open" : ""}`}
+      className={`app-shell ${!ui.sidebarOpen ? "sidebar-collapsed" : ""} ${mobileLibrary ? "mobile-library-open" : ""} ${view === "settings" ? "settings-mode" : ""} ${referencesOpen && view === "chat" ? "references-open" : ""} ${view === "chat" && kb ? "has-reference-dock" : ""} ${resizing ? "is-resizing" : ""}`}
       style={layoutStyle}
     >
       <aside
         className="library-slot"
         aria-label="知识库与主导航"
         hidden={view === "settings"}
+        inert={!ui.sidebarOpen && !mobileLibrary}
       >
         <div className="sidebar-brand">
           <img src="/favicon.svg" alt="" />
@@ -579,11 +598,11 @@ export function App() {
             ))}
         </div>
       </main>
-      {referencesOpen && (
+      {kb && (
         <>
           <div
             className="resize-handle reference-resize"
-            hidden={view !== "chat"}
+            hidden={view !== "chat" || !referencesOpen}
             role="separator"
             aria-label="调整参考资料宽度"
             aria-orientation="vertical"
@@ -602,12 +621,67 @@ export function App() {
               }
             }}
           />
-          <ReferencePane
-            state={references}
-            dispatch={updateReferences}
-            active={view === "chat"}
-            onOpen={openDoc}
-          />
+          <div className="reference-dock" hidden={view !== "chat"}>
+            <ReferencePane
+              state={references}
+              dispatch={updateReferences}
+              active={view === "chat" && referencesOpen}
+              onOpen={openDoc}
+            />
+            <nav className="reference-rail" aria-label="资料侧栏快捷操作">
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={referencesOpen ? "收起资料侧栏" : "展开资料侧栏"}
+                title={referencesOpen ? "收起资料侧栏" : "展开资料侧栏"}
+                aria-expanded={referencesOpen}
+                onClick={() =>
+                  referencesOpen
+                    ? updateReferences({ type: "collapse" })
+                    : references.tabs.length
+                      ? updateReferences({ type: "expand" })
+                      : openLibrary()
+                }
+              >
+                <PanelRightOpen
+                  size={17}
+                  className={referencesOpen ? "rail-collapse-icon" : ""}
+                />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="打开资料管理"
+                title="资料管理"
+                onClick={openLibrary}
+              >
+                <FolderOpen size={17} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="恢复最近打开的文档"
+                title={lastDocument?.title || "打开一份文档后可在这里恢复"}
+                disabled={!lastDocument}
+                onClick={() =>
+                  lastDocument &&
+                  updateReferences({ type: "activate", id: lastDocument.id })
+                }
+              >
+                <BookOpen size={17} />
+              </Button>
+              <div className="rail-spacer" />
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="前往整理审阅"
+                title="整理审阅"
+                onClick={() => to("review")}
+              >
+                <ListChecks size={17} />
+              </Button>
+            </nav>
+          </div>
         </>
       )}
       {mobileLibrary && view !== "settings" && (

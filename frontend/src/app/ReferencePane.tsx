@@ -76,6 +76,17 @@ export function ReferencePane({
   onOpen: (doc: Document, reader?: boolean) => void;
 }) {
   const pane = useRef<HTMLElement>(null);
+  const closeFocus = useRef(false);
+  useEffect(() => {
+    if (!closeFocus.current) return;
+    closeFocus.current = false;
+    const target = active
+      ? pane.current?.querySelector<HTMLElement>(
+          '[role="tab"][aria-selected="true"]',
+        ) || pane.current?.querySelector<HTMLElement>(".reference-close")
+      : document.querySelector<HTMLElement>(".reference-rail button");
+    target?.focus();
+  }, [active, state.activeId, state.tabs.length]);
   useEffect(() => {
     const element = pane.current;
     if (!active || !element) return;
@@ -91,8 +102,15 @@ export function ReferencePane({
     narrow.addEventListener("change", focusClose);
     return () => {
       narrow.removeEventListener("change", focusClose);
-      if (focusedOnMobile && previous?.getClientRects().length)
-        previous.focus();
+      if (focusedOnMobile || element.contains(document.activeElement)) {
+        const target =
+          focusedOnMobile &&
+          previous?.isConnected &&
+          !element.contains(previous)
+            ? previous
+            : document.querySelector<HTMLElement>(".reference-rail button");
+        target?.focus();
+      }
     };
   }, [active]);
   const multiple = state.tabs.length > 1;
@@ -118,9 +136,10 @@ export function ReferencePane({
   return (
     <aside
       ref={pane}
-      className={`reference-pane ${multiple ? "has-tabs" : ""}`}
+      className={`reference-pane ${multiple ? "has-tabs" : ""} ${!active ? "is-collapsed" : ""}`}
       aria-label="参考资料"
-      hidden={!active}
+      aria-hidden={!active}
+      inert={!active}
       onKeyDown={(event) => {
         if (
           !window.matchMedia("(max-width: 780px)").matches ||
@@ -130,7 +149,7 @@ export function ReferencePane({
           return;
         if (event.key === "Escape") {
           event.preventDefault();
-          dispatch({ type: "clear" });
+          dispatch({ type: "collapse" });
         }
         if (event.key !== "Tab") return;
         const controls = Array.from(
@@ -156,7 +175,8 @@ export function ReferencePane({
         variant="ghost"
         size="icon"
         aria-label="关闭参考资料"
-        onClick={() => dispatch({ type: "clear" })}
+        title="收起资料侧栏，保留已打开的资料"
+        onClick={() => dispatch({ type: "collapse" })}
       >
         <X size={17} />
       </Button>
@@ -183,7 +203,10 @@ export function ReferencePane({
                 variant="ghost"
                 size="icon"
                 aria-label={`关闭 ${tab.title}`}
-                onClick={() => dispatch({ type: "close", id: tab.id })}
+                onClick={() => {
+                  closeFocus.current = true;
+                  dispatch({ type: "close", id: tab.id });
+                }}
               >
                 <X size={13} />
               </Button>

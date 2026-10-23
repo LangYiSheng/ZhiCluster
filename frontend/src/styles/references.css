@@ -7,16 +7,53 @@
   overflow: hidden;
 }
 .app-shell.references-open {
-  grid-template-columns: var(--library-width) 0 minmax(0, 1fr) 0 minmax(
-      0,
-      min(var(--reference-width), 43vw)
+  grid-template-columns: var(--library-width) 0 minmax(0, 1fr) 0 var(
+      --reference-column,
+      0px
     );
 }
-.references-open .workspace {
+.has-reference-dock .workspace {
   margin-right: 0;
   border-right: 0;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
+}
+.reference-dock {
+  grid-column: 5;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  margin: 12px 12px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 0 var(--radius-shell) var(--radius-shell) 0;
+  background: var(--color-canvas);
+}
+.reference-rail {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 42px;
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 4px;
+  border-left: 1px solid var(--border);
+}
+.reference-rail .button {
+  min-width: 32px;
+  width: 32px;
+  min-height: 32px;
+  height: 32px;
+}
+.rail-spacer {
+  flex: 1;
+}
+.rail-collapse-icon {
+  transform: rotate(180deg);
 }
 .chat-main {
   min-width: 0;
@@ -30,18 +67,26 @@
   z-index: 30;
 }
 .reference-pane {
-  grid-column: 5;
-  grid-row: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--color-canvas);
   overflow: hidden;
-  position: relative;
-  margin: 12px 12px 12px 0;
-  border: 1px solid var(--border);
-  border-radius: 0 var(--radius-shell) var(--radius-shell) 0;
+  position: absolute;
+  inset: 0 42px 0 0;
+  width: min(var(--reference-width), 43vw);
+  transition:
+    opacity 180ms ease,
+    visibility 0s;
+}
+.reference-pane.is-collapsed {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease,
+    visibility 0s 240ms;
 }
 .reference-close {
   position: absolute;
@@ -180,6 +225,7 @@
     width: min(520px, calc(100% - 20px));
     border-radius: 14px 0 0 14px;
     box-shadow: -12px 0 40px var(--color-shadow);
+    left: auto;
   }
   .reference-pane .reader-container > .page-scroll {
     padding: 16px;

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CitationList, MessageContent } from "./MessageContent";
 import { ChatProgress } from "./ChatProgress";
@@ -93,4 +93,89 @@ it("来源列表只显示实际引用的条目，处理完成自动收起并能�
   await userEvent.click(screen.getByText("已完成资料查阅"));
   expect(screen.getByText("关键词检索")).toBeVisible();
   expect(screen.getByText("42 ms")).toBeVisible();
+});
+
+it("来源默认单行预览，展开后显示全部真实引用且失效来源无法打开", async () => {
+  const citations = [
+    ...sources,
+    ...[9, 10].map((ordinal) => ({
+      ...sources[0],
+      ordinal,
+      chunk_id: `chunk-${ordinal}`,
+      document_name: `附件${ordinal}.pdf`,
+    })),
+  ];
+  const open = vi.fn();
+  render(
+    <CitationList
+      content="依据[S5][S8][S9][S10]"
+      citations={citations}
+      onCitation={open}
+    />,
+  );
+  const list = screen.getByRole("list");
+  expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+  expect(screen.queryByText("附件10.pdf")).not.toBeInTheDocument();
+  await userEvent.click(
+    within(list).getByRole("button", { name: /查看来源 5：推免细则/ }),
+  );
+  expect(open).toHaveBeenCalledWith(citations[0]);
+  const expand = screen.getByRole("button", { name: "展开 4 项来源" });
+  expect(expand).toHaveAttribute("aria-expanded", "false");
+  expand.focus();
+  await userEvent.keyboard("{Enter}");
+  expect(screen.getByRole("button", { name: "收起来源" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(within(list).getAllByRole("listitem")).toHaveLength(4);
+  expect(
+    within(list).getByRole("button", { name: /已删除文档/ }),
+  ).toBeDisabled();
+  await userEvent.click(
+    within(list).getByRole("button", { name: /查看来源 10：附件10/ }),
+  );
+  expect(open).toHaveBeenLastCalledWith(citations[3]);
+  await userEvent.click(screen.getByRole("button", { name: "收起来源" }));
+  expect(screen.queryByText("附件10.pdf")).not.toBeInTheDocument();
+});
+
+it("过程只显示实际查询与工具字段，常规检索实现文案隐藏而必要降级保留", () => {
+  const message = {
+    id: "m",
+    role: "assistant",
+    content: "",
+    status: "processing",
+    retrieval: {
+      execution: [
+        {
+          stage: "search",
+          label: "查找相关资料",
+          status: "completed" as const,
+          query: "推免名额",
+          tool_name: "search_knowledge",
+          call_id: "call-1",
+          round: 2,
+          source_count: 4,
+        },
+      ],
+      notice: "关键词 + 当前模型精确 cosine 检索，复合问题分路融合",
+    },
+  };
+  const mounted = render(<ChatProgress message={message} />);
+  expect(screen.getByText("推免名额")).toBeVisible();
+  expect(screen.getByText("搜索知识库 · 第 2 轮")).toBeVisible();
+  expect(screen.queryByText(/cosine/)).not.toBeInTheDocument();
+  mounted.rerender(
+    <ChatProgress
+      message={{
+        ...message,
+        retrieval: {
+          ...message.retrieval,
+          notice: "仅关键词搜索：未配置 Embedding 服务",
+        },
+      }}
+    />,
+  );
+  expect(screen.getByText("尚未配置向量模型，可前往设置连接。")).toBeVisible();
 });

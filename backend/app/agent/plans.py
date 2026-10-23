@@ -79,8 +79,18 @@ class TrashDocuments(OperationBase):
     params: EmptyParams = Field(default_factory=EmptyParams)
 
 
+class TrashEmptyFolders(OperationBase):
+    type: Literal["trash_empty_folders"] = "trash_empty_folders"
+    params: EmptyParams = Field(default_factory=EmptyParams)
+
+
+class DeleteTags(OperationBase):
+    type: Literal["delete_tags"] = "delete_tags"
+    params: EmptyParams = Field(default_factory=EmptyParams)
+
+
 Operation = Annotated[
-    CreateFolder | MoveDocuments | UpdateDocumentTags | RenameDocument | RenameFolder | TrashDocuments,
+    CreateFolder | MoveDocuments | UpdateDocumentTags | RenameDocument | RenameFolder | TrashDocuments | TrashEmptyFolders | DeleteTags,
     Field(discriminator="type"),
 ]
 
@@ -131,15 +141,20 @@ class AgentPlanData(PlanDraft):
     risk_level: Literal["low", "high"] = "low"
     status: str = "pending_review"
     base_versions: dict[str, int] = Field(default_factory=dict)
+    # Server-owned review snapshot. PlanDraft/PlanEdit cannot supply these links.
+    base_tag_links: dict[str, list[str]] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @model_validator(mode="after")
     def derive_impact(self):
         enabled = [op for op in self.operations if op.enabled]
-        self.risk_level = "high" if any(op.type == "trash_documents" for op in enabled) else "low"
+        self.risk_level = "high" if any(op.type in {"trash_documents", "trash_empty_folders", "delete_tags"} for op in enabled) else "low"
         self.expected_changes = len({target for op in enabled for target in op.target_ids}) + sum(
             op.type == "create_folder" for op in enabled
         )
+        self.expected_changes += len({doc for op in enabled if op.type == "delete_tags"
+                                      for target in op.target_ids for doc in self.base_tag_links.get(target, [])}
+                                     - {target for op in enabled for target in op.target_ids})
         return self
 
 

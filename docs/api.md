@@ -202,12 +202,14 @@ LLM 与 Embedding 各自独立处理 `api_key`：省略、`null` 或空字符串
 | PATCH | `/api/conversations/{conversation_id}` | `{title}` |
 | DELETE | `/api/conversations/{conversation_id}` | 软删除会话，停止进行中的生成 |
 | GET | `/api/conversations/{conversation_id}/messages` | 消息、检索观测/执行阶段/事件水位，以及经过权限/删除状态校验的真实 `citations` |
-| POST | `/api/conversations/{conversation_id}/messages` | `{content}`；202；创建 assistant 消息和独立后台任务 |
+| POST | `/api/conversations/{conversation_id}/messages` | `{content,retrieval_mode?:"direct"或"model"}`；202；默认 direct，创建 assistant 消息和独立后台任务 |
 | GET | `/api/conversations/{conversation_id}/events` | 实际执行阶段 progress、合批 token、候选/最终 citation、完成/错误 SSE |
 
 同一会话只允许一个 queued/processing 回复；后续提交返回 409。无任何可访问知识库时创建会话返回 `empty_scope`。答案引用仅从检索上下文 `[S1]` 等白名单标记构造；无效来源标记会被替换。PDF 使用页码锚点，MD/TXT 使用行号，DOCX 使用段落，不虚构 DOCX 页码。不可访问来源返回 `available=false`，不会继续返回其 snippet。
 
 消息的 `retrieval.execution` 保存 `{stage,label,status,elapsed_ms?,source_count?,...}` 阶段列表，`retrieval.stream_sequence` 是该消息最近持久化事件的水位。实际阶段包括 scope、keyword、可选 embedding、ranking、可选 reranking、context、generation；无命中、未配置能力或失败时不会伪造未执行阶段。`progress` 事件携带 `message_id` 和完整 `steps` 快照，`completed/error` 也携带最终步骤；这些内容不包含模型隐藏推理。
+
+`retrieval_mode=model` 只影响本条消息，不修改保存的会话范围或连接配置。已声明支持工具的模型使用只读 `search_knowledge({query})`；未声明时使用明确标识的 JSON 检索规划。最多两轮规划和三次实际搜索尝试（失败也计数），规划请求每轮至多12秒、不重试。重复搜索词去重，失败在剩余预算内回退直接检索。模型不能传入范围字段；每次模型和检索等待后复核用户原选范围及权限。执行阶段可含 `query/tool_name/call_id/round`，检索观测保存 `retrieval_strategy` 和 `model_retrieval`，不返回模型隐藏推理。默认 direct 不增加规划调用。
 
 生成前 `citation` 可携带 `candidate:true`，此时消息快照也能读到真实候选引用。回答完成时只保留正文实际使用的引用。token 指定对应 `message_id` 与 UTF-16 字符 `offset`，首次片段立即保存，后续约 120 ms 或 256 字符合批；调用方应将片段合入同一消息，避免把快照中的正文再拼一遍。前端以约 60 ms 的节奏更新 Markdown，完成后折叠过程并保留紧凑来源列表；代码和链接内的 `[Sx]` 不转换成引用按钮。
 
@@ -237,7 +239,9 @@ LLM 与 Embedding 各自独立处理 `api_key`：省略、`null` 或空字符串
 | POST | `/api/agent/runs/{run_id}/undo` | 检查版本与后续变更后撤销整次整理 |
 | GET | `/api/agent/runs/{run_id}/events` | 活动、计划等待审批、执行结果 SSE |
 
-计划操作含稳定 `operation_id`、`type`、`target_ids`、`params`、`description`、`dependencies`、`enabled`、`reversible`。支持 `create_folder`、`move_documents`、`update_document_tags`、`rename_document`、`rename_folder`、`trash_documents`。临时文件夹使用 `ref:<创建操作ID>`，并显式依赖创建操作。编辑可以取消操作及调整目录/标签等参数；操作类型和身份不可替换。
+计划操作含稳定 `operation_id`、`type`、`target_ids`、`params`、`description`、`dependencies`、`enabled`、`reversible`。支持 `create_folder`、`move_documents`、`update_document_tags`、`rename_document`、`rename_folder`、`trash_documents`、`trash_empty_folders`、`delete_tags`。临时文件夹使用 `ref:<创建操作ID>`，并显式依赖创建操作。编辑可以取消操作及调整目录/标签等参数；操作类型和身份不可替换，删除操作只能保留或取消原规划目标。
+
+`trash_empty_folders` 和 `delete_tags` 的 params 为 `{}`，target_ids 分别为同库目录或标签。空目录在规划、审批及最终执行时必须无有效文档和子目录；不支持同方案先清空非空目录再删除。标签删除移除标签及其文档关联，预览含受影响文档。服务端保存 `base_tag_links` 与关联文档版本，最多500条关联；这些快照不接受客户端编辑。新增关联、数量漂移或版本变化均拒绝执行。两类操作均属高风险，需要额外确认；撤销恢复原目录或原标签ID、颜色、别名和关联，同名冲突或后续人工修改时拒绝覆盖。
 
 软删除风险由后端重新计算；必须额外提交 `confirm_high_risk=true`。跨库操作、审批期间版本变化、重复/非法依赖被拒绝。重复批准已完成的同一版本返回持久结果，不会再次修改实体。撤销遇到后续人工修改返回 `undo_conflict`，不覆盖新工作。
 

@@ -331,6 +331,131 @@ it("撤销遇到版本冲突显示错误，保留当前方案且不伪装成功"
   expect(screen.getByRole("dialog", { name: "撤销此次整理" })).toBeVisible();
 });
 
+it("删除标签先展示文档影响，用户确认前不发送删除，批准携带额外确认", async () => {
+  const writes: { path: string; body: Record<string, unknown> }[] = [];
+  const run: ReviewRun = {
+    ...planRun,
+    plan: {
+      ...planRun.plan!,
+      payload: {
+        ...planRun.plan!.payload,
+        operations: [
+          {
+            operation_id: "delete-1",
+            type: "delete_tags",
+            target_ids: ["old-tag"],
+            params: {},
+            dependencies: [],
+            description: "清理废弃标签",
+          },
+        ],
+        risk_level: "high",
+      },
+      preview: [
+        {
+          operation_id: "delete-1",
+          targets: [
+            {
+              id: "old-tag",
+              name: "废弃标签",
+              kind: "tag",
+              available: true,
+              usage_count: 2,
+              affected_documents: [
+                {
+                  id: "doc-1",
+                  name: "研究方法.pdf",
+                  available: true,
+                  deleted: false,
+                },
+                {
+                  id: "doc-2",
+                  name: "旧资料.md",
+                  available: true,
+                  deleted: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        writes.push({ path, body: JSON.parse(String(init.body)) });
+        return response({ status: "completed" });
+      }
+      return response([]);
+    }),
+  );
+  mount(<PlanEditor run={run} />);
+  await screen.findByText(/删除所选标签，并移除 2 份文档/);
+  await userEvent.click(screen.getByRole("button", { name: "批准所选并执行" }));
+  const dialog = screen.getByRole("dialog", { name: "确认包含删除操作的方案" });
+  expect(within(dialog).getByText("研究方法.pdf")).toBeVisible();
+  expect(within(dialog).getByText("旧资料.md（回收站）")).toBeVisible();
+  expect(within(dialog).getByText(/移除 2 份文档上的关联/)).toBeVisible();
+  expect(writes).toHaveLength(0);
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "确认删除并执行" }),
+  );
+  await waitFor(() => expect(writes).toHaveLength(1));
+  expect(writes[0]).toEqual({
+    path: "/api/agent/plans/plan-1/approve",
+    body: { plan_version: 1, confirm_high_risk: true },
+  });
+});
+
+it("标签删除缺少完整关联预览时禁用批准", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => response([])),
+  );
+  mount(
+    <PlanEditor
+      run={{
+        ...planRun,
+        plan: {
+          ...planRun.plan!,
+          payload: {
+            ...planRun.plan!.payload,
+            operations: [
+              {
+                operation_id: "delete-1",
+                type: "delete_tags",
+                target_ids: ["old-tag"],
+                params: {},
+                dependencies: [],
+                description: "清理废弃标签",
+              },
+            ],
+          },
+          preview: [
+            {
+              operation_id: "delete-1",
+              targets: [
+                {
+                  id: "old-tag",
+                  name: "废弃标签",
+                  kind: "tag",
+                  available: true,
+                  usage_count: 2,
+                  affected_documents: [],
+                },
+              ],
+            },
+          ],
+        },
+      }}
+    />,
+  );
+  await screen.findByText("标签删除的影响预览不完整，请刷新并重新审阅。");
+  expect(screen.getByRole("button", { name: "批准所选并执行" })).toBeDisabled();
+});
+
 it("自动整理只创建后台待审任务，不自动批准或修改文档", async () => {
   const requests: { path: string; body: Record<string, unknown> }[] = [];
   vi.stubGlobal(

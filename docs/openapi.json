@@ -3062,6 +3062,15 @@
             "maxLength": 16000,
             "minLength": 1,
             "title": "Content"
+          },
+          "retrieval_mode": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "model"
+            ],
+            "title": "Retrieval Mode",
+            "default": "direct"
           }
         },
         "additionalProperties": false,
@@ -3327,6 +3336,64 @@
           "name"
         ],
         "title": "CreateFolderParams"
+      },
+      "DeleteTags": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Operation Id"
+          },
+          "target_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Target Ids"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Description"
+          },
+          "dependencies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Dependencies"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "reversible": {
+            "type": "boolean",
+            "const": true,
+            "title": "Reversible",
+            "default": true
+          },
+          "type": {
+            "type": "string",
+            "const": "delete_tags",
+            "title": "Type",
+            "default": "delete_tags"
+          },
+          "params": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "description"
+        ],
+        "title": "DeleteTags"
       },
       "DocumentOut": {
         "properties": {
@@ -4342,16 +4409,24 @@
                 },
                 {
                   "$ref": "#/components/schemas/TrashDocuments"
+                },
+                {
+                  "$ref": "#/components/schemas/TrashEmptyFolders"
+                },
+                {
+                  "$ref": "#/components/schemas/DeleteTags"
                 }
               ],
               "discriminator": {
                 "propertyName": "type",
                 "mapping": {
                   "create_folder": "#/components/schemas/CreateFolder",
+                  "delete_tags": "#/components/schemas/DeleteTags",
                   "move_documents": "#/components/schemas/MoveDocuments",
                   "rename_document": "#/components/schemas/RenameDocument",
                   "rename_folder": "#/components/schemas/RenameFolder",
                   "trash_documents": "#/components/schemas/TrashDocuments",
+                  "trash_empty_folders": "#/components/schemas/TrashEmptyFolders",
                   "update_document_tags": "#/components/schemas/UpdateDocumentTags"
                 }
               }
@@ -5281,6 +5356,64 @@
           "description"
         ],
         "title": "TrashDocuments"
+      },
+      "TrashEmptyFolders": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Operation Id"
+          },
+          "target_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Target Ids"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Description"
+          },
+          "dependencies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Dependencies"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "reversible": {
+            "type": "boolean",
+            "const": true,
+            "title": "Reversible",
+            "default": true
+          },
+          "type": {
+            "type": "string",
+            "const": "trash_empty_folders",
+            "title": "Type",
+            "default": "trash_empty_folders"
+          },
+          "params": {
+            "$ref": "#/components/schemas/EmptyParams"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "description"
+        ],
+        "title": "TrashEmptyFolders"
       },
       "UpdateDocumentTags": {
         "properties": {
