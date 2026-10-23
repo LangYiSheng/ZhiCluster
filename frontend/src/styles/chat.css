@@ -3,28 +3,6 @@
   display: flex;
   flex-direction: column;
 }
-.conversation-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border-bottom: 1px solid var(--border);
-  min-height: 49px;
-  padding: 10px 28px;
-}
-.conversation-toolbar > select {
-  max-width: 230px;
-  border: 0;
-  padding-left: 0;
-  background: transparent;
-  color: var(--muted);
-  font-size: var(--text-body);
-}
-.conversation-toolbar > .button {
-  height: 26px;
-  min-height: 26px;
-  width: 26px;
-  min-width: 26px;
-}
 .chat-messages {
   flex: 1;
   min-height: 0;
@@ -109,11 +87,6 @@
   font-weight: 500;
   padding-left: 7px;
 }
-.chat-welcome > p.tiny {
-  margin-top: 17px;
-  font-size: var(--text-caption);
-  max-width: 420px;
-}
 .chat-composer-wrap {
   padding: 0 34px 16px;
   max-width: 900px;
@@ -160,35 +133,6 @@
   color: var(--muted);
   margin-top: 10px;
   letter-spacing: 0.2px;
-}
-.scope-selector {
-  position: relative;
-  color: var(--muted);
-  margin: 0 0 9px 3px;
-  font-size: var(--text-caption);
-}
-.scope-selector > summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  list-style: none;
-}
-.scope-options {
-  padding: 15px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--background);
-  box-shadow: var(--shadow);
-  position: absolute;
-  bottom: 25px;
-  max-height: 250px;
-  overflow: auto;
-  min-width: 250px;
-  z-index: 15;
-}
-.scope-options label {
-  font-size: var(--text-caption);
 }
 .message {
   display: flex;
@@ -347,4 +291,190 @@
   max-width: 840px;
   margin-left: auto;
   margin-right: auto;
+}
+
+.scope-selector.button {
+  width: auto;
+  height: auto;
+  min-height: 30px;
+  max-width: 100%;
+  padding: 5px 8px;
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: var(--text-caption);
+  text-align: left;
+}
+.scope-selector > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scope-panel {
+  display: grid;
+  gap: 22px;
+}
+.scope-saved-note,
+.scope-empty {
+  color: var(--muted);
+  font-size: var(--text-caption);
+  line-height: 1.7;
+}
+.scope-saved-note {
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: var(--panel-subtle);
+}
+.scope-section + .scope-section {
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+.scope-section h3 {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  font-size: var(--text-body);
+  margin-bottom: 12px;
+}
+.scope-section h3 > svg {
+  color: var(--muted);
+}
+.scope-section h3 > span {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: var(--text-caption);
+  overflow-wrap: anywhere;
+}
+.scope-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+label.scope-choice {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font-size: var(--text-body);
+  font-weight: 400;
+  cursor: pointer;
+  min-width: 0;
+  background: var(--panel-subtle);
+}
+.scope-choice > span {
+  overflow-wrap: anywhere;
+}
+.scope-choice.is-selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.scope-choice:has(input:disabled) {
+  cursor: default;
+}
+.scope-choice:has(input:focus-visible) {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.scope-empty,
+label.scope-descendants {
+  margin-top: 10px;
+}
+.scope-panel .dialog-actions {
+  margin-top: 0;
+}
+.conversation-history {
+  display: grid;
+  gap: 16px;
+}
+.history-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--text-caption);
+}
+.history-list {
+  display: grid;
+  gap: 10px;
+}
+.history-card {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+  padding-right: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--panel-subtle);
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.history-card:hover {
+  background: var(--hover);
+}
+.history-card.is-current {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.history-card-select {
+  flex: 1;
+  min-width: 0;
+  padding: 15px;
+  text-align: left;
+  border-radius: var(--radius-control);
+}
+.history-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.history-card-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+.history-card-heading > svg {
+  color: var(--muted);
+}
+.history-card-heading > svg:last-child:not(:first-child) {
+  margin-left: auto;
+  color: var(--primary);
+}
+.history-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: var(--text-caption);
+}
+.history-card-meta > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.history-card-meta:empty {
+  display: none;
+}
+@media (max-width: 520px) {
+  .scope-choice-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .scope-section h3 > span {
+    width: 100%;
+    padding-left: 23px;
+  }
+  .history-card-select {
+    padding: 12px;
+  }
 }

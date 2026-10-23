@@ -1,14 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowUp,
-  BookOpen,
-  MessageSquare,
-  MoreHorizontal,
-  Plus,
-  Sparkles,
-  Trash2,
-} from "lucide-react";
+import { ArrowUp, BookOpen, MessageSquare, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
@@ -25,20 +17,28 @@ import { useEvents } from "../../lib/events";
 import { useSessionDraft } from "../../lib/useSessionDraft";
 import { Button } from "../../components/ui/button";
 import { Dialog } from "../../components/ui/dialog";
-import { Menu, MenuItem } from "../../components/ui/menu";
 import { ErrorState, Loading } from "../../components/common";
+import { ConversationHistory } from "./ConversationHistory";
+import { ScopeSelector } from "./ScopeSelector";
+const ignoreHistoryChange = () => {};
 export function Chat({
   kb,
   knowledgeBases,
   tags,
   folders,
   onCitation,
+  active = true,
+  historyOpen = false,
+  onHistoryOpenChange = ignoreHistoryChange,
 }: {
   kb: KnowledgeBase;
   knowledgeBases: KnowledgeBase[];
   tags: Tag[];
   folders: Folder[];
   onCitation: (citation: Citation) => void;
+  active?: boolean;
+  historyOpen?: boolean;
+  onHistoryOpenChange?: (open: boolean) => void;
 }) {
   const qc = useQueryClient();
   const [conversationId, setConversationId] = useState(
@@ -52,6 +52,12 @@ export function Chat({
   const [includeDescendants, setIncludeDescendants] = useState(true);
   const [stream, setStream] = useState("");
   const [rename, setRename] = useState<Conversation | null>(null);
+  useEffect(() => {
+    if (!active) {
+      setRename(null);
+      onHistoryOpenChange(false);
+    }
+  }, [active, onHistoryOpenChange]);
   const conversations = useQuery({
     queryKey: ["conversations"],
     queryFn: () => api<Conversation[]>("/conversations"),
@@ -87,21 +93,6 @@ export function Chat({
     localStorage.setItem(`conversation:${kb.id}`, conversationId);
     setStream("");
   }, [conversationId, kb.id]);
-  const create = useMutation({
-    mutationFn: () =>
-      api<Conversation>(
-        "/conversations",
-        json("POST", {
-          title: "新对话",
-          scope: draftScope,
-        }),
-      ),
-    onSuccess: (c) => {
-      setConversationId(c.id);
-      void qc.invalidateQueries({ queryKey: ["conversations"] });
-    },
-    onError: (e) => toast.error(errorText(e)),
-  });
   const send = useMutation({
     mutationFn: async () => {
       let id = conversationId;
@@ -140,8 +131,10 @@ export function Chat({
       method: string;
       body?: unknown;
     }) => api(`/conversations/${id}`, json(method, body)),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       setRename(null);
+      if (variables.method === "DELETE" && variables.id === conversationId)
+        setConversationId("");
       void qc.invalidateQueries({ queryKey: ["conversations"] });
     },
     onError: (e) => toast.error(errorText(e)),
@@ -168,65 +161,26 @@ export function Chat({
     );
   return (
     <div className="chat-container">
-      <div className="conversation-toolbar">
-        <select
-          aria-label="切换对话"
-          disabled={send.isPending || create.isPending}
-          value={conversationId}
-          onChange={(e) => setConversationId(e.target.value)}
-        >
-          <option value="">新的知识对话</option>
-          {conversations.data?.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.title}
-            </option>
-          ))}
-        </select>
-        <Button
-          size="icon"
-          variant="ghost"
-          aria-label="新建对话"
-          disabled={create.isPending || send.isPending || !scopeIds.length}
-          onClick={() => create.mutate()}
-        >
-          <Plus size={16} />
-        </Button>
-        {conversationId && (
-          <Menu
-            trigger={
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label="对话菜单"
-                disabled={send.isPending}
-              >
-                <MoreHorizontal size={16} />
-              </Button>
-            }
-          >
-            <MenuItem
-              onSelect={() =>
-                setRename(
-                  conversations.data?.find((c) => c.id === conversationId) ||
-                    null,
-                )
-              }
-            >
-              重命名对话
-            </MenuItem>
-            <MenuItem
-              danger
-              onSelect={() => {
-                manage.mutate({ id: conversationId, method: "DELETE" });
-                setConversationId("");
-              }}
-            >
-              <Trash2 size={14} />
-              删除对话
-            </MenuItem>
-          </Menu>
-        )}
-      </div>
+      <ConversationHistory
+        open={active && historyOpen}
+        onOpenChange={onHistoryOpenChange}
+        conversations={conversations.data || []}
+        currentId={conversationId}
+        knowledgeBases={knowledgeBases}
+        loading={conversations.isPending}
+        error={conversations.isError ? conversations.error : null}
+        disabled={send.isPending || manage.isPending}
+        onRetry={() => void conversations.refetch()}
+        onSelect={(id) => {
+          setConversationId(id);
+          onHistoryOpenChange(false);
+        }}
+        onRename={(conversation) => {
+          onHistoryOpenChange(false);
+          setRename(conversation);
+        }}
+        onDelete={(id) => manage.mutate({ id, method: "DELETE" })}
+      />
       <div className="chat-messages">
         {messages.isError ? (
           <ErrorState
@@ -260,9 +214,6 @@ export function Chat({
                   .join("、") || "正在读取范围"}
               </strong>
             </div>
-            <p className="tiny muted">
-              先上传资料，再提出你的问题。AI 需要在设置中连接模型服务。
-            </p>
           </div>
         ) : (
           messages.data.map((m) => (
@@ -333,109 +284,35 @@ export function Chat({
         )}
       </div>
       <div className="chat-composer-wrap">
-        {
-          <details className="scope-selector">
-            <summary>
-              <BookOpen size={13} />
-              问答范围 · {selectedKbIds.length} 个知识库
-              {selectedFolderIds.length
-                ? ` · ${selectedFolderIds.length} 个文件夹`
-                : ""}
-              {selectedTagIds.length
-                ? ` · ${selectedTagIds.length} 个标签`
-                : ""}
-            </summary>
-            <div className="scope-options">
-              {knowledgeBases
-                .filter((k) => !k.deleted_at)
-                .map((k) => (
-                  <label className="checkbox-label" key={k.id}>
-                    <input
-                      type="checkbox"
-                      disabled={!!conversationId}
-                      checked={selectedKbIds.includes(k.id)}
-                      onChange={(e) =>
-                        setScopeIds((s) =>
-                          e.target.checked
-                            ? [...s, k.id]
-                            : s.filter((id) => id !== k.id),
-                        )
-                      }
-                    />
-                    {k.name}
-                  </label>
-                ))}
-              <div className="divider" />
-              <div className="tiny muted">
-                文件夹范围（当前库；勾选下方选项可包含子目录）
-              </div>
-              {folders
-                .filter((f) => !f.deleted_at)
-                .map((f) => (
-                  <label className="checkbox-label" key={f.id}>
-                    <input
-                      type="checkbox"
-                      disabled={!!conversationId}
-                      checked={selectedFolderIds.includes(f.id)}
-                      onChange={(e) =>
-                        setScopeFolders((s) =>
-                          e.target.checked
-                            ? [...s, f.id]
-                            : s.filter((id) => id !== f.id),
-                        )
-                      }
-                    />
-                    {f.name}
-                  </label>
-                ))}
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  disabled={!!conversationId}
-                  checked={selectedIncludeDescendants}
-                  onChange={(e) => setIncludeDescendants(e.target.checked)}
-                />
-                包含所有子文件夹
-              </label>
-              {selectedFolderIds
-                .filter((id) => !folders.some((f) => f.id === id))
-                .map((id) => (
-                  <p className="tiny muted" key={id}>
-                    已保存的文件夹范围：{id}
-                  </p>
-                ))}
-              <div className="divider" />
-              <div className="tiny muted">标签范围：同时匹配全部选中标签</div>
-              {tags.map((t) => (
-                <label className="checkbox-label" key={t.id}>
-                  <input
-                    type="checkbox"
-                    disabled={!!conversationId}
-                    checked={selectedTagIds.includes(t.id)}
-                    onChange={(e) =>
-                      setScopeTags((s) =>
-                        e.target.checked
-                          ? [...s, t.id]
-                          : s.filter((id) => id !== t.id),
-                      )
-                    }
-                  />
-                  {t.name}
-                </label>
-              ))}
-              {!!conversationId && (
-                <p className="tiny muted">
-                  此范围保存在当前会话中。选择“新的知识对话”可重新设置。
-                </p>
-              )}
-            </div>
-          </details>
-        }
+        {active && (
+          <ScopeSelector
+            knowledgeBases={knowledgeBases}
+            folders={folders}
+            tags={tags}
+            currentKb={kb}
+            kbIds={selectedKbIds}
+            folderIds={selectedFolderIds}
+            tagIds={selectedTagIds}
+            includeDescendants={selectedIncludeDescendants}
+            readOnly={!!conversationId}
+            disabled={send.isPending}
+            onKbChange={(ids) => {
+              setScopeIds(ids);
+              if (!ids.includes(kb.id)) {
+                setScopeFolders([]);
+                setScopeTags([]);
+              }
+            }}
+            onFoldersChange={setScopeFolders}
+            onTagsChange={setScopeTags}
+            onIncludeDescendantsChange={setIncludeDescendants}
+          />
+        )}
         <form
           className="chat-composer"
           onSubmit={(e) => {
             e.preventDefault();
-            if (text.trim() && !busy) send.mutate();
+            if (text.trim() && !busy && selectedKbIds.length) send.mutate();
           }}
         >
           <textarea
@@ -451,7 +328,7 @@ export function Chat({
                 !e.nativeEvent.isComposing
               ) {
                 e.preventDefault();
-                if (text.trim() && !busy) send.mutate();
+                if (text.trim() && !busy && selectedKbIds.length) send.mutate();
               }
             }}
           />
@@ -464,7 +341,7 @@ export function Chat({
               variant="default"
               size="icon"
               aria-label="发送问题"
-              disabled={!text.trim() || busy || !scopeIds.length}
+              disabled={!text.trim() || busy || !selectedKbIds.length}
             >
               <ArrowUp size={18} />
             </Button>
@@ -475,7 +352,7 @@ export function Chat({
         </p>
       </div>
       <Dialog
-        open={!!rename}
+        open={active && !!rename}
         onOpenChange={(v) => !v && setRename(null)}
         title="重命名对话"
       >

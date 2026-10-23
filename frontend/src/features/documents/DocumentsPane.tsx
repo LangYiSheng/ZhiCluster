@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -14,7 +14,6 @@ import {
   RefreshCw,
   Trash2,
   UploadCloud,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, errorText, json, query } from "../../lib/api";
@@ -25,6 +24,7 @@ import { Menu, MenuItem } from "../../components/ui/menu";
 import { Empty, ErrorState, Loading, Status } from "../../components/common";
 import { FolderTree } from "./FolderTree";
 import type { FolderAction } from "./FolderTree";
+import { TagManager } from "./TagManager";
 type FormState = {
   kind: "folder" | "rename" | "move" | "tags" | "delete";
   name: string;
@@ -41,8 +41,8 @@ export function DocumentsPane({
   kb,
   folders,
   tags,
-  tagId,
   trash,
+  active = true,
   onOpen,
   selectedId,
   onUnclassified,
@@ -50,18 +50,25 @@ export function DocumentsPane({
   kb: KnowledgeBase;
   folders: Folder[];
   tags: Tag[];
-  tagId: string;
   trash: boolean;
+  active?: boolean;
   onOpen: (doc: Document, reader?: boolean) => void;
   selectedId: string;
   onUnclassified?: () => void;
 }) {
   const qc = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
+  const activeRef = useRef(active);
   const [folderId, setFolderId] = useState("");
   const [sort, setSort] = useState("date");
   const [ext, setExt] = useState("");
   const [status, setStatus] = useState("");
+  const [tagFilter, setTagFilter] = useState({ kbId: kb.id, id: "" });
+  const tagId =
+    tagFilter.kbId === kb.id && tags.some((tag) => tag.id === tagFilter.id)
+      ? tagFilter.id
+      : "";
+  const [manageTags, setManageTags] = useState(false);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [form, setForm] = useState<FormState | null>(null);
@@ -73,6 +80,16 @@ export function DocumentsPane({
     y: number;
     doc: Document;
   } | null>(null);
+  useEffect(() => {
+    activeRef.current = active;
+    if (!active) {
+      setManageTags(false);
+      setForm(null);
+      setDuplicateFiles([]);
+      setContext(null);
+      setDragging(false);
+    }
+  }, [active]);
   const documents = useQuery({
     queryKey: [
       "documents",
@@ -156,7 +173,7 @@ export function DocumentsPane({
       const duplicates = result.items
         .flatMap((r, i) => (r.status === "duplicate" ? [files[i]] : []))
         .filter((f): f is File => !!f);
-      if (duplicates.length) setDuplicateFiles(duplicates);
+      if (duplicates.length && activeRef.current) setDuplicateFiles(duplicates);
       const count = result.items.filter((r) => r.status === "queued").length;
       if (count) toast.success(`${count} 个文件已上传，后台正在处理`);
       refresh();
@@ -325,6 +342,7 @@ export function DocumentsPane({
       </>
     );
   }
+  if (!active) return null;
   return (
     <section
       className={`documents-pane ${dragging ? "dragging" : ""}`}
@@ -503,6 +521,27 @@ export function DocumentsPane({
           <option value="queued">排队中</option>
           <option value="failed">失败</option>
         </select>
+        <select
+          aria-label="标签筛选"
+          value={tagId}
+          onChange={(event) => {
+            setTagFilter({ kbId: kb.id, id: event.target.value });
+            setPage(1);
+            setSelected(new Set());
+          }}
+        >
+          <option value="">全部标签</option>
+          {tags.map((tag) => (
+            <option key={tag.id} value={tag.id}>
+              {tag.name}
+            </option>
+          ))}
+        </select>
+        {!trash && (
+          <Button size="sm" variant="ghost" onClick={() => setManageTags(true)}>
+            管理标签
+          </Button>
+        )}
       </div>
       <div className="selection-bar">
         <label className="checkbox-label">
@@ -657,6 +696,21 @@ export function DocumentsPane({
                     {formatSize(doc.size_bytes)}
                   </small>
                   <Status value={doc.parse_status} />
+                  {!!doc.tag_ids?.length && (
+                    <span className="document-tags">
+                      {tags
+                        .filter((tag) => doc.tag_ids?.includes(tag.id))
+                        .map((tag) => (
+                          <span key={tag.id} className="document-tag">
+                            <span
+                              className="tag-dot"
+                              style={{ background: tag.color }}
+                            />
+                            {tag.name}
+                          </span>
+                        ))}
+                    </span>
+                  )}
                 </span>
               </button>
               <Menu
@@ -698,8 +752,7 @@ export function DocumentsPane({
         </div>
       )}
       <div className="document-footer">
-        <span className="online-dot" />
-        <small>文件安全保存在本地</small>
+        <small>{total} 个文档</small>
         <span>
           {jobs.data?.filter((j) => ["queued", "running"].includes(j.status))
             .length || 0}{" "}
@@ -713,29 +766,39 @@ export function DocumentsPane({
         </div>
       )}
       {!!uploadItems.length && (
-        <div className="upload-results">
-          <div className="row spread">
-            <strong>上传结果</strong>
+        <details
+          className="upload-results"
+          open={
+            uploadItems.some((item) => item.status === "error") || undefined
+          }
+        >
+          <summary>
+            上传结果 · {uploadItems.length} 个文件
+            {uploadItems.some((item) => item.status === "error") && (
+              <span className="danger">含上传失败</span>
+            )}
+          </summary>
+          <div className="upload-results-content">
+            {uploadItems.map((r, i) => (
+              <p key={i} className={r.status === "error" ? "danger" : ""}>
+                {r.document?.display_name || `文件 ${i + 1}`} ·{" "}
+                {r.message ||
+                  { queued: "已排队", duplicate: "文件已存在，已跳过" }[
+                    r.status
+                  ] ||
+                  r.status}
+              </p>
+            ))}
             <Button
-              size="icon"
+              size="sm"
               variant="ghost"
               aria-label="关闭上传结果"
               onClick={() => setUploadItems([])}
             >
-              <X size={13} />
+              清除记录
             </Button>
           </div>
-          {uploadItems.map((r, i) => (
-            <p key={i} className={r.status === "error" ? "danger" : ""}>
-              {r.document?.display_name || `文件 ${i + 1}`} ·{" "}
-              {r.message ||
-                { queued: "已排队", duplicate: "文件已存在，已跳过" }[
-                  r.status
-                ] ||
-                r.status}
-            </p>
-          ))}
-        </div>
+        </details>
       )}
       <Dialog
         open={!!form}
@@ -851,7 +914,7 @@ export function DocumentsPane({
                   </label>
                 ))}
                 {!tags.length && (
-                  <p className="muted">先在左侧创建一个标签。</p>
+                  <p className="muted">还没有标签，可在文件筛选旁管理标签。</p>
                 )}
               </div>
             </>
@@ -873,6 +936,19 @@ export function DocumentsPane({
           </div>
         </form>
       </Dialog>
+      <TagManager
+        key={kb.id}
+        kbId={kb.id}
+        tags={tags}
+        open={manageTags}
+        onOpenChange={setManageTags}
+        onDelete={(id) => {
+          if (tagId === id) {
+            setTagFilter({ kbId: kb.id, id: "" });
+            setPage(1);
+          }
+        }}
+      />
       <Dialog
         open={!!duplicateFiles.length}
         onOpenChange={(v) => !v && setDuplicateFiles([])}

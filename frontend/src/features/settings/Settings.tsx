@@ -7,8 +7,6 @@ import {
   Palette,
   Plug,
   RefreshCw,
-  Settings2,
-  ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react";
 import { api, ApiError, errorText, json } from "../../lib/api";
@@ -31,6 +29,7 @@ import {
   ConnectionForm,
   Field,
   ProcessingForm,
+  SettingsSection,
 } from "./SettingsFields";
 import "./settings.css";
 
@@ -40,25 +39,25 @@ const sections = [
     id: "appearance",
     label: "外观与布局",
     icon: Palette,
-    description: "选择顺眼的配色，让知识更好读。",
+    description: "调整配色、字体与阅读字号。",
   },
   {
     id: "models",
     label: "模型连接",
     icon: Plug,
-    description: "分别连接聊天与向量服务，保存后用于后续请求。",
+    description: "配置聊天与向量服务。",
   },
   {
     id: "processing",
     label: "知识处理",
     icon: SlidersHorizontal,
-    description: "调整文档切块、摘要与处理预算。",
+    description: "管理文档切块与模型处理预算。",
   },
   {
     id: "maintenance",
     label: "索引维护",
     icon: Database,
-    description: "查看向量状态，为指定知识库重建索引。",
+    description: "查看向量配置，重建知识库索引。",
   },
 ] as const;
 const equal = (a: unknown, b: unknown) =>
@@ -107,7 +106,6 @@ function SettingsEditor({
     configDraft(initialConfig),
   );
   const [section, setSection] = useState<Section>("appearance");
-  const [modelTab, setModelTab] = useState<"llm" | "embedding">("llm");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -173,7 +171,7 @@ function SettingsEditor({
     if (details) details.open = true;
     target?.focus();
     focusTarget.current = "";
-  }, [errors, section, modelTab]);
+  }, [errors, section]);
 
   function change(
     group: keyof RuntimeDraft,
@@ -255,10 +253,7 @@ function SettingsEditor({
       focusTarget.current = first;
       if (first.includes("processing") || first.includes("batch_size"))
         setSection("processing");
-      else {
-        setSection("models");
-        setModelTab(first.includes("embedding") ? "embedding" : "llm");
-      }
+      else setSection("models");
       return false;
     }
     return true;
@@ -287,7 +282,7 @@ function SettingsEditor({
       client.setQueryData(["settings-config"], config);
       ui.setAppearance(appearance);
       setSavedAppearance(appearance);
-      setMessage("设置已保存。后续请求与新领取的处理任务将使用新配置。");
+      setMessage("设置已保存。");
       setSaveError("");
       setConflict(false);
       setErrors({});
@@ -394,7 +389,7 @@ function SettingsEditor({
             )}
             <small>
               {state.fingerprint === fingerprint
-                ? "此结果仅对应本次测试的草稿，测试不会保存设置。"
+                ? "当前草稿的测试结果。"
                 : "配置已修改，此结果对应先前的草稿，请重新测试。"}
             </small>
           </div>
@@ -419,19 +414,10 @@ function SettingsEditor({
             <span>{label}</span>
           </button>
         ))}
-        <p>
-          知簇 ZhiCluster
-          <br />
-          让知识有迹可循
-        </p>
       </nav>
       <div className="zc-settings-workspace">
         <header className="zc-settings-header">
           <div>
-            <div className="zc-settings-eyebrow">
-              <Settings2 size={14} />
-              工作空间设置
-            </div>
             <h1>{activeSection.label}</h1>
             <p>{activeSection.description}</p>
           </div>
@@ -481,8 +467,6 @@ function SettingsEditor({
               <ConnectionForm
                 draft={draft}
                 loaded={loaded}
-                tab={modelTab}
-                setTab={setModelTab}
                 errors={errors}
                 change={change}
                 embeddingChanged={embeddingChanged}
@@ -493,16 +477,11 @@ function SettingsEditor({
               <ProcessingForm draft={draft} errors={errors} change={change} />
             )}
             {section === "maintenance" && (
-              <section className="zc-settings-section">
-                <h2>向量索引</h2>
-                <p className="zc-settings-note">
-                  索引维护使用已保存的向量配置。先保存模型连接的修改，再开始重建。
-                </p>
-                <Field
-                  id="maintenance-kb"
-                  label="要维护的知识库"
-                  help="仅重建你在这里选择的知识库。"
-                >
+              <SettingsSection
+                title="向量索引"
+                description="重建时使用已保存的向量配置。"
+              >
+                <Field id="maintenance-kb" label="要维护的知识库">
                   <select
                     id="maintenance-kb"
                     value={maintenanceKb}
@@ -589,14 +568,10 @@ function SettingsEditor({
                   </p>
                 )}
                 <p className="zc-settings-note">
-                  重建会调用向量服务并可能产生费用。正文、文件夹和手动标签会保留。
+                  重建可能产生模型费用，正文和手动分类会保留。
                 </p>
-              </section>
+              </SettingsSection>
             )}
-            <p className="zc-security-note">
-              <ShieldCheck size={15} />
-              已保存的密钥仅由后端保管，浏览器不读取原值。未配置模型时，文件管理与关键词搜索仍可使用。
-            </p>
           </fieldset>
           <footer className="zc-settings-footer">
             <span role="status" className={dirty ? "is-dirty" : ""}>

@@ -18,12 +18,6 @@
   .workspace-header {
     padding: 0 20px;
   }
-  .private-indicator {
-    display: none;
-  }
-  .workspace-footer > span:last-child {
-    display: none;
-  }
   .page-scroll {
     padding: 28px;
   }
@@ -116,7 +110,7 @@
     gap: 6px;
   }
   .breadcrumb > span {
-    max-width: min(120px, 26vw);
+    max-width: min(100px, 22vw);
   }
   .breadcrumb > svg {
     display: none;
@@ -124,8 +118,12 @@
   .workspace-actions {
     gap: 2px;
   }
-  .workspace-search {
+  .workspace-history > span {
     display: none;
+  }
+  .workspace-history {
+    min-width: 32px;
+    padding: 6px;
   }
   .browse-files > span {
     display: none;
@@ -138,9 +136,6 @@
   }
   .chat-composer-wrap {
     padding: 0 16px 14px;
-  }
-  .conversation-toolbar {
-    padding: 8px 20px;
   }
   .chat-welcome {
     padding: 24px 4px;
@@ -225,9 +220,6 @@
   .pdf-controls > .muted {
     display: none;
   }
-  .workspace-footer {
-    padding: 7px 16px;
-  }
   .message {
     gap: 10px;
   }
@@ -261,11 +253,6 @@
     padding-left: 12px;
     padding-right: 12px;
   }
-  .scope-options {
-    min-width: 0;
-    width: 260px;
-    max-width: calc(100vw - 40px);
-  }
   .message {
     gap: 8px;
   }
@@ -288,9 +275,6 @@
   .workspace-header {
     min-height: 48px;
   }
-  .workspace-footer {
-    display: none;
-  }
   .sidebar-brand {
     min-height: 65px;
     padding-top: 14px;
@@ -311,7 +295,6 @@
 }
 @media (hover: none) {
   .library-item > .button,
-  .tag-row > .button,
   .folder-row > .button,
   .document-row > input,
   .document-row > .button {

@@ -9,14 +9,14 @@ import {
   FileText,
   FolderOpen,
   GitBranch,
+  History,
   Menu as MenuIcon,
   MessageSquare,
-  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
   Settings2,
-  Sun,
+  Trash2,
   X,
 } from "lucide-react";
 import { api, errorText } from "../lib/api";
@@ -59,9 +59,9 @@ export function App() {
   const [savedKb, setSavedKb] = useState(
     () => localStorage.getItem("zhicluster-kb") || "",
   );
-  const [tagId, setTagId] = useState("");
   const [trash, setTrash] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(location.pathname === "/document");
   const [mobileLibrary, setMobileLibrary] = useState(false);
   const [reader, setReader] = useState(false);
@@ -134,8 +134,8 @@ export function App() {
   function chooseKb(id: string) {
     setSavedKb(id);
     localStorage.setItem("zhicluster-kb", id);
-    setTagId("");
     setTrash(false);
+    setHistoryOpen(false);
     setMobileLibrary(false);
     setParams({ kb: id });
     setCitation(undefined);
@@ -155,13 +155,14 @@ export function App() {
         setFilesOpen(false);
         setSavedKb(doc.kb_id);
         localStorage.setItem("zhicluster-kb", doc.kb_id);
-        setTagId("");
         setTrash(false);
+        setHistoryOpen(false);
         navigate(`/document?kb=${doc.kb_id}&document=${c.document_id}`);
       })
       .catch((e) => toast.error(errorText(e)));
   }
   function to(path: string) {
+    setHistoryOpen(false);
     setMobileLibrary(false);
     setFilesOpen(path === "document");
     navigate(
@@ -264,20 +265,6 @@ export function App() {
               kbId={actualKbId}
               trash={trash}
               onSelect={chooseKb}
-              tags={tags.data || []}
-              tagId={tagId}
-              onTag={(id) => {
-                setTagId(id);
-                setTrash(false);
-                setMobileLibrary(false);
-                setFilesOpen(true);
-              }}
-              onSearch={() => setSearchOpen(true)}
-              onTrash={() => {
-                setTrash(true);
-                setMobileLibrary(false);
-                setFilesOpen(true);
-              }}
             />
           )}
         </div>
@@ -286,21 +273,19 @@ export function App() {
             <Settings2 size={17} />
             设置
           </button>
-          <Button
-            title="切换主题"
-            aria-label="切换主题"
-            size="icon"
-            variant="ghost"
-            onClick={() =>
-              ui.setTheme(
-                document.documentElement.dataset.theme === "dark"
-                  ? "light"
-                  : "dark",
-              )
-            }
+          <button
+            className={trash ? "active" : ""}
+            aria-pressed={trash}
+            disabled={!actualKbId}
+            onClick={() => {
+              setTrash(true);
+              setMobileLibrary(false);
+              setFilesOpen(true);
+            }}
           >
-            {ui.theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
-          </Button>
+            <Trash2 size={17} />
+            回收站
+          </button>
         </div>
       </aside>
       <div
@@ -349,7 +334,7 @@ export function App() {
             kb={kb}
             folders={folders.data || []}
             tags={tags.data || []}
-            tagId={tagId}
+            active={view !== "settings" && filesOpen}
             trash={trash}
             selectedId={selectedId}
             onOpen={openDoc}
@@ -425,6 +410,21 @@ export function App() {
             <strong>{viewName}</strong>
           </div>
           <div className="workspace-actions">
+            {view === "chat" && kb && (
+              <Button
+                className="workspace-history"
+                variant="ghost"
+                size="sm"
+                aria-label="历史对话"
+                title="历史对话"
+                aria-haspopup="dialog"
+                aria-expanded={historyOpen}
+                onClick={() => setHistoryOpen(true)}
+              >
+                <History size={17} />
+                <span>历史</span>
+              </Button>
+            )}
             {view !== "settings" && (
               <>
                 <Button
@@ -450,10 +450,6 @@ export function App() {
                 </Button>
               </>
             )}
-            <span className="private-indicator">
-              <span className="online-dot" />
-              本地私有
-            </span>
           </div>
         </header>
         <div className="workspace-content">
@@ -467,6 +463,9 @@ export function App() {
                   tags={tags.data || []}
                   folders={folders.data || []}
                   onCitation={openCitation}
+                  active={view === "chat"}
+                  historyOpen={historyOpen && view === "chat"}
+                  onHistoryOpenChange={setHistoryOpen}
                 />
               </Suspense>
             </div>
@@ -515,10 +514,6 @@ export function App() {
             </Empty>
           )}
         </div>
-        <footer className="workspace-footer">
-          <span>知簇 ZhiCluster</span>
-          <span>有迹可循的知识 · 有据可查的答案</span>
-        </footer>
       </main>
       {(filesOpen || mobileLibrary) && view !== "settings" && (
         <button

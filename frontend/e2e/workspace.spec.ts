@@ -33,6 +33,7 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
     await expect(
       page.getByRole("button", { name: "研究资料", exact: true }),
     ).toBeVisible();
+    await page.getByRole("button", { name: "管理标签", exact: true }).click();
     await page.getByRole("button", { name: "新建标签", exact: true }).click();
     await page
       .getByRole("dialog")
@@ -42,9 +43,10 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       .getByRole("dialog")
       .getByRole("button", { name: "保存", exact: true })
       .click();
-    await expect(
-      page.getByRole("button", { name: "检索研究", exact: true }),
-    ).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "管理标签" })).toContainText(
+      "检索研究",
+    );
+    await page.getByRole("button", { name: "完成", exact: true }).click();
     await page.getByLabel("上传文档", { exact: true }).setInputFiles({
       name: filename,
       mimeType: "text/markdown",
@@ -107,13 +109,21 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
     await page.keyboard.press("Enter");
     await expect(page.locator(".citation-banner")).toContainText("行");
     await expect(page.locator(".text-reader")).toContainText(marker);
-    await page.getByRole("button", { name: "切换主题", exact: true }).click();
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await page.getByLabel("显示模式", { exact: true }).selectOption("dark");
+    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    await expect(page.getByText("修改已保存", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "返回工作区", exact: true }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await page.screenshot({
       path: "test-results/workspace-dark-1440.png",
       fullPage: true,
     });
-    await page.getByRole("button", { name: "切换主题", exact: true }).click();
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await page.getByLabel("显示模式", { exact: true }).selectOption("light");
+    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    await expect(page.getByText("修改已保存", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "返回工作区", exact: true }).click();
     await page.screenshot({
       path: "test-results/workspace-light-1440.png",
       fullPage: true,
@@ -192,7 +202,11 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       page.getByRole("heading", { name: "外观与布局" }),
     ).toBeVisible();
     await page.getByRole("button", { name: "模型连接", exact: true }).click();
-    await expect(page.getByLabel("服务地址", { exact: true })).toBeVisible();
+    await expect(
+      page
+        .getByRole("region", { name: "聊天模型", exact: true })
+        .getByLabel("服务地址", { exact: true }),
+    ).toBeVisible();
     expect(errors).toEqual([]);
   } finally {
     await request
@@ -338,6 +352,7 @@ test("真实拖放上传、复选批量标签与移动、文件夹子树循环�
     await expect(
       page.getByRole("button", { name: "子主题", exact: true }),
     ).toBeVisible();
+    await page.getByRole("button", { name: "管理标签", exact: true }).click();
     await page.getByRole("button", { name: "新建标签", exact: true }).click();
     await page
       .getByRole("dialog")
@@ -347,9 +362,10 @@ test("真实拖放上传、复选批量标签与移动、文件夹子树循环�
       .getByRole("dialog")
       .getByRole("button", { name: "保存", exact: true })
       .click();
-    await expect(
-      page.getByRole("button", { name: "批量验收", exact: true }),
-    ).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "管理标签" })).toContainText(
+      "批量验收",
+    );
+    await page.getByRole("button", { name: "完成", exact: true }).click();
     const transfer = await page.evaluateHandle((names) => {
       const data = new DataTransfer();
       names.forEach((name, index) =>
@@ -374,6 +390,7 @@ test("真实拖放上传、复选批量标签与移动、文件夹子树循环�
       .dispatchEvent("drop", { dataTransfer: transfer });
     expect((await uploadResponse).ok()).toBeTruthy();
     await transfer.dispose();
+    await page.locator(".upload-results > summary").click();
     for (const name of filenames) {
       const row = page.locator(".document-row").filter({ hasText: name });
       await expect(row.getByText("已就绪", { exact: true })).toBeVisible({
@@ -473,6 +490,20 @@ test("真实拖放上传、复选批量标签与移动、文件夹子树循环�
       archive.id,
     );
     expect(unchanged.find((f) => f.id === child.id)?.parent_id).toBe(topic.id);
+    const filtered = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname === `/api/knowledge-bases/${kb.id}/documents` &&
+        url.searchParams.get("tag_ids") === tag.id
+      );
+    });
+    await page.getByLabel("标签筛选", { exact: true }).selectOption(tag.id);
+    expect((await filtered).ok()).toBeTruthy();
+    await expect(page.locator(".document-row .document-tag")).toHaveText([
+      "批量验收",
+      "批量验收",
+    ]);
+    await page.getByLabel("标签筛选", { exact: true }).selectOption("");
     await page.getByLabel("文件类型筛选", { exact: true }).selectOption("pdf");
     await expect(page.locator(".document-row")).toHaveCount(0);
     await page.getByLabel("文件类型筛选", { exact: true }).selectOption("txt");

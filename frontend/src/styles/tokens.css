@@ -26,6 +26,7 @@
   --color-text: #2b2c29;
   --color-muted: #686960;
   --color-subtle: #686960;
+  --color-scrollbar: #b7b8af;
   --color-accent: #343d38;
   --color-accent-hover: #202923;
   --color-accent-soft: #eae9e5;
@@ -95,6 +96,7 @@
   --color-accent-soft: #edf2ed;
 }
 :root[data-theme="dark"] {
+  --color-scrollbar: #63706a;
   --color-background: #191b1c;
   --color-canvas: #232627;
   --color-surface: #2b2f30;

@@ -1,87 +1,45 @@
 import { useState } from "react";
-import {
-  BookOpen,
-  ChevronDown,
-  FolderPlus,
-  MoreHorizontal,
-  Plus,
-  Search,
-  Tag as TagIcon,
-  Trash2,
-} from "lucide-react";
+import { BookOpen, FolderPlus, MoreHorizontal, Plus } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, errorText, json } from "../../lib/api";
-import type { KnowledgeBase, Tag } from "../../lib/api";
+import type { KnowledgeBase } from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { Dialog } from "../../components/ui/dialog";
 import { Menu, MenuItem } from "../../components/ui/menu";
 type Edit = {
-  kind: "kb" | "tag";
   id?: string;
   name: string;
   description?: string;
-  color?: string;
-  aliases?: string;
   version?: number;
 };
 export function Library({
   knowledgeBases,
   kbId,
   onSelect,
-  tags,
-  tagId,
-  onTag,
-  onSearch,
-  onTrash,
   trash,
 }: {
   knowledgeBases: KnowledgeBase[];
   kbId: string;
   onSelect: (id: string) => void;
-  tags: Tag[];
-  tagId: string;
-  onTag: (id: string) => void;
-  onSearch: () => void;
-  onTrash: () => void;
   trash: boolean;
 }) {
   const qc = useQueryClient();
   const [edit, setEdit] = useState<Edit | null>(null);
-  const [remove, setRemove] = useState<KnowledgeBase | Tag | null>(null);
+  const [remove, setRemove] = useState<KnowledgeBase | null>(null);
   const current = knowledgeBases.find((k) => k.id === kbId);
   const save = useMutation({
     mutationFn: async () => {
       if (!edit) return;
-      const body =
-        edit.kind === "kb"
-          ? {
-              name: edit.name,
-              description: edit.description,
-              version: edit.version,
-            }
-          : {
-              name: edit.name,
-              color: edit.color,
-              aliases: edit.aliases
-                ?.split(",")
-                .map((s) => s.trim())
-                .filter(Boolean),
-              version: edit.version,
-            };
-      const path =
-        edit.kind === "kb"
-          ? edit.id
-            ? `/knowledge-bases/${edit.id}`
-            : "/knowledge-bases"
-          : edit.id
-            ? `/tags/${edit.id}`
-            : `/knowledge-bases/${kbId}/tags`;
-      const entity = await api<KnowledgeBase | Tag>(
-        path,
-        json(edit.id ? "PATCH" : "POST", body),
+      const entity = await api<KnowledgeBase>(
+        edit.id ? `/knowledge-bases/${edit.id}` : "/knowledge-bases",
+        json(edit.id ? "PATCH" : "POST", {
+          name: edit.name,
+          description: edit.description,
+          version: edit.version,
+        }),
       );
-      if (edit.kind === "kb") onSelect(entity.id);
+      onSelect(entity.id);
     },
     onSuccess: () => {
       setEdit(null);
@@ -91,11 +49,7 @@ export function Library({
     onError: (e) => toast.error(errorText(e)),
   });
   const deletion = useMutation({
-    mutationFn: () =>
-      api(
-        `/${"description" in (remove || {}) ? "knowledge-bases" : "tags"}/${remove?.id}`,
-        json("DELETE"),
-      ),
+    mutationFn: () => api(`/knowledge-bases/${remove?.id}`, json("DELETE")),
     onSuccess: () => {
       setRemove(null);
       void qc.invalidateQueries();
@@ -105,25 +59,13 @@ export function Library({
   });
   return (
     <aside className="library-pane">
-      <div className="brand-text">
-        <img src="/favicon.svg" alt="" />
-        <div>
-          <strong>知簇</strong>
-          <small>你的知识，自成一簇</small>
-        </div>
-      </div>
-      <button className="quick-search" onClick={onSearch}>
-        <Search size={16} />
-        <span>搜索知识</span>
-        <kbd>⌘ K</kbd>
-      </button>
       <div className="section-heading">
         <span>个人知识库</span>
         <Button
           size="icon"
           variant="ghost"
           aria-label="新建知识库"
-          onClick={() => setEdit({ kind: "kb", name: "", description: "" })}
+          onClick={() => setEdit({ name: "", description: "" })}
         >
           <Plus size={15} />
         </Button>
@@ -154,7 +96,6 @@ export function Library({
                 <MenuItem
                   onSelect={() =>
                     setEdit({
-                      kind: "kb",
                       id: k.id,
                       name: k.name,
                       description: k.description,
@@ -171,94 +112,10 @@ export function Library({
             </div>
           ))}
       </div>
-      <button
-        className={`sidebar-link ${trash ? "active" : ""}`}
-        onClick={onTrash}
-      >
-        <Trash2 size={16} />
-        回收站
-      </button>
-      <div className="divider" />
-      <div className="section-heading">
-        <span>
-          标签 <ChevronDown size={12} />
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="新建标签"
-          disabled={!kbId}
-          onClick={() =>
-            setEdit({ kind: "tag", name: "", color: "#6366f1", aliases: "" })
-          }
-        >
-          <Plus size={15} />
-        </Button>
-      </div>
-      <div className="tag-list">
-        <button
-          className={`tag-item ${!tagId ? "selected" : ""}`}
-          onClick={() => onTag("")}
-        >
-          <TagIcon size={14} />
-          全部标签
-        </button>
-        {tags.map((t) => (
-          <div
-            className={`tag-row ${tagId === t.id ? "selected" : ""}`}
-            key={t.id}
-          >
-            <button
-              className="tag-item"
-              onClick={() => onTag(tagId === t.id ? "" : t.id)}
-            >
-              <span className="tag-dot" style={{ background: t.color }} />
-              {t.name}
-            </button>
-            <Menu
-              trigger={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={`${t.name}标签菜单`}
-                >
-                  <MoreHorizontal size={14} />
-                </Button>
-              }
-            >
-              <MenuItem
-                onSelect={() =>
-                  setEdit({
-                    kind: "tag",
-                    id: t.id,
-                    name: t.name,
-                    color: t.color,
-                    aliases: t.aliases?.join(", "),
-                    version: t.version,
-                  })
-                }
-              >
-                编辑标签
-              </MenuItem>
-              <MenuItem danger onSelect={() => setRemove(t)}>
-                删除标签
-              </MenuItem>
-            </Menu>
-          </div>
-        ))}
-      </div>
-      <div className="library-bottom">
-        <div className="avatar">我</div>
-        <div>
-          <strong>我的个人空间</strong>
-          <small>本地优先 · 私有知识</small>
-        </div>
-        <span className="online-dot" />
-      </div>
       <Dialog
         open={!!edit}
         onOpenChange={(v) => !v && setEdit(null)}
-        title={`${edit?.id ? "编辑" : "新建"}${edit?.kind === "kb" ? "知识库" : "标签"}`}
+        title={`${edit?.id ? "编辑" : "新建"}知识库`}
       >
         <form
           onSubmit={(e) => {
@@ -278,43 +135,17 @@ export function Library({
               }
             />
           </label>
-          {edit?.kind === "kb" ? (
-            <label>
-              描述
-              <textarea
-                value={edit.description || ""}
-                onChange={(e) =>
-                  setEdit((v) =>
-                    v ? { ...v, description: e.target.value } : null,
-                  )
-                }
-              />
-            </label>
-          ) : (
-            <>
-              <label>
-                颜色
-                <input
-                  type="color"
-                  value={edit?.color || "#6366f1"}
-                  onChange={(e) =>
-                    setEdit((v) => (v ? { ...v, color: e.target.value } : null))
-                  }
-                />
-              </label>
-              <label>
-                别名（英文逗号分隔）
-                <input
-                  value={edit?.aliases || ""}
-                  onChange={(e) =>
-                    setEdit((v) =>
-                      v ? { ...v, aliases: e.target.value } : null,
-                    )
-                  }
-                />
-              </label>
-            </>
-          )}
+          <label>
+            描述
+            <textarea
+              value={edit?.description || ""}
+              onChange={(e) =>
+                setEdit((v) =>
+                  v ? { ...v, description: e.target.value } : null,
+                )
+              }
+            />
+          </label>
           <div className="dialog-actions">
             <Button type="button" onClick={() => setEdit(null)}>
               取消
