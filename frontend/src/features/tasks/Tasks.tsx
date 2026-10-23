@@ -113,10 +113,10 @@ function TaskRow({ job, kbId }: { job: Job; kbId: string }) {
         </div>
         <p className="task-meta">
           <span>{jobKinds[job.kind || "ingest"] || "后台任务"}</span>
-          {running && <span>{jobStageLabel(job)}</span>}
+          {(running || attention) && <span>{jobStageLabel(job)}</span>}
           {date && <time dateTime={job.created_at}>{date}</time>}
         </p>
-        {running && (
+        {running && job.kind !== "organize" && (
           <div
             className="task-progress"
             role="progressbar"
@@ -129,7 +129,10 @@ function TaskRow({ job, kbId }: { job: Job; kbId: string }) {
           </div>
         )}
         {job.error && job.status !== "completed" && (
-          <p className="task-error">{job.error}</p>
+          <p className="task-error">
+            {(running || job.status === "retry_wait") && "上次尝试："}
+            {job.error}
+          </p>
         )}
         {job.status === "retry_wait" && job.next_attempt_at && (
           <p className="task-retry-time">

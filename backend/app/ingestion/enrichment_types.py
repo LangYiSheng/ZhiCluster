@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.ai.gateway import ProviderError
 
@@ -15,6 +15,29 @@ class SummaryResult(BaseModel):
     detailed_summary: str = Field(min_length=1, max_length=8000)
     keywords: list[str] = Field(default_factory=list, max_length=20)
     main_topics: list[str] = Field(default_factory=list, max_length=12)
+
+
+_SUMMARY_FIELDS = frozenset({"short_summary", "detailed_summary", "keywords", "main_topics"})
+_SUMMARY_ERROR_TYPES = frozenset({
+    "missing", "extra_forbidden", "model_type", "model_attributes_type", "dict_type", "list_type",
+    "string_type", "string_too_short", "string_too_long", "too_short", "too_long",
+})
+
+
+def validate_summary(value) -> SummaryResult:
+    """Expose schema diagnostics without copying provider content or extra keys."""
+    try:
+        return SummaryResult.model_validate(value)
+    except ValidationError as error:
+        details = set()
+        for issue in error.errors(include_url=False, include_input=False, include_context=False):
+            location = issue.get("loc", ())
+            field_name = location[0] if location and location[0] in _SUMMARY_FIELDS else "summary"
+            error_type = issue.get("type")
+            safe_type = error_type if error_type in _SUMMARY_ERROR_TYPES else "invalid_value"
+            details.add(f"{field_name}:{safe_type}")
+        diagnostic = "; ".join(sorted(details)[:6]) or "summary:invalid_value"
+        raise ProviderError(f"模型摘要字段验证失败，可重试该阶段（{diagnostic}）") from None
 
 
 class ClassificationResult(BaseModel):

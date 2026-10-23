@@ -19,9 +19,37 @@ class AIUnavailable(RuntimeError):
 
 
 class ProviderError(RuntimeError):
-    def __init__(self, message: str, *, retryable: bool = False):
+    def __init__(self, message: str, *, retryable: bool = False, code: str = "provider_error"):
         super().__init__(message)
         self.retryable = retryable
+        self.code = code
+
+
+def transport_error(prefix: str, error: httpx.TransportError, timeout: float) -> ProviderError:
+    """Describe only the transport phase, never a credential-bearing URL/body."""
+    service = "聊天模型" if prefix == "llm" else "向量模型"
+    seconds = f"{timeout:g}"
+    if isinstance(error, httpx.ReadTimeout):
+        code, message = "read_timeout", f"等待{service}响应超时（{seconds} 秒内未收到数据）；可稍后重试或在设置中调整超时"
+    elif isinstance(error, httpx.ConnectTimeout):
+        code, message = "connect_timeout", f"连接{service}超时（{seconds} 秒）；请检查服务地址和网络"
+    elif isinstance(error, httpx.WriteTimeout):
+        code, message = "write_timeout", f"向{service}发送请求超时（{seconds} 秒）；请稍后重试"
+    elif isinstance(error, httpx.PoolTimeout):
+        code, message = "pool_timeout", f"等待{service}连接池超时（{seconds} 秒）；请稍后重试"
+    elif isinstance(error, httpx.TimeoutException):
+        code, message = "request_timeout", f"{service}请求超时（{seconds} 秒）；请稍后重试"
+    elif isinstance(error, httpx.ConnectError):
+        code, message = "connect_error", f"无法建立{service}连接；请检查服务地址、DNS 或网络"
+    elif isinstance(error, httpx.RemoteProtocolError):
+        code, message = "protocol_error", f"{service}连接被服务端中断或响应协议异常；请稍后重试"
+    elif isinstance(error, httpx.NetworkError):
+        code, message = "network_error", f"{service}连接在传输过程中中断；请稍后重试"
+    elif isinstance(error, httpx.ProxyError):
+        code, message = "proxy_error", f"无法通过代理连接{service}；请检查后端代理配置"
+    else:
+        return ProviderError(f"{service}请求传输失败；请检查服务地址及协议", code="transport_error")
+    return ProviderError(message, retryable=True, code=code)
 
 
 class ModelCatalogError(ProviderError):
@@ -144,7 +172,7 @@ class ModelGateway:
                     if attempt < retries:
                         time.sleep(min(2 ** attempt, 8))
                         continue
-                    raise ProviderError(f"{prefix} 服务连接超时或网络不可达", retryable=True) from error
+                    raise transport_error(prefix, error, timeout) from error
                 except (ValueError, KeyError, TypeError) as error:
                     raise ProviderError("模型服务返回了无效 JSON") from error
         raise ProviderError("模型请求失败")
@@ -155,7 +183,10 @@ class ModelGateway:
             payload["response_format"] = {"type": "json_object"}
         result = self._request("llm", "chat/completions", payload)
         try:
-            content = result["choices"][0]["message"]["content"]
+            choice = result["choices"][0]
+            if isinstance(choice, dict) and choice.get("finish_reason") == "length":
+                raise ProviderError("模型输出达到本次长度上限，结果尚未完整；请缩小单次处理范围后重试", code="output_truncated")
+            content = choice["message"]["content"]
             if not isinstance(content, str) or not content.strip():
                 raise ValueError("empty content")
             return content
@@ -201,11 +232,14 @@ class ModelGateway:
                         if not emitted:
                             raise ProviderError("聊天模型没有返回可用的流式内容，请检查兼容接口是否支持 stream")
                         return
-                except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as error:
+                except httpx.TransportError as error:
                     if not emitted and attempt < retries:
                         time.sleep(min(2 ** attempt, 8))
                         continue
-                    raise ProviderError("聊天流连接中断，已生成的内容已保留", retryable=True) from error
+                    failure = transport_error("llm", error, timeout)
+                    if emitted:
+                        failure = ProviderError(str(failure) + "；已生成的内容已保留", retryable=failure.retryable, code=failure.code)
+                    raise failure from error
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:

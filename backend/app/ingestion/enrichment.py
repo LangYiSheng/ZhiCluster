@@ -14,7 +14,13 @@ from app.ingestion.classification import (
     normalize_label,
     validate_classification,
 )
-from app.ingestion.enrichment_types import ClassificationResult, EnrichmentOutcome, SummaryResult, parse_json
+from app.ingestion.enrichment_types import (
+    ClassificationResult,
+    EnrichmentOutcome,
+    SummaryResult,
+    parse_json,
+    validate_summary,
+)
 from app.ingestion.summaries import SUMMARY_FIELDS, SUMMARY_RULES, SummaryBuilder, summarize_sections
 
 __all__ = ["ClassificationResult", "EnrichmentOutcome", "SummaryResult", "classify_document", "enrich_sections", "normalize_label", "summarize_sections"]
@@ -52,9 +58,9 @@ def enrich_sections(sections: list[Any], title: str, folders: list[dict], tags: 
         return outcome
     # One malformed sub-result must not discard the other paid-for result.
     try:
-        outcome.summary = SummaryResult.model_validate(payload.get("summary"))
-    except ValueError:
-        outcome.errors["summary"] = ProviderError("模型摘要字段验证失败，可重试该阶段")
+        outcome.summary = validate_summary(payload.get("summary"))
+    except ProviderError as error:
+        outcome.errors["summary"] = error
     try:
         outcome.classification = validate_classification(payload.get("classification"), folders, tags)
     except ProviderError as error:

@@ -37,7 +37,9 @@ export function jobStatusLabel(job: Job) {
       return "未处理";
     case "running":
     case "processing":
-      return `正在处理 ${jobProgress(job)}%`;
+      return job.kind === "organize"
+        ? "正在处理"
+        : `正在处理 ${jobProgress(job)}%`;
     case "retry_wait":
       return "等待自动重试";
     case "partial_ready":
@@ -56,6 +58,9 @@ export function jobStatusLabel(job: Job) {
 export function jobStageLabel(job: Job) {
   const labels: Record<string, string> = {
     queued: "等待处理",
+    snapshot: "读取文档快照",
+    planning: "生成整理方案",
+    validating: "校验整理方案",
     parsing: "解析正文",
     chunking: "建立文本索引",
     embedding: "生成向量索引",

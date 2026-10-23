@@ -154,3 +154,101 @@ it("文档任务支持真实进度、取消与可见的操作错误", async () =
     expect.objectContaining({ method: "POST" }),
   );
 });
+
+it.each([
+  ["snapshot", "读取文档快照"],
+  ["planning", "生成整理方案"],
+  ["validating", "校验整理方案"],
+])("整理失败保留实际阶段 %s 和后端错误", async (stage, label) => {
+  const error = "模型响应超时（120 秒），可以稍后重试";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            {
+              ...partial,
+              document_id: null,
+              document_name: null,
+              kind: "organize",
+              status: "failed",
+              stage,
+              progress: 0,
+              error,
+            },
+          ]),
+        ),
+    ),
+  );
+  renderTasks();
+  const row = await screen.findByRole("article");
+  expect(
+    within(row).getByText(label, { selector: ".task-meta span:nth-child(2)" }),
+  ).toBeInTheDocument();
+  expect(within(row).getByText(error)).toBeInTheDocument();
+  expect(within(row).queryByText(/上次尝试/)).not.toBeInTheDocument();
+  expect(within(row).queryByRole("progressbar")).not.toBeInTheDocument();
+});
+
+it("重试运行和等待明确标出上次错误，整理任务只显示真实阶段", async () => {
+  const error = "模型服务连接失败，请检查地址后重试";
+  const nextAttempt = "2026-10-24T03:04:05Z";
+  const jobs = [
+    {
+      ...partial,
+      id: "organize-running",
+      document_id: null,
+      document_name: null,
+      kind: "organize",
+      status: "running",
+      stage: "planning",
+      progress: 0,
+      error,
+    },
+    {
+      ...partial,
+      id: "retry-wait",
+      document_name: "等待重试.md",
+      status: "retry_wait",
+      stage: "summarizing",
+      next_attempt_at: nextAttempt,
+      error,
+    },
+    {
+      ...partial,
+      id: "done-with-old-error",
+      document_name: "已完成.md",
+      status: "completed",
+      error: "不应继续显示的旧错误",
+    },
+  ];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify(jobs))),
+  );
+  renderTasks();
+  const rows = await screen.findAllByRole("article");
+  const running = within(rows[0]);
+  expect(running.getByText("正在处理")).toBeInTheDocument();
+  expect(
+    running.getByText("生成整理方案", {
+      selector: ".task-meta span:nth-child(2)",
+    }),
+  ).toBeInTheDocument();
+  expect(running.getByText(`上次尝试：${error}`)).toBeInTheDocument();
+  expect(running.queryByRole("progressbar")).not.toBeInTheDocument();
+  expect(running.queryByText(/0%/)).not.toBeInTheDocument();
+  const waiting = within(rows[1]);
+  expect(waiting.getByText("等待自动重试")).toBeInTheDocument();
+  expect(waiting.getByText("生成摘要")).toBeInTheDocument();
+  expect(waiting.getByText(`上次尝试：${error}`)).toBeInTheDocument();
+  expect(waiting.getByText(/将在/)).toHaveTextContent(
+    new Date(nextAttempt).toLocaleTimeString("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }),
+  );
+  expect(screen.queryByText("不应继续显示的旧错误")).not.toBeInTheDocument();
+});

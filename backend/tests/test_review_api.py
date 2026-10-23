@@ -2,10 +2,12 @@
 
 import json
 
+import httpx
 import pytest
 from sqlalchemy import delete, func, select
 
 from app.agent.organization import process_organization_job
+from app.ai.gateway import ModelGateway
 from app.core.config import Settings
 from app.db.models import (
     AgentPlan,
@@ -16,6 +18,7 @@ from app.db.models import (
     DocumentTag,
     Folder,
     IngestionJob,
+    JobEvent,
     KnowledgeBaseMember,
     Tag,
     new_id,
@@ -143,9 +146,9 @@ def test_json_organization_waits_for_review_supports_edit_selection_and_undo(cli
         def chat(self, messages, **options):
             calls.append((messages, options))
             data = json.loads(messages[1]["content"])
-            assert data["documents"][0]["id"] == doc_id
+            assert data["documents"][0]["id"] == "D1" and doc_id not in messages[1]["content"]
             return json.dumps({"summary": "归入研究主题", "folders": [{"ref": "research", "name": "研究", "parent_id": None}],
-                "documents": [{"document_id": doc_id, "folder_id": "ref:research", "existing_tag_ids": [], "new_tag_names": ["研究"], "reason": "资料主题一致"}]})
+                "documents": [{"document_id": "D1", "folder_id": "ref:research", "existing_tag_ids": [], "new_tag_names": ["研究"], "reason": "资料主题一致"}]})
 
     process_organization_job(job_id, factory, configured(), owner="worker", gateway=Gateway())
     assert len(calls) == 1 and calls[0][1]["json_mode"] is True
@@ -154,6 +157,9 @@ def test_json_organization_waits_for_review_supports_edit_selection_and_undo(cli
         assert db.scalar(select(func.count()).select_from(Folder)) == 0
         assert db.get(AgentRun, run_id).status == "pending_review"
         assert db.get(IngestionJob, job_id).status == "completed"
+        events = list(db.scalars(select(JobEvent).where(JobEvent.job_id == job_id).order_by(JobEvent.sequence)))
+        assert [event.data["stage"] for event in events if event.type == "progress"] == ["snapshot", "planning", "validating"]
+        assert all(event.data.get("progress", 0) == 0 for event in events if event.type == "progress")
     detail = client.get(f"/api/agent/runs/{run_id}").json()
     plan = detail["plan"]
     assert any(preview["destination_path"] == "研究" for preview in plan["preview"])
@@ -292,6 +298,110 @@ def test_recovered_organization_job_preserves_existing_review_plan(client, facto
         assert plan.payload == payload and plan.status == "pending_review"
         assert db.get(IngestionJob, job_id).status == "completed"
     assert gateway.calls == 1
+
+
+@pytest.mark.parametrize("timeout", [30, 120, 240])
+def test_organization_respects_saved_timeout_and_uses_one_background_request(client, factory, monkeypatch, timeout):
+    import app.agent.organization as organization
+
+    _, doc_id, _, job_id = enqueue_plan(client, factory, monkeypatch)
+    saved = configured().model_copy(update={"llm_timeout_seconds": timeout, "llm_max_retries": 2})
+    calls, snapshots = [], []
+
+    def respond(request):
+        calls.append(json.loads(request.content))
+        with factory() as db:
+            job = db.get(IngestionJob, job_id)
+            assert job.stage == "planning" and job.progress == 0
+            details = job.payload["organization"]
+            assert details["timeout_seconds"] == timeout and details["automatic_retries"] == 0
+        assert calls[-1]["max_tokens"] == 1800
+        assert doc_id not in calls[-1]["messages"][1]["content"]
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({"summary": "无需改动", "documents": []})}}]})
+
+    def create_gateway(settings, **options):
+        snapshots.append((settings, options))
+        return ModelGateway(settings, transport=httpx.MockTransport(respond), **options)
+
+    monkeypatch.setattr(organization, "ModelGateway", create_gateway)
+    process_organization_job(job_id, factory, saved, owner="worker")
+    assert len(calls) == len(snapshots) == 1
+    assert snapshots[0][0].llm_timeout_seconds == timeout and snapshots[0][0].llm_max_retries == 0
+    assert snapshots[0][1] == {"workload": "background"}
+    assert saved.llm_timeout_seconds == timeout and saved.llm_max_retries == 2
+    with factory() as db:
+        assert db.get(IngestionJob, job_id).status == "completed"
+        assert db.get(Document, doc_id).folder_id is None
+
+
+@pytest.mark.parametrize("failure,code,stage", [
+    ("timeout", "read_timeout", "planning"),
+    ("network", "connect_error", "planning"),
+    ("truncated", "output_truncated", "planning"),
+    ("invalid", "invalid_plan_response", "validating"),
+])
+def test_organization_distinguishes_retryable_failures_without_resending(client, factory, monkeypatch, failure, code, stage):
+    import app.agent.organization as organization
+
+    _, doc_id, run_id, job_id = enqueue_plan(client, factory, monkeypatch)
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        if failure == "timeout":
+            raise httpx.ReadTimeout("secret request must not be exposed")
+        if failure == "network":
+            raise httpx.ConnectError("secret provider endpoint must not be exposed")
+        content = "{" if failure == "invalid" else '{"summary":"unfinished'
+        return httpx.Response(200, json={"choices": [{"finish_reason": "length" if failure == "truncated" else "stop",
+            "message": {"content": content}}]})
+
+    def create_gateway(settings, **options):
+        return ModelGateway(settings, transport=httpx.MockTransport(respond), **options)
+
+    monkeypatch.setattr(organization, "ModelGateway", create_gateway)
+    process_organization_job(job_id, factory, configured(), owner="worker")
+    assert len(calls) == 1
+    with factory() as db:
+        job, run = db.get(IngestionJob, job_id), db.get(AgentRun, run_id)
+        assert job.status == run.status == "failed" and job.stage == stage
+        assert job.lease_owner is job.lease_until is None
+        diagnostic = job.payload["organization"]
+        assert diagnostic["error_code"] == code and diagnostic["retryable"] is True
+        assert diagnostic["timeout_seconds"] == 120 and diagnostic["elapsed_ms"] >= 0
+        assert "secret" not in job.error and job.error == run.error
+        event = db.scalar(select(JobEvent).where(JobEvent.job_id == job_id, JobEvent.type == "error"))
+        assert event.data["error_code"] == code and event.data["stage"] == stage
+        assert db.get(Document, doc_id).folder_id is None
+        assert db.scalar(select(func.count()).select_from(AgentPlan)) == 0
+
+
+def test_compact_references_roundtrip_existing_ids_and_keep_original_snapshot():
+    from app.agent.organization import (
+        OrganizationDraft,
+        compact_source,
+        convert_draft,
+        expand_references,
+        model_payload,
+    )
+
+    source = {"documents": [{"id": "document-uuid", "folder_id": None, "tag_ids": [], "name": "资料", "summary": "摘要" * 400}],
+        "folders": [{"id": "folder-uuid", "parent_id": None, "name": "研究"}],
+        "tags": [{"id": "tag-uuid", "name": "主题", "aliases": []}]}
+    original = json.dumps(source, ensure_ascii=False)
+    compact, references = compact_source(source)
+    text = model_payload("按主题归档", compact)
+    assert "document-uuid" not in text and len(text) < len(original)
+    draft = OrganizationDraft(summary="按主题归档", documents=[{"document_id": "D1", "folder_id": "F1",
+        "existing_tag_ids": ["T1"], "reason": "主题一致"}])
+    plan = convert_draft(expand_references(draft, references), source)
+    move, tags = plan.operations
+    assert move.target_ids == ["document-uuid"] and move.params.folder_id == "folder-uuid"
+    assert tags.params.tag_ids == ["tag-uuid"]
+    assert json.dumps(source, ensure_ascii=False) == original
+    with pytest.raises(ValueError):
+        expand_references(OrganizationDraft(summary="不能重复", documents=[draft.documents[0],
+            {"document_id": "document-uuid", "folder_id": None, "reason": "重复"}]), references)
 
 
 @pytest.mark.parametrize("ref", ["move-2", "tags-3"])
