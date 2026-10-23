@@ -162,7 +162,16 @@ def _parse_docx(data: bytes) -> ParsedDocument:
         elif element.tag == qn("w:tbl"):
             table = Table(element, document)
             for row in table.rows:
-                blocks.append((" | ".join(cell.text for cell in row.cells), 0))
+                # python-docx repeats the same XML cell for each occupied grid
+                # column of a horizontal merge. Keep one copy of that cell,
+                # while preserving equal text in distinct, meaningful cells.
+                seen_cells = set()
+                texts = []
+                for cell in row.cells:
+                    if cell._tc not in seen_cells:
+                        seen_cells.add(cell._tc)
+                        texts.append(cell.text)
+                blocks.append((" | ".join(texts), 0))
     starts = []
     offset = 0
     for index, (text, level) in enumerate(blocks):

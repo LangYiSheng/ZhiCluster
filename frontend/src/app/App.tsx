@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useReducer, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   Navigate,
   useLocation,
@@ -25,7 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { api, errorText, json } from "../lib/api";
+import { api, errorText } from "../lib/api";
 import type {
   Citation,
   Document,
@@ -58,54 +58,7 @@ const Tasks = lazy(() =>
   import("../features/tasks/Tasks").then((m) => ({ default: m.Tasks })),
 );
 
-function EmptyTrash() {
-  const client = useQueryClient();
-  const bases = useQuery({
-    queryKey: ["deleted-kbs"],
-    queryFn: () =>
-      api<KnowledgeBase[]>("/knowledge-bases?include_deleted=true"),
-  });
-  const restore = useMutation({
-    mutationFn: (id: string) =>
-      api(`/knowledge-bases/${id}/restore`, json("POST")),
-    onSuccess: () => {
-      void client.invalidateQueries();
-      toast.success("知识库已恢复");
-    },
-    onError: (error) => toast.error(errorText(error)),
-  });
-  if (bases.isPending) return <Loading />;
-  if (bases.isError)
-    return (
-      <ErrorState error={bases.error} retry={() => void bases.refetch()} />
-    );
-  const deleted = bases.data.filter((base) => base.deleted_at);
-  return (
-    <section className="empty-trash-page">
-      <h1>回收站</h1>
-      {deleted.length ? (
-        <div className="deleted-library-cards">
-          {deleted.map((base) => (
-            <div key={base.id}>
-              <BookOpen size={20} />
-              <span>{base.name}</span>
-              <Button
-                disabled={restore.isPending}
-                onClick={() => restore.mutate(base.id)}
-              >
-                恢复知识库
-              </Button>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <Empty title="回收站很干净">
-          删除的文档、文件夹和知识库会显示在这里。
-        </Empty>
-      )}
-    </section>
-  );
-}
+const Trash = lazy(() => import("../features/trash/Trash").then((m) => ({ default: m.Trash })));
 
 export function App() {
   const ui = useUI();
@@ -547,8 +500,8 @@ export function App() {
                   <Settings kbId={actualKbId} />
                 ) : view === "tasks" ? (
                   <Tasks kb={kb || null} documentId={selectedId || undefined} />
-                ) : view === "trash" && !kb ? (
-                  <EmptyTrash />
+                ) : view === "trash" ? (
+                  <Trash />
                 ) : !kb ? (
                   <Empty title="创建一个知识库">
                     点击“个人知识库”旁的加号，收集你的第一份资料。
@@ -580,7 +533,7 @@ export function App() {
                     kb={kb}
                     folders={folders.data || []}
                     tags={tags.data || []}
-                    trash={view === "trash"}
+                    trash={false}
                     layout="page"
                     selectedId=""
                     onOpen={openDoc}

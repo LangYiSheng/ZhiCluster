@@ -260,29 +260,42 @@
   border-radius: 6px;
 }
 .citations {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: 6px;
   margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }
-.citations > .tiny {
-  width: 100%;
+.citations ol {
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  gap: 2px;
 }
-.citations > button {
+.citations li > button {
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid var(--border);
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
   border-radius: var(--radius-control);
-  padding: 8px 10px;
-  max-width: 220px;
+  padding: 4px 5px;
   text-align: left;
-  background: var(--panel-subtle);
 }
-.citations strong {
+.citations li > button:hover:not(:disabled) {
+  background: var(--hover);
+}
+.citations .source-title {
   font-size: var(--text-caption);
   display: block;
-  max-width: 170px;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -290,8 +303,102 @@
 }
 .citations small {
   font-size: var(--text-caption);
-  display: block;
   color: var(--muted);
+  flex-shrink: 0;
+}
+.citation-marker {
+  display: inline-grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  padding-inline: 4px;
+  margin-inline: 2px;
+  border-radius: 4px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font: 500 10px/1 var(--font-ui);
+  vertical-align: super;
+}
+.citation-marker:hover:not(:disabled) {
+  box-shadow: 0 0 0 1px var(--primary);
+}
+.citation-marker:disabled {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.chat-progress {
+  font-size: var(--text-caption);
+  color: var(--muted);
+  margin-block: 8px 12px;
+}
+.chat-progress > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  width: fit-content;
+  list-style: none;
+}
+.chat-progress > summary::-webkit-details-marker {
+  display: none;
+}
+.chat-progress .progress-chevron {
+  transition: transform 0.15s;
+}
+.chat-progress[open] .progress-chevron {
+  transform: rotate(180deg);
+}
+.chat-progress ol {
+  list-style: none;
+  display: grid;
+  gap: 9px;
+  margin: 12px 0 2px 6px;
+  padding: 2px 0 2px 14px;
+  border-left: 1px solid var(--border);
+}
+.execution-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: execution-enter 0.18s ease-out;
+}
+.execution-step small {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.execution-step.is-running {
+  color: var(--primary);
+}
+.execution-step.is-failed {
+  color: var(--danger);
+}
+.execution-notice {
+  margin-top: 9px;
+  line-height: 1.7;
+}
+.progress-spinner {
+  animation: progress-spin 1.2s linear infinite;
+}
+@keyframes progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes execution-enter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-spinner,
+  .execution-step {
+    animation: none;
+  }
 }
 .source-number {
   font-size: var(--text-caption);

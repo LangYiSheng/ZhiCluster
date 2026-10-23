@@ -5,13 +5,17 @@ The database must exist; Alembic initializes it. Tests retain inspectable eviden
 """
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 import pymupdf
 import pytest
 from docx import Document as WordDocument
@@ -234,3 +238,143 @@ def test_pg_old_worker_cannot_save_vectors_after_lease_transfer(pg_factory, tmp_
         assert db.get(Document, document_id).index_status != "ready"
         db.get(IngestionJob, job_id).status = "cancelled"
         db.commit()
+
+
+def test_pg_parallel_documents_share_profile_and_overlap_provider_requests(pg_factory, tmp_path):
+    inputs = [create_input(pg_factory, tmp_path) for _ in range(2)]
+    settings = config(tmp_path, embedding_base_url="https://parallel.invalid/v1", embedding_api_key="test-only", embedding_model=f"parallel-{uuid4().hex[:8]}")
+    barrier = threading.Barrier(2, timeout=8)
+    lock = threading.Lock()
+    overlapping = []
+    active = 0
+
+    def respond(request):
+        nonlocal active
+        payload = json.loads(request.content)
+        with lock:
+            active += 1
+            overlapping.append(active)
+        try:
+            barrier.wait()
+            return httpx.Response(200, json={"data": [{"index": index, "embedding": [1.0, 0.1, 0.2]} for index, _ in enumerate(payload["input"])]})
+        finally:
+            with lock:
+                active -= 1
+
+    with pg_factory() as db:
+        for _, _, _, job_id in inputs:
+            job = db.get(IngestionJob, job_id)
+            job.status, job.lease_owner = "running", f"parallel-{job_id}"
+            job.lease_until = utcnow() + timedelta(seconds=60)
+        db.commit()
+    transport = httpx.MockTransport(respond)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        tasks = [pool.submit(process_ingestion_job, job_id, pg_factory, settings, ModelGateway(settings, transport=transport, workload="background"), f"parallel-{job_id}") for _, _, _, job_id in inputs]
+        for task in tasks:
+            task.result(timeout=15)
+    assert max(overlapping) == 2
+    with pg_factory() as db:
+        profiles = list(db.scalars(select(EmbeddingProfile).where(EmbeddingProfile.fingerprint == ModelGateway(settings).profile_fingerprint)))
+        assert len(profiles) == 1
+        for _, _, document_id, job_id in inputs:
+            assert db.get(Document, document_id).index_status == "ready"
+            assert db.get(IngestionJob, job_id).status == "partial_ready"
+
+
+def test_pg_metadata_edit_during_parse_uses_same_namespace_order(pg_factory, tmp_path, monkeypatch):
+    from app.worker import pipeline
+
+    _, kb_id, document_id, job_id = create_input(pg_factory, tmp_path)
+    settings = config(tmp_path)
+    namespace_held = threading.Event()
+    worker_waiting_namespace = threading.Event()
+    parsed_ready = threading.Event()
+    main_thread = threading.get_ident()
+    original_parser = pipeline.parse_document
+    metadata_tasks = []
+
+    def edit_metadata():
+        with pg_factory() as db:
+            db.scalar(select(KnowledgeBase).where(KnowledgeBase.id == kb_id).with_for_update())
+            namespace_held.set()
+            assert worker_waiting_namespace.wait(4), "pipeline took a document write lock before the namespace"
+            document = db.scalar(select(Document).where(Document.id == document_id).with_for_update())
+            document.display_name = "concurrent-metadata.txt"
+            document.version += 1
+            db.commit()
+
+    def observe(connection, cursor, statement, parameters, context, executemany):
+        if threading.get_ident() == main_thread and parsed_ready.is_set() and "FROM knowledge_bases" in statement and "FOR UPDATE" in statement:
+            worker_waiting_namespace.set()
+
+    with ThreadPoolExecutor(max_workers=1) as editor:
+        def parse_then_edit(*args):
+            parsed = original_parser(*args)
+            metadata_tasks.append(editor.submit(edit_metadata))
+            assert namespace_held.wait(3)
+            parsed_ready.set()
+            return parsed
+
+        monkeypatch.setattr(pipeline, "parse_document", parse_then_edit)
+        event.listen(pg_factory.kw["bind"], "before_cursor_execute", observe)
+        try:
+            process_ingestion_job(job_id, pg_factory, settings)
+            metadata_tasks[0].result(timeout=6)
+        finally:
+            event.remove(pg_factory.kw["bind"], "before_cursor_execute", observe)
+    with pg_factory() as db:
+        document = db.get(Document, document_id)
+        assert document.display_name == "concurrent-metadata.txt"
+        assert document.parse_status == "ready"
+        assert db.get(IngestionJob, job_id).status == "partial_ready"
+
+
+def test_pg_claim_rechecks_sibling_after_candidate_snapshot_before_document_lock(pg_factory, tmp_path):
+    _, kb_id, document_id, ingest_id = create_input(pg_factory, tmp_path)
+    with pg_factory() as db:
+        reindex = IngestionJob(kb_id=kb_id, document_id=document_id, kind="reindex")
+        db.add(reindex)
+        db.commit()
+        reindex_id = reindex.id
+    candidate_read = threading.Event()
+    resume_first = threading.Event()
+    first_thread = []
+
+    def pause_after_candidates(connection, cursor, statement, parameters, context, executemany):
+        if first_thread and threading.get_ident() == first_thread[0] and not candidate_read.is_set() and "FROM ingestion_jobs" in statement and "FOR UPDATE SKIP LOCKED" in statement:
+            candidate_read.set()
+            assert resume_first.wait(6), "test did not resume the first candidate snapshot"
+
+    def first_claim():
+        first_thread.append(threading.get_ident())
+        with pg_factory() as db:
+            claimed = claim_job(db, "candidate-before-sibling", 60, kinds=("ingest",))
+            return claimed.id if claimed else None
+
+    event.listen(pg_factory.kw["bind"], "after_cursor_execute", pause_after_candidates)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            first = pool.submit(first_claim)
+            try:
+                assert candidate_read.wait(3)
+                with pg_factory() as db:
+                    # This worker did not see the first job running yet, and
+                    # wins the document lock before the first worker reaches it.
+                    winner = claim_job(db, "sibling-committed-first", 60, kinds=("reindex",))
+                    assert winner.id == reindex_id
+                resume_first.set()
+                assert first.result(timeout=5) is None
+            finally:
+                resume_first.set()
+        with pg_factory() as db:
+            assert db.get(IngestionJob, ingest_id).status == "queued"
+            assert db.get(IngestionJob, ingest_id).attempts == 0
+            assert db.get(IngestionJob, reindex_id).status == "running"
+    finally:
+        event.remove(pg_factory.kw["bind"], "after_cursor_execute", pause_after_candidates)
+        with pg_factory() as db:
+            for job_id in (ingest_id, reindex_id):
+                job = db.get(IngestionJob, job_id)
+                job.status = "cancelled"
+                job.lease_owner = job.lease_until = None
+            db.commit()

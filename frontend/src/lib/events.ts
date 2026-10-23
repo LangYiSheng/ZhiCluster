@@ -10,11 +10,13 @@ export function useEvents(
   }, [onEvent]);
   useEffect(() => {
     if (!path) return;
+    let active = true;
     let after = Number(sessionStorage.getItem(`events:${path}`) || 0);
     const source = new EventSource(
       `/api${path}${path.includes("?") ? "&" : "?"}after=${after}`,
     );
     const receive = (e: MessageEvent<string>) => {
+      if (!active) return;
       let data: Record<string, unknown>;
       try {
         data = JSON.parse(e.data) as Record<string, unknown>;
@@ -48,6 +50,9 @@ export function useEvents(
     ].forEach((type) =>
       source.addEventListener(type, receive as EventListener),
     );
-    return () => source.close();
+    return () => {
+      active = false;
+      source.close();
+    };
   }, [path]);
 }

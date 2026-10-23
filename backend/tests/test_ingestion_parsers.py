@@ -83,6 +83,23 @@ def test_file_structure_validation():
         validate_content(output.getvalue(), "docx")
 
 
+def test_docx_merged_cell_is_once_per_row_but_equal_independent_values_remain(tmp_path):
+    path = tmp_path / "merged-form.docx"
+    document = Document()
+    document.add_paragraph("资格申请表")
+    table = document.add_table(rows=2, cols=7)
+    merged = table.cell(0, 0).merge(table.cell(0, 6))
+    merged.text = "信息与智能科学学院"
+    table.cell(1, 0).text = "相同内容"
+    table.cell(1, 1).text = "相同内容"
+    document.save(path)
+    parsed = parse_document(path)
+    assert parsed.plain_text.count("信息与智能科学学院") == 1
+    assert parsed.plain_text.count("相同内容") == 2
+    assert "相同内容 | 相同内容" in parsed.plain_text
+    assert parsed.sections[0].anchor == {"paragraph_start": 1, "paragraph_end": 3}
+
+
 def test_chunking_is_deterministic_bounded_and_covers_source(tmp_path):
     path = tmp_path / "long.md"
     text = "# 长文\n" + "这是需要保留原始定位的研究证据，检索时必须能找到。\n" * 150

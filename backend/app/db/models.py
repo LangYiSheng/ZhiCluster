@@ -45,6 +45,15 @@ class AppConfiguration(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class StorageDeletion(Entity, Base):
+    """Durable file cleanup after trash metadata has been committed."""
+    __tablename__ = "storage_deletions"
+    owner_id: Mapped[str] = mapped_column(String(36), index=True)
+    storage_key: Mapped[str] = mapped_column(String(255), unique=True)
+    attempts: Mapped[int] = mapped_column(default=0)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
 class User(Entity, Base):
     __tablename__ = "users"
     email: Mapped[str] = mapped_column(String(255), unique=True)

@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 from app.api.library import router as library_router
+from app.api.trash import router as trash_router
 from app.api.workflows import router as workflow_router
 from app.core.config import get_settings
 from app.core.errors import AppError
@@ -68,6 +69,7 @@ async def unexpected_error(request, exc):
 
 
 app.include_router(library_router)
+app.include_router(trash_router)
 app.include_router(workflow_router)
 from app.api.agent import router as agent_router  # noqa: E402
 

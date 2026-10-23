@@ -207,3 +207,27 @@ def test_full_fake_ai_pipeline_persists_suggestions_without_applying(ingestion_c
         assert suggestion.status == "pending"
         assert suggestion.payload["new_tag_names"] == ["检索", "知识库", "RAG"]
         assert document.folder_id is None
+
+
+def test_provider_failure_after_lease_transfer_cannot_mark_document_failed(ingestion_context):
+    factory, config, document_id, job_id = ingestion_context
+    config.embedding_base_url = "https://embedding.invalid/v1"
+    config.embedding_api_key = "test-only-key"
+    config.embedding_model = "fake-lease-transfer"
+    with factory() as db:
+        claim_job(db, "old-worker", 60)
+
+    class TransferredGateway(ModelGateway):
+        def embed(self, texts):
+            with factory() as db:
+                db.get(IngestionJob, job_id).lease_owner = "new-worker"
+                db.commit()
+            raise ProviderError("provider failed after recovery", retryable=True)
+
+    process_ingestion_job(job_id, factory, config, TransferredGateway(config), "old-worker")
+    with factory() as db:
+        assert db.get(IngestionJob, job_id).lease_owner == "new-worker"
+        assert db.get(IngestionJob, job_id).status == "running"
+        document = db.get(Document, document_id)
+        assert document.index_status != "failed"
+        assert document.error is None

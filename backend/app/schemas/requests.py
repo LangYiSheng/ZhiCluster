@@ -70,6 +70,7 @@ class Search(Input):
     date_from: str | None = None
     date_to: str | None = None
     mode: Literal["keyword", "hybrid"] = "hybrid"
+    rerank: bool = False
     limit: int = Field(default=30, ge=1, le=100)
     offset: int = Field(default=0, ge=0, le=10000)
 

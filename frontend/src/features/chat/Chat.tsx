@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, MessageSquare, Sparkles } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
-import { api, anchorText, errorText, json } from "../../lib/api";
+import { api, errorText, json } from "../../lib/api";
 import type {
   Citation,
   Conversation,
@@ -13,13 +11,16 @@ import type {
   Message,
   Tag,
 } from "../../lib/api";
-import { useEvents } from "../../lib/events";
 import { useSessionDraft } from "../../lib/useSessionDraft";
 import { Button } from "../../components/ui/button";
 import { Dialog } from "../../components/ui/dialog";
 import { ErrorState, Loading } from "../../components/common";
 import { ConversationHistory } from "./ConversationHistory";
 import { ScopeSelector } from "./ScopeSelector";
+import { ChatProgress } from "./ChatProgress";
+import { CitationList, MessageContent } from "./MessageContent";
+import { useChatStream } from "./useChatStream";
+import { isMessageBusy } from "./chatEvents";
 const ignoreHistoryChange = () => {};
 export function Chat({
   kb,
@@ -52,7 +53,6 @@ export function Chat({
   const [scopeTags, setScopeTags] = useState<string[]>([]);
   const [scopeFolders, setScopeFolders] = useState<string[]>([]);
   const [includeDescendants, setIncludeDescendants] = useState(true);
-  const [stream, setStream] = useState("");
   const [rename, setRename] = useState<Conversation | null>(null);
   useEffect(() => {
     if (!active) {
@@ -68,8 +68,9 @@ export function Chat({
     queryKey: ["messages", conversationId],
     queryFn: () => api<Message[]>(`/conversations/${conversationId}/messages`),
     enabled: !!conversationId,
-    refetchInterval: 4000,
+    refetchInterval: 15000,
   });
+  const displayedMessages = useChatStream(conversationId, messages.data || []);
   const persistedScope = conversations.data?.find(
     (c) => c.id === conversationId,
   )?.scope;
@@ -93,7 +94,6 @@ export function Chat({
   };
   useEffect(() => {
     localStorage.setItem(`conversation:${kb.id}`, conversationId);
-    setStream("");
   }, [conversationId, kb.id]);
   const send = useMutation({
     mutationFn: async () => {
@@ -117,7 +117,6 @@ export function Chat({
     onSuccess: (result) => {
       clearDraft(result.draftKey);
       setConversationId(result.conversationId);
-      setStream("");
       void qc.invalidateQueries({ queryKey: ["messages"] });
       void qc.invalidateQueries({ queryKey: ["conversations"] });
     },
@@ -141,31 +140,11 @@ export function Chat({
     },
     onError: (e) => toast.error(errorText(e)),
   });
-  useEvents(
-    conversationId ? `/conversations/${conversationId}/events` : null,
-    (e) => {
-      if (e.type === "token") {
-        const token = e.data?.token || e.data?.content || e.data?.text;
-        if (typeof token === "string") setStream((s) => s + token);
-      }
-      if (["completed", "error"].includes(e.type || "")) {
-        setStream("");
-        void qc.invalidateQueries({ queryKey: ["messages", conversationId] });
-      }
-    },
-  );
-  const busy =
-    send.isPending ||
-    messages.data?.some((m) =>
-      ["queued", "running", "generating", "processing"].includes(
-        m.status || "",
-      ),
-    );
+  const busy = send.isPending || displayedMessages.some(isMessageBusy);
   const isEmpty =
-    !messages.data?.length &&
+    !displayedMessages.length &&
     !messages.isError &&
-    !(messages.isPending && conversationId) &&
-    !stream;
+    !(messages.isPending && conversationId);
   return (
     <div className={`chat-container ${isEmpty ? "chat-is-empty" : ""}`}>
       <ConversationHistory
@@ -195,9 +174,11 @@ export function Chat({
             error={messages.error}
             retry={() => void messages.refetch()}
           />
-        ) : messages.isPending && conversationId ? (
+        ) : messages.isPending &&
+          conversationId &&
+          !displayedMessages.length ? (
           <Loading />
-        ) : !messages.data?.length ? (
+        ) : !displayedMessages.length ? (
           <div className="chat-welcome">
             <div className="welcome-symbol">
               <Sparkles size={28} />
@@ -206,71 +187,30 @@ export function Chat({
             <p>从你的文档出发，寻找答案、发现线索。</p>
           </div>
         ) : (
-          messages.data.map((m) => (
+          displayedMessages.map((m) => (
             <article className={`message message-${m.role}`} key={m.id}>
               <div className="message-avatar">
                 {m.role === "user" ? "我" : <Sparkles size={16} />}
               </div>
               <div className="message-body">
                 <strong>{m.role === "user" ? "你" : "知簇"}</strong>
-                <div className="markdown">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
-                    {m.content ||
-                      (["queued", "running", "processing"].includes(
-                        m.status || "",
-                      )
-                        ? "正在查阅知识库…"
-                        : "")}
-                  </ReactMarkdown>
-                </div>
+                {m.role === "assistant" && <ChatProgress message={m} />}
+                <MessageContent
+                  content={m.content}
+                  citations={m.citations}
+                  onCitation={onCitation}
+                />
                 {m.error && <p className="notice warning">{m.error}</p>}
-                {!!m.citations?.length && (
-                  <div className="citations">
-                    <span className="tiny muted">真实来源</span>
-                    {m.citations.map((c, i) => (
-                      <button
-                        key={c.chunk_id}
-                        disabled={c.available === false}
-                        title={
-                          c.available === false
-                            ? "来源已删除或无权访问"
-                            : undefined
-                        }
-                        onClick={() => onCitation(c)}
-                      >
-                        <FileSource ordinal={c.ordinal || i + 1} />
-                        <div>
-                          <strong>
-                            {c.document_name || c.display_name || "查看原文"}
-                          </strong>
-                          <small>
-                            {c.available === false
-                              ? "来源已删除或无权访问"
-                              : anchorText(c)}
-                          </small>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+                {m.role === "assistant" && (
+                  <CitationList
+                    content={m.content}
+                    citations={m.citations}
+                    onCitation={onCitation}
+                  />
                 )}
               </div>
             </article>
           ))
-        )}
-        {stream && (
-          <article className="message message-assistant">
-            <div className="message-avatar">
-              <Sparkles size={16} />
-            </div>
-            <div className="message-body">
-              <strong>知簇</strong>
-              <div className="markdown">
-                <ReactMarkdown skipHtml remarkPlugins={[remarkGfm]}>
-                  {stream}
-                </ReactMarkdown>
-              </div>
-            </div>
-          </article>
         )}
       </div>
       <div className="chat-composer-wrap">
@@ -376,7 +316,4 @@ export function Chat({
       </Dialog>
     </div>
   );
-}
-function FileSource({ ordinal }: { ordinal: number }) {
-  return <span className="source-number">{ordinal}</span>;
 }

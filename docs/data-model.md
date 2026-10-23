@@ -1,12 +1,13 @@
 # 数据模型
 
-业务 schema 共 25 张表，见 `backend/app/db/models.py`。资源主键使用 UUID 字符串；除关联表 `document_tags` 和单例配置表 `app_configurations` 外，业务实体统一包含 `id`、`created_at`、`updated_at`。数据库由 Alembic 迁移创建，初始化任务可重复执行；运行期不依赖 `create_all()`。
+业务 schema 共 26 张表，见 `backend/app/db/models.py`。资源主键使用 UUID 字符串；除关联表 `document_tags` 和单例配置表 `app_configurations` 外，业务实体统一包含 `id`、`created_at`、`updated_at`。数据库由 Alembic 迁移创建，初始化任务可重复执行；运行期不依赖 `create_all()`。
 
 ## 表与职责
 
 | 表 | 主要字段与约束 | 职责 |
 | --- | --- | --- |
 | app_configurations | id=`runtime` 单例主键、revision、values JSON、secrets JSON、updated_at | 当前有效运行配置；提供方密钥只保存 Fernet 密文 |
+| storage_deletions | owner_id 索引、storage_key unique、attempts、error | 已确认永久删除后的原文件清理记录，不依赖已删除文档或 KB 外键 |
 | users | email unique、display_name | 固定本地 demo actor，预留未来真实用户 |
 | knowledge_bases | owner_id、name、description、visibility、version、deleted_at | 知识库与软删除 |
 | knowledge_base_members | kb_id/user_id unique、role check | owner/editor/viewer 权限角色 |
@@ -22,9 +23,9 @@
 | ingestion_jobs | document_id nullable、kb_id、kind、status/stage/progress、attempts、lease_owner/until、next_attempt_at、error、payload | DB 持久队列，kind 包括 ingest/reindex/chat/agent |
 | job_events | job_id、sequence、type、data JSON | 任务进度和错误事件，可回放 |
 | conversations | user_id、title、scope JSON、deleted_at | 多知识库/目录/标签范围及会话生命周期 |
-| messages | conversation_id、role、content、status、error、retrieval JSON | 持久化多轮问答和检索观测 |
+| messages | conversation_id、role、content、status、error、retrieval JSON | 持久化多轮问答、检索观测、执行阶段及流式事件水位 |
 | message_citations | message_id、chunk_id、document_id、ordinal、anchors、snippet | 真实 chunk 白名单引用 |
-| conversation_events | conversation_id、sequence、type、data | token/citation/completed 等 SSE 回放 |
+| conversation_events | conversation_id、sequence、type、data | progress、带偏移的 token、候选/最终 citation、completed/error 等 SSE 回放 |
 | agent_runs | kb_id、actor_id、thread_id unique、goal、status、error | 工作流实例与短 UUID thread |
 | agent_plans | run_id unique、kb_id、payload、status、version、approved_by/at、result | 用户审阅后的最终计划及审批 |
 | agent_plan_operations | plan_id、operation_id、payload、status | 规范化逐项操作执行记录 |
@@ -67,9 +68,17 @@ PostgreSQL 通过 `(id,kb_id)` 唯一键及复合外键强制以下关联同库�
 
 worker 领取通过行锁与 SKIP LOCKED，租约过期可恢复；attempts 与 next_attempt_at 限制自动重试。向量每批提交，`(chunk_id,profile_id)` 唯一防重复保存；网络请求完成但数据库尚未提交时崩溃，仍可能再次发出付费请求，通用兼容接口无法提供跨服务原子性。
 
+交互与入库通道的每个并发任务独立持有 Session、owner 和心跳；领取同一文档的任务时同时检查活动任务并锁定文档，防止 ingest/reindex 并行重写同一产物。`EmbeddingProfile.fingerprint` 唯一与嵌套事务处理并发首次创建；冲突后复用已存在 profile，不回滚其他任务状态。任务并发数是 worker 启动参数，不新增持久化并发计数表；模型调用限额在各进程内共享，不是数据库全局信号量。
+
+聊天的 `retrieval.execution` 保存阶段、公开标签、状态、真实耗时与命中数量等信息；`retrieval.stream_sequence` 保存最新消息事件水位。首个片段及后续短批次在同一事务中更新正文和事件，token 的 `offset` 使用 UTF-16 字符位置，便于浏览器与消息快照对齐。候选 `message_citations` 在生成前保存，完成时删除未使用的候选，来源序号不因列表排序重编号。取消、租约移交与删除会话在持久状态中区分，浏览器断开订阅不改变任务状态。
+
 知识库、目录、文档、标签和计划使用 version；人工更新、审批、建议应用、撤销检查版本。Agent 一次审批读取最终 payload 和 base_versions，在事务中执行元数据变更并保存审计、撤销记录；撤销检查 after_version，防止覆盖后来的人工作业。
 
-删除知识库、文件夹和文档使用 deleted_at。文件原件保留在私有卷，恢复后重新进入可见性范围。首版没有永久删除任务，也不需要独立 trash_records 表。
+删除知识库、文件夹和文档先使用 deleted_at。软删除保留文件原件，恢复后重新进入可见性范围。回收站列表直接查询这些状态，不另建 trash_records；已删除知识库整体显示，其内部资源不重复计入独立文档/目录分类。
+
+确认永久删除后，事务按外键顺序移除引用、向量、chunk、章节、建议、标签关联、任务、相应审计与撤销记录及目标实体；整体删除 KB 时再移除 Agent 关联及 membership。若恢复状态已改变、存在执行中任务或其他相关事务持锁，则拒绝删除。保留的聊天正文不会被删除，但对应来源引用已不可用，永久删除无法通过恢复接口撤销。
+
+迁移 `05_storage_deletions` 创建 `storage_deletions`，与上述数据库删除在同一事务写入原文件待清理记录。`storage_key` 唯一避免重复排队；`owner_id` 用于仅清理当前确认用户的项目，不设文档/KB 外键，确保父资源删除后仍能重试。请求提交元数据后，每次最多处理 64 条已确认记录，成功后删除记录；失败递增 attempts 并保存脱敏错误。API 返回剩余数量，用户再次确认清空时重试；没有后台自动删除或时间到期删除。文件清理仅针对 `<kb_uuid>/<document_uuid>/original` 的具体文件，拒绝越界和目录符号链接/联接。
 
 ## Embedding 与索引
 

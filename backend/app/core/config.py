@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     max_concurrent_model_calls: int = 3
     job_lease_seconds: int = 180
     worker_poll_seconds: float = 2
+    worker_ingestion_concurrency: int = 3
+    worker_interactive_concurrency: int = 1
     summary_input_tokens: int = 6000
     summary_max_calls: int = 80
 

@@ -230,7 +230,7 @@ it("受控响应验证processing禁发、真实引用序号与持久会话范围
                   {
                     id: "m-1",
                     role: "assistant",
-                    content: "",
+                    content: "已生成的局部回答[S3]",
                     status: "processing",
                     citations: [
                       {
@@ -283,7 +283,7 @@ it("受控响应验证processing禁发、真实引用序号与持久会话范围
       />
     </QueryClientProvider>,
   );
-  await screen.findByText("正在查阅知识库…");
+  await screen.findByText("等待任务开始");
   expect(screen.getByText("3", { selector: ".source-number" })).toBeVisible();
   expect(screen.getByRole("button", { name: /已删除的来源/ })).toBeDisabled();
   expect(screen.getByText(/问答范围 · 2 个知识库/)).toBeVisible();

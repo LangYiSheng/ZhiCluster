@@ -127,7 +127,7 @@ def rebuild(body: Rebuild, db: Session = Depends(get_db, scope="function")):
 
 @router.post("/search", response_model=SearchOut)
 def search(body: Search, db: Session = Depends(get_db, scope="function")):
-    return search_knowledge(db, get_actor(db), body.model_dump())
+    return search_knowledge(db, get_actor(db), body.model_dump(), rerank=body.rerank)
 
 
 @router.get("/ingestion/jobs", response_model=list[JobOut])
@@ -306,7 +306,7 @@ def messages(conversation_id: str, db: Session = Depends(get_db, scope="function
                 doc = get_document(db, get_actor(db), citation.document_id)
                 data["document_name"], data["available"] = doc.display_name, True
             except AppError:
-                data["snippet"], data["available"] = "来源已删除或不可访问", False
+                data["snippet"], data["document_name"], data["available"] = "来源已删除或不可访问", "来源不可用", False
             citations.append(data)
         item["citations"] = citations
         result.append(item)
@@ -335,7 +335,8 @@ def send_message(conversation_id: str, body: ChatMessage, db: Session = Depends(
     db.flush()
     job = IngestionJob(kb_id=item.scope["kb_ids"][0], kind="chat", payload={"conversation_id": item.id, "message_id": message.id})
     db.add(job)
-    emit_chat(db, item.id, "status", {"message_id": message.id, "message": "已排队，正在检索资料"})
+    sequence = emit_chat(db, item.id, "status", {"message_id": message.id, "message": "已排队，等待检索资料"})
+    message.retrieval = {"stream_sequence": sequence}
     return message
 
 
@@ -347,10 +348,11 @@ def conversation_events(conversation_id: str, after: int = Query(0, ge=0), last_
         data = dict(item.data)
         if item.type == "citation" and data.get("document_id"):
             try:
-                get_document(session, get_actor(session), data["document_id"])
+                doc = get_document(session, get_actor(session), data["document_id"])
+                data["document_name"] = doc.display_name
                 data["available"] = True
             except AppError:
-                data["snippet"], data["available"] = "来源已删除或不可访问", False
+                data["snippet"], data["document_name"], data["available"] = "来源已删除或不可访问", "来源不可用", False
         return data
 
     return event_stream(ConversationEvent, ConversationEvent.conversation_id, conversation_id, cursor, terminal=lambda session: not session.scalar(select(Message.id).where(Message.conversation_id == conversation_id, Message.status.in_(["queued", "processing"]))), session_factory=sessionmaker(db.get_bind(), expire_on_commit=False), authorize=lambda session: checked_conversation(session, conversation_id), transform=visible_event)

@@ -72,6 +72,15 @@ export type SearchResponse = {
   elapsed_ms?: number;
   total?: number;
 };
+export type ChatStep = {
+  stage: string;
+  label: string;
+  status: "running" | "completed" | "failed";
+  elapsed_ms?: number;
+  source_count?: number;
+  mode?: string;
+  notice?: string;
+};
 export type Message = {
   id: string;
   role: string;
@@ -79,6 +88,12 @@ export type Message = {
   status?: string;
   error?: string;
   citations?: Citation[];
+  retrieval?: {
+    execution?: ChatStep[];
+    stream_sequence?: number;
+    mode?: string;
+    notice?: string;
+  };
 };
 export type Conversation = {
   id: string;

@@ -5,12 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import threading
 import time
 from collections.abc import Iterator
 from typing import Any
 
 import httpx
+
+from app.ai.concurrency import provider_limiter
 
 
 class AIUnavailable(RuntimeError):
@@ -33,10 +34,11 @@ class ModelGateway:
     MODEL_LIST_MAX_BYTES = 1024 * 1024
     MODEL_LIST_TIMEOUT_SECONDS = 15
 
-    def __init__(self, settings: Any, *, transport: httpx.BaseTransport | None = None):
+    def __init__(self, settings: Any, *, transport: httpx.BaseTransport | None = None, workload: str = "interactive"):
         self.settings = settings
         self.transport = transport
-        self._semaphore = threading.BoundedSemaphore(max(1, int(getattr(settings, "max_concurrent_model_calls", 3))))
+        self._limiter = provider_limiter(settings)
+        self._background = workload == "background"
 
     def _config(self, prefix: str) -> tuple[str, str, str, float, int]:
         return (
@@ -123,10 +125,11 @@ class ModelGateway:
         if not all((base_url, key, model)):
             raise AIUnavailable("需要配置模型服务" if prefix == "llm" else "需要配置 Embedding 模型服务")
         payload = {"model": model, **payload}
-        with self._semaphore, httpx.Client(timeout=timeout, transport=self.transport) as client:
+        with httpx.Client(timeout=timeout, transport=self.transport) as client:
             for attempt in range(retries + 1):
                 try:
-                    response = client.post(f"{base_url}/{route}", json=payload, headers={"Authorization": f"Bearer {key}"})
+                    with self._limiter.slot(background=self._background):
+                        response = client.post(f"{base_url}/{route}", json=payload, headers={"Authorization": f"Bearer {key}"})
                     retryable = response.status_code == 429 or response.status_code >= 500
                     if response.is_error:
                         if retryable and attempt < retries:
@@ -164,7 +167,7 @@ class ModelGateway:
         if not self.llm_configured:
             raise AIUnavailable("需要配置模型服务")
         emitted = False
-        with self._semaphore, httpx.Client(timeout=timeout, transport=self.transport) as client:
+        with self._limiter.slot(background=self._background), httpx.Client(timeout=timeout, transport=self.transport) as client:
             for attempt in range(retries + 1):
                 try:
                     with client.stream("POST", f"{base_url}/chat/completions", headers={"Authorization": f"Bearer {key}"}, json={"model": model, "messages": messages, "stream": True, "max_tokens": max_tokens}) as response:

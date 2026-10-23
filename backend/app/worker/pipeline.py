@@ -14,7 +14,6 @@ from app.db.models import (
     Document,
     DocumentChunk,
     DocumentSection,
-    EmbeddingProfile,
     Folder,
     IngestionJob,
     KnowledgeBase,
@@ -27,6 +26,7 @@ from app.ingestion.chunking import chunk_sections
 from app.ingestion.enrichment import classify_document, summarize_sections
 from app.ingestion.parsers import ParseError, parse_document
 from app.services.runtime_config import get_runtime_settings
+from app.worker.embeddings import ensure_embedding_profile
 from app.worker.queue import emit
 
 
@@ -45,7 +45,7 @@ def _safe_path(root: Path, key: str) -> Path:
 def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: Any = None, gateway: ModelGateway | None = None, owner: str | None = None) -> None:
     with session_factory() as db:
         settings = settings or get_runtime_settings(db, get_settings())
-        gateway = gateway or ModelGateway(settings)
+        gateway = gateway or ModelGateway(settings, workload="background")
         job = db.get(IngestionJob, job_id)
         if job is None or job.status in {"cancelled", "completed"}:
             return
@@ -56,17 +56,22 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
         if document is None or document.deleted_at or kb is None or kb.deleted_at:
             job.status = "cancelled"
             job.error = "文档或知识库已删除"
+            job.lease_owner = job.lease_until = None
             db.commit()
             return
 
-        def check_active() -> None:
-            db.refresh(job)
-            db.refresh(document)
-            if job.status == "cancelled" or document.deleted_at or (owner and job.lease_owner != owner):
+        def check_active(*, lock: bool = False) -> None:
+            # Metadata edits and purge lock the KB namespace first. New section,
+            # vector and suggestion rows also take a KB key-share through FKs,
+            # so taking job/document first could deadlock with those requests.
+            db.refresh(kb, with_for_update=lock)
+            db.refresh(job, with_for_update=lock)
+            db.refresh(document, with_for_update=lock)
+            if job.status == "cancelled" or document.deleted_at or kb.deleted_at or (owner and (job.lease_owner != owner or job.status != "running")):
                 raise JobCancelled("任务已取消或租约已移交")
 
         def stage(name: str, progress: float) -> None:
-            check_active()
+            check_active(lock=True)
             job.stage = name
             job.progress = progress
             emit(db, job, "progress", {"stage": name, "progress": progress, "document_id": document.id})
@@ -79,6 +84,7 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
             if document.parse_status != "ready":
                 stage("parsing", 5)
                 parsed = parse_document(_safe_path(Path(settings.upload_root), document.storage_key), document.ext)
+                check_active(lock=True)
                 # Rebuild only on parse retry, never for folder/tag/name changes.
                 chunk_ids = select(DocumentChunk.id).where(DocumentChunk.document_id == document.id)
                 db.execute(delete(ChunkEmbedding).where(ChunkEmbedding.chunk_id.in_(chunk_ids)))
@@ -94,6 +100,7 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
                 document.error = None
                 db.commit()
                 stage("chunking", 20)
+                check_active(lock=True)
                 for chunk in chunk_sections(parsed.sections, int(settings.chunk_size_tokens), int(settings.chunk_overlap_tokens)):
                     db.add(DocumentChunk(kb_id=document.kb_id, document_id=document.id, section_id=section_ids[chunk.section_index], chunk_index=chunk.chunk_index, content=chunk.content, token_count=chunk.token_count, anchors=chunk.anchor, source_start=chunk.source_start, source_end=chunk.source_end))
                 db.commit()
@@ -103,6 +110,7 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
                 # A crash between the durable parse and chunk commits is recoverable.
                 from app.ingestion.parsers import ParsedSection
 
+                check_active(lock=True)
                 rebuilt = []
                 source_offset = 0
                 for section in sections:
@@ -118,17 +126,14 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
 
             stage("embedding", 30)
             if not gateway.embeddings_configured:
+                check_active(lock=True)
                 document.index_status = "unconfigured"
                 db.commit()
             else:
                 try:
-                    profile = db.scalar(select(EmbeddingProfile).where(EmbeddingProfile.fingerprint == gateway.profile_fingerprint))
-                    if profile is None:
-                        profile = EmbeddingProfile(fingerprint=gateway.profile_fingerprint, model_name=settings.embedding_model, dimension=int(settings.embedding_dimension), status="active")
-                        db.add(profile)
-                        db.flush()
-                    if profile.dimension != int(settings.embedding_dimension):
-                        raise ProviderError("Embedding profile 维度不兼容，需重新向量化")
+                    check_active(lock=True)
+                    profile = ensure_embedding_profile(db, gateway, settings)
+                    db.commit()
                     existing = set(db.scalars(select(ChunkEmbedding.chunk_id).where(ChunkEmbedding.profile_id == profile.id, ChunkEmbedding.kb_id == document.kb_id, ChunkEmbedding.chunk_id.in_(select(DocumentChunk.id).where(DocumentChunk.document_id == document.id)))))
                     missing = [chunk for chunk in chunks if chunk.id not in existing]
                     batch_size = max(1, int(settings.embedding_batch_size))
@@ -136,7 +141,7 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
                         check_active()
                         batch = missing[start:start + batch_size]
                         vectors = gateway.embed([chunk.content for chunk in batch])
-                        check_active()
+                        check_active(lock=True)
                         for chunk, vector in zip(batch, vectors, strict=True):
                             if len(vector) != profile.dimension:
                                 raise ProviderError("Embedding 实际维度与 profile 不一致")
@@ -144,16 +149,18 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
                         job.progress = 30 + 25 * (start + len(batch)) / max(1, len(missing))
                         emit(db, job, "progress", {"stage": "embedding", "completed_chunks": len(existing.intersection({chunk.id for chunk in chunks})) + start + len(batch), "total_chunks": len(chunks), "progress": job.progress})
                         db.commit()
+                    check_active(lock=True)
                     document.index_status = "ready"
                     db.commit()
                 except (AIUnavailable, ProviderError) as error:
+                    check_active(lock=True)
                     document.index_status = "failed"
                     errors.append(str(error))
                     retryable |= getattr(error, "retryable", False)
                     db.commit()
 
             if job.kind == "reindex":
-                check_active()
+                check_active(lock=True)
                 job.status = "partial_ready" if errors or document.index_status != "ready" else "completed"
                 job.stage = "completed"
                 job.progress = 100
@@ -166,6 +173,7 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
 
             stage("summarizing", 60)
             if not gateway.llm_configured:
+                check_active(lock=True)
                 document.summary_status = "unconfigured"
                 document.classification_status = "unconfigured"
                 db.commit()
@@ -173,18 +181,19 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
                 if document.summary_status != "ready":
                     try:
                         def save_section(index: int, summary: str) -> None:
-                            check_active()
+                            check_active(lock=True)
                             sections[index].section_summary = summary
                             db.commit()
 
                         summary = summarize_sections(sections, gateway, settings, save_section)
-                        check_active()
+                        check_active(lock=True)
                         document.short_summary = summary.short_summary
                         document.detailed_summary = summary.detailed_summary
                         document.summary_metadata = {"keywords": summary.keywords, "main_topics": summary.main_topics}
                         document.summary_status = "ready"
                         db.commit()
                     except (AIUnavailable, ProviderError) as error:
+                        check_active(lock=True)
                         document.summary_status = "failed"
                         errors.append(str(error))
                         retryable |= getattr(error, "retryable", False)
@@ -197,7 +206,7 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
                         source_summary = document.detailed_summary or "\n".join(section.section_summary for section in sections if section.section_summary) or "\n".join(section.plain_text for section in sections[:3])
                         base_version = document.version
                         suggestion = classify_document(document.display_name, source_summary, folders, tags, gateway, int(settings.summary_input_tokens))
-                        check_active()
+                        check_active(lock=True)
                         db.refresh(document)
                         current = db.scalar(select(ClassificationSuggestion).where(ClassificationSuggestion.document_id == document.id))
                         if current is None:
@@ -210,11 +219,12 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
                         document.classification_status = "ready"
                         db.commit()
                     except (AIUnavailable, ProviderError) as error:
+                        check_active(lock=True)
                         document.classification_status = "failed"
                         errors.append(str(error))
                         retryable |= getattr(error, "retryable", False)
                         db.commit()
-            check_active()
+            check_active(lock=True)
             has_unconfigured = any(status == "unconfigured" for status in (document.index_status, document.summary_status, document.classification_status))
             job.error = "; ".join(errors) if errors else "需要配置模型服务；解析与关键词搜索已就绪" if has_unconfigured else None
             document.error = "; ".join(errors) if errors else None
@@ -233,8 +243,12 @@ def process_ingestion_job(job_id: str, session_factory=SessionLocal, settings: A
             db.rollback()
         except Exception as error:
             db.rollback()
-            job = db.get(IngestionJob, job_id)
+            job = db.scalar(select(IngestionJob).where(IngestionJob.id == job_id).with_for_update().execution_options(populate_existing=True))
+            if job is None or job.status == "cancelled" or (owner and (job.lease_owner != owner or job.status != "running")):
+                return
             document = db.get(Document, job.document_id)
+            if document is None or document.deleted_at:
+                return
             # Never include file bytes/provider response bodies/credentials in errors.
             message = str(error) if isinstance(error, ParseError) else f"入库阶段 {job.stage} 失败（{type(error).__name__}），请查看服务日志并重试"
             if document.parse_status != "ready":

@@ -4,7 +4,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  background: var(--panel-subtle);
+  background: var(--canvas);
   overflow: hidden;
 }
 .document-heading-bar {
@@ -463,7 +463,7 @@
 .documents-page {
   width: 100%;
   height: 100%;
-  background: var(--panel);
+  background: var(--canvas);
 }
 .documents-page .document-heading-bar {
   display: flex;
@@ -533,7 +533,7 @@
   padding: 16px 8px;
   max-height: none;
   border-right: 1px solid var(--border);
-  background: var(--panel-subtle);
+  background: var(--canvas);
 }
 .documents-page .document-navigation {
   padding: 0 2px;

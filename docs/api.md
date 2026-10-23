@@ -1,6 +1,6 @@
 # API 说明
 
-本文按实际 FastAPI OpenAPI 路由核对，当前共 **58 个 HTTP 操作**。完整输入及响应模型以运行后的 `http://localhost:8000/openapi.json` 为准；Swagger 位于 `http://localhost:8000/docs`。
+本文按实际 FastAPI OpenAPI 路由核对，当前共 **60 个 HTTP 操作**。完整输入及响应模型以运行后的 `http://localhost:8000/openapi.json` 为准；Swagger 位于 `http://localhost:8000/docs`。
 
 Web 代理将 `/api` 原样转发至 API 服务。业务路由统一使用 `/api` 前缀；OpenAPI 和 Swagger 使用上面的 API 直连地址。
 
@@ -58,6 +58,28 @@ Web 代理将 `/api` 原样转发至 API 服务。业务路由统一使用 `/api
 
 批量 `action` 为 `move|tags|trash|restore`；标签 `tag_mode=set|add|remove`。整个批次通过同一事务应用，跨库 ID 被拒绝。
 
+## 回收站与永久删除
+
+| 方法 | 路径 | 请求 / 行为 |
+| --- | --- | --- |
+| GET | `/api/trash` | 当前用户拥有的已删除资源，按类型搜索、分页；详见下文 |
+| POST | `/api/trash/purge` | `{kind,ids?,confirm:true}`；永久删除已确认项目并尝试清理原件 |
+
+列表参数为 `kind=document|folder|knowledge_base`（默认 document）、`q`（最长 200 字符）、`page`（默认 1）、`page_size`（默认 30，最大 100）。响应 `{items,total,counts,pending_file_cleanup}`；`counts` 包含三个类型各自的总数，不受本次搜索词影响。条目含 `{id,name,kb_id,kb_name,kind,deleted_at}`，知识库条目另有 `document_count/folder_count`。已删除知识库的内部文档及文件夹不再单独计入前两个分类，避免重复展示。恢复仍使用各资源原有的 `/restore` 接口。
+
+永久删除 `kind` 支持上述三个类型及 `all`。选择类型时 `ids` 必填、最多 200 个；`kind=all` 清除当前用户拥有的全部回收站内容，无需传 ID。`confirm` 必须为布尔值 true，省略或 false 返回 422。删除前检查 owner、软删除状态、文件夹子树和运行任务；项目已恢复、任务仍在执行或资源正在使用时不会部分完成，分别返回 `active_resource`、`task_running` 或 `trash_busy` 等 409。ID 不存在、不在回收站或没有管理权限返回 `404 trash_not_found`。
+
+成功示例：
+
+```json
+{
+  "deleted": {"document": 3, "folder": 1, "knowledge_base": 0},
+  "pending_file_cleanup": 0
+}
+```
+
+`deleted` 是已提交的元数据删除数量。其关联来源、向量、任务和必要的审计/撤销记录同时移除，永久删除不能恢复。原文件通过同一事务建立的 `StorageDeletion` 记录清理，每次请求只处理该用户最多 64 条。文件暂时被占用或路径不合法时保留待清理记录，`pending_file_cleanup` 返回剩余条数；再次明确提交 `kind=all,confirm=true` 可重试，包括回收站列表已为空时。没有后台自动清理或定时删除。
+
 ## 运行状态、模型与入库任务
 
 | 方法 | 路径 | 请求 / 行为 |
@@ -70,7 +92,7 @@ Web 代理将 `/api` 原样转发至 API 服务。业务路由统一使用 `/api
 | POST | `/api/settings/test-models` | 可选 `{scope,draft}`；仅测试指定能力且不保存；空请求保持三项测试 |
 | POST | `/api/settings/models` | `{scope:"llm"\|"embedding",draft?}`；使用所选连接 GET `/models`，返回 `{models:[{id}]}`，不保存 |
 | POST | `/api/settings/rebuild-embeddings` | `{kb_id}`；为已解析文档创建 reindex 后台任务 |
-| GET | `/api/ingestion/jobs` | 可选 `kb_id`，返回可访问库最新 200 个任务 |
+| GET | `/api/ingestion/jobs` | 可选 `kb_id`、`document_id`、`group=attention|active|completed`，返回可访问库最新 200 个任务；聊天任务仅显示自己的未删除会话 |
 | GET | `/api/ingestion/jobs/{job_id}` | 持久状态、阶段、进度、尝试次数、错误 |
 | POST | `/api/ingestion/jobs/{job_id}/retry` | 重试终态任务；运行中的任务返回 409；已有计划的 Agent 任务应打开计划或新建整理 |
 | POST | `/api/ingestion/jobs/{job_id}/cancel` | 取消 queued/running 任务；聊天解除会话忙状态，Agent 同步运行状态并阻止计划落库及审批 |
@@ -103,7 +125,9 @@ Web 代理将 `/api` 原样转发至 API 服务。业务路由统一使用 `/api
 }
 ```
 
-尚未通过网页保存时 `revision=0`，值来自后端启动环境默认值。首次保存会持久化完整的有效运行配置，包括保留的环境密钥；此后这些字段以数据库记录为准。数据库连接、监听地址、CORS、上传存储路径、上传大小限制、worker 轮询和租约参数仍由启动环境控制，不属于此 API 的可写字段。
+尚未通过网页保存时 `revision=0`，值来自后端启动环境默认值。首次保存会持久化完整的有效运行配置，包括保留的环境密钥；此后这些字段以数据库记录为准。数据库连接、监听地址、CORS、上传存储路径、上传大小限制、worker 轮询、租约及两个任务通道并发参数仍由启动环境控制，不属于此 API 的可写字段。`WORKER_INGESTION_CONCURRENCY` 默认 3，`WORKER_INTERACTIVE_CONCURRENCY` 默认 1，变更需重启 worker。
+
+`processing.max_concurrent_model_calls` 是单进程、相同连接配置网关共享的模型调用额度，和 worker 任务线程数量分别控制。限额至少为 2 时后台任务保留一个交互槽；API 和 worker 各自执行限额，不构成服务商账户或整个部署的全局上限。
 
 `PUT` 必须提供读取时的 `revision`，其余 section 和字段可部分提交。成功返回与 GET 相同的公开结构，revision 加一；保存提交在成功响应发出前完成。示例只修改聊天模型和超时，同时保留密钥：
 
@@ -166,7 +190,9 @@ LLM 与 Embedding 各自独立处理 `api_key`：省略、`null` 或空字符串
 }
 ```
 
-另支持 ISO 8601 `date_from/date_to`。未传 KB ID 时使用当前 actor 可访问知识库；指定不可访问 KB 返回 403。权限、未删除状态、文件夹及标签范围都在候选 SQL 中限定。`mode=keyword|hybrid`；无 Embedding 或模型不兼容时返回真实的 `mode=keyword` 和 `notice`。响应 `{items,total,mode,notice,elapsed_ms,kb_ids}`；每项包含真实 `document_id/chunk_id/section_id/anchors/snippet/content/score`。`total` 是本次最多 500 个融合候选的数量，并非全库穷举计数；`limit` 最大 100。
+另支持 ISO 8601 `date_from/date_to`。未传 KB ID 时使用当前 actor 可访问知识库；指定不可访问 KB 返回 403。权限、未删除状态、文件夹及标签范围在候选 SQL 中限定；Embedding 或证据重排网络等待后重新复核原范围。`mode=keyword|hybrid`；无 Embedding 或模型不兼容时返回真实的 `mode=keyword` 和 `notice`。响应 `{items,total,mode,notice,elapsed_ms,kb_ids,reranking}`；每项包含真实 `document_id/chunk_id/section_id/anchors/snippet/content/score`。`total` 是本次最多 600 个融合候选的数量，并非全库穷举计数；`limit` 最大 100。复合问题可将全文和最多两个子问句放入同一次 Embedding 请求。
+
+默认聊天与搜索不调用额外证据筛选模型。搜索请求显式传 `rerank=true` 可在本地排序之后执行一次证据重排，只接受已有候选 ID；最多 8 个候选、4,000 输入字符、400 输出 tokens，超时至多 12 秒且不重试。默认 `reranking.status` 为 skipped；失败时回退本地排序，有效空列表表示没有足够证据。该选项需聊天模型，耗时比默认检索更长。
 
 | 方法 | 路径 | 请求 / 行为 |
 | --- | --- | --- |
@@ -175,11 +201,15 @@ LLM 与 Embedding 各自独立处理 `api_key`：省略、`null` 或空字符串
 | GET | `/api/conversations/{conversation_id}` | 持久化范围及元数据 |
 | PATCH | `/api/conversations/{conversation_id}` | `{title}` |
 | DELETE | `/api/conversations/{conversation_id}` | 软删除会话，停止进行中的生成 |
-| GET | `/api/conversations/{conversation_id}/messages` | 消息及经过权限/删除状态校验的真实 `citations` |
+| GET | `/api/conversations/{conversation_id}/messages` | 消息、检索观测/执行阶段/事件水位，以及经过权限/删除状态校验的真实 `citations` |
 | POST | `/api/conversations/{conversation_id}/messages` | `{content}`；202；创建 assistant 消息和独立后台任务 |
-| GET | `/api/conversations/{conversation_id}/events` | token、检索状态、citation、完成/错误 SSE |
+| GET | `/api/conversations/{conversation_id}/events` | 实际执行阶段 progress、合批 token、候选/最终 citation、完成/错误 SSE |
 
 同一会话只允许一个 queued/processing 回复；后续提交返回 409。无任何可访问知识库时创建会话返回 `empty_scope`。答案引用仅从检索上下文 `[S1]` 等白名单标记构造；无效来源标记会被替换。PDF 使用页码锚点，MD/TXT 使用行号，DOCX 使用段落，不虚构 DOCX 页码。不可访问来源返回 `available=false`，不会继续返回其 snippet。
+
+消息的 `retrieval.execution` 保存 `{stage,label,status,elapsed_ms?,source_count?,...}` 阶段列表，`retrieval.stream_sequence` 是该消息最近持久化事件的水位。实际阶段包括 scope、keyword、可选 embedding、ranking、可选 reranking、context、generation；无命中、未配置能力或失败时不会伪造未执行阶段。`progress` 事件携带 `message_id` 和完整 `steps` 快照，`completed/error` 也携带最终步骤；这些内容不包含模型隐藏推理。
+
+生成前 `citation` 可携带 `candidate:true`，此时消息快照也能读到真实候选引用。回答完成时只保留正文实际使用的引用。token 指定对应 `message_id` 与 UTF-16 字符 `offset`，首次片段立即保存，后续约 120 ms 或 256 字符合批；调用方应将片段合入同一消息，避免把快照中的正文再拼一遍。前端以约 60 ms 的节奏更新 Markdown，完成后折叠过程并保留紧凑来源列表；代码和链接内的 `[Sx]` 不转换成引用按钮。
 
 ## 智能整理与整批审批
 
@@ -206,8 +236,8 @@ LLM 与 Embedding 各自独立处理 `api_key`：省略、`null` 或空字符串
 ```text
 id: 12
 event: token
-data: {"sequence":12,"timestamp":"2026-10-22T10:00:00+00:00","message_id":"...","token":"知识"}
+data: {"sequence":12,"timestamp":"2026-10-22T10:00:00+00:00","message_id":"...","token":"知识","offset":0}
 
 ```
 
-首次订阅可用 `?after=12`；重连也支持 `Last-Event-ID: 12`。事件有 `status/progress/token/tool_start/tool_end/plan_ready/approval_required/citation/completed/error`，具体按资源类型使用。连接断开不会取消 worker；应重新读取任务/消息/计划状态，再继续订阅。订阅过程中每次轮询重新验证资源权限，权限变化后发送 error 并关闭。聊天来源事件重放会再次遮蔽已删除/不可访问文档的 snippet。
+首次订阅可用 `?after=12`；重连也支持 `Last-Event-ID: 12`。事件有 `status/progress/token/tool_start/tool_end/plan_ready/approval_required/citation/completed/error`，具体按资源类型使用。连接断开不会取消 worker；应重新读取任务/消息/计划状态，再继续订阅。聊天可结合消息事件水位、事件 sequence 和 token offset 丢弃已保存片段；切换会话时关闭订阅并忽略旧连接尾事件，不取消后台执行。删除会话会结束当前 owner 的生成并释放租约；单纯 owner 交接不会让旧执行者覆盖新结果。订阅过程中每次轮询重新验证资源权限，权限变化后发送 error 并关闭。聊天来源事件重放会再次遮蔽已删除/不可访问文档的名称与 snippet。

@@ -112,6 +112,7 @@ class SearchOut(BaseModel):
     notice: str
     elapsed_ms: float
     kb_ids: list[str]
+    reranking: dict = Field(default_factory=dict)
 
 
 class ConversationOut(EntityOut):

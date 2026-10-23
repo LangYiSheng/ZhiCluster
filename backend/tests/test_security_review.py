@@ -9,6 +9,7 @@ from app.api.workflows import checked_job
 from app.core.config import Settings, get_settings
 from app.db.models import (
     ChunkEmbedding,
+    Conversation,
     ConversationEvent,
     Document,
     DocumentChunk,
@@ -56,7 +57,13 @@ async def test_active_sse_rechecks_permission_after_kb_deleted(factory):
     with factory() as db:
         kb = db.scalar(select(KnowledgeBase))
         kb_id = kb.id
-        job = IngestionJob(kb_id=kb.id, kind="chat", status="running")
+        conversation = Conversation(user_id=get_actor(db).id, title="SSE 权限测试", scope={"kb_ids": [kb_id]})
+        db.add(conversation)
+        db.flush()
+        message = Message(conversation_id=conversation.id, role="assistant", status="processing")
+        db.add(message)
+        db.flush()
+        job = IngestionJob(kb_id=kb.id, kind="chat", status="running", payload={"conversation_id": conversation.id, "message_id": message.id})
         db.add(job)
         db.flush()
         job_id = job.id

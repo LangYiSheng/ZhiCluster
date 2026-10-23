@@ -260,27 +260,29 @@ def test_worker_reads_next_job_snapshot_and_keeps_active_snapshot(factory, runti
         save(db, runtime_base, llm={"model": "before-save"})
     handlers = {}
     snapshots = []
-    claims = []
     monkeypatch.setattr(worker, "SessionLocal", factory)
     monkeypatch.setattr(worker, "get_settings", lambda: runtime_base)
     monkeypatch.setattr(worker.signal, "signal", lambda number, handler: handlers.update({number: handler}))
 
-    def claim(*args):
-        claims.append(1)
-        if len(claims) > 2:
-            handlers[signal.SIGTERM]()
-            return None
-        return SimpleNamespace(id=f"job-{len(claims)}", kind="chat")
+    class Scheduler:
+        busy = False
 
-    def dispatch(_id, _kind, _owner, settings):
-        snapshots.append(settings)
-        if len(snapshots) == 1:
-            with factory() as db:
-                save(db, runtime_base, 1, llm={"model": "after-save"})
-            assert settings.llm_model == "before-save"
+        def __init__(self, owner, settings, session_factory, dispatch):
+            assert session_factory is factory
 
-    monkeypatch.setattr(worker, "claim_job", claim)
-    monkeypatch.setattr(worker, "dispatch", dispatch)
+        def poll(self, settings):
+            snapshots.append(settings)
+            if len(snapshots) == 1:
+                with factory() as db:
+                    save(db, runtime_base, 1, llm={"model": "after-save"})
+                assert settings.llm_model == "before-save"
+            else:
+                handlers[signal.SIGTERM]()
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(worker, "WorkerScheduler", Scheduler)
     worker.run_worker()
     assert [snapshot.llm_model for snapshot in snapshots] == ["before-save", "after-save"]
     assert runtime_base.llm_model == ""
