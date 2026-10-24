@@ -1,4 +1,5 @@
 import unicodedata
+from collections import defaultdict, deque
 from datetime import datetime
 
 from sqlalchemy import delete, select
@@ -13,6 +14,8 @@ def normalized_name(value: str) -> str:
 
 
 def valid_name(value: str, limit=160) -> str:
+    if not isinstance(value, str):
+        raise AppError("invalid_name", f"名称不能为空，且最多 {limit} 个字符")
     value = value.strip()
     if not value or len(value) > limit or any(ord(c) < 32 for c in value):
         raise AppError("invalid_name", f"名称不能为空，且最多 {limit} 个字符")
@@ -34,16 +37,25 @@ def validate_folder(db, kb_id, folder_id):
 
 
 def descendants(db, kb_id, folder_ids):
-    folders = list(db.scalars(select(Folder).where(Folder.kb_id == kb_id, Folder.deleted_at.is_(None))))
     found = set(folder_ids)
-    for folder_id in found:
-        validate_folder(db, kb_id, folder_id)
-    for _ in range(len(folders) + 1):
-        added = {f.id for f in folders if f.parent_id in found} - found
-        if not added:
-            return found
-        found |= added
-    raise AppError("folder_cycle", "文件夹层级异常")
+    if not found:
+        return found
+    # Build the adjacency map once. Repeated whole-tree scans grow quadratically
+    # with directory depth, and loading full ORM entities is unnecessary here.
+    rows = list(db.execute(select(Folder.id, Folder.parent_id).where(
+        Folder.kb_id == kb_id, Folder.deleted_at.is_(None))))
+    if not found.issubset({folder_id for folder_id, _ in rows}):
+        raise AppError("invalid_folder", "文件夹不存在、已删除或属于其他知识库", 400)
+    children = defaultdict(list)
+    for folder_id, parent_id in rows:
+        children[parent_id].append(folder_id)
+    pending = deque(found)
+    while pending:
+        for child_id in children[pending.popleft()]:
+            if child_id not in found:
+                found.add(child_id)
+                pending.append(child_id)
+    return found
 
 
 def folder_name_conflict(db, kb_id, parent_id, name, exclude=None):
@@ -101,6 +113,8 @@ def get_document(db, actor, doc_id, include_deleted=False):
 
 
 def set_document_tags(db, doc, tag_ids, mode="set"):
+    if tag_ids is None:
+        raise AppError("invalid_tags", "标签列表不能为空值；使用空列表清除标签")
     ids = set(tag_ids)
     tags = list(db.scalars(select(Tag).where(Tag.id.in_(ids)))) if ids else []
     if len(tags) != len(ids) or any(t.kb_id != doc.kb_id for t in tags):
@@ -146,6 +160,18 @@ def document_snapshot(db, doc):
     data = snapshot(doc)
     data["tag_ids"] = list(db.scalars(select(DocumentTag.tag_id).where(DocumentTag.document_id == doc.id)))
     return data
+
+
+def document_snapshots(db, documents):
+    """Load tags for a bounded document page without one query per document."""
+    documents = list(documents)
+    if not documents:
+        return []
+    tags = defaultdict(list)
+    for document_id, tag_id in db.execute(select(DocumentTag.document_id, DocumentTag.tag_id).where(
+        DocumentTag.document_id.in_([doc.id for doc in documents])).order_by(DocumentTag.tag_id)):
+        tags[document_id].append(tag_id)
+    return [{**snapshot(doc), "tag_ids": tags[doc.id]} for doc in documents]
 
 
 def audit(db, actor, kb_id, action, entity_id, before, after, **kwargs):

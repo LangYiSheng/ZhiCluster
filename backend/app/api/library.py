@@ -39,6 +39,7 @@ from app.services.library import (
     create_folder,
     descendants,
     document_snapshot,
+    document_snapshots,
     folder_name_conflict,
     get_document,
     lock_kb_namespace,
@@ -137,8 +138,19 @@ def delete_folder(folder_id: str, db: Session = Depends(get_db, scope="function"
     db.refresh(folder)
     subtree = descendants(db, folder.kb_id, [folder.id])
     # Preserve each resource for explicit restore; content is excluded from search immediately.
-    for doc in db.scalars(select(Document).where(Document.folder_id.in_(subtree), Document.deleted_at.is_(None))):
-        update_document(db, actor, doc.id, {"deleted_at": True})
+    # The namespace is already locked. Lock and snapshot the batch once rather
+    # than re-entering update_document (and querying tags twice) for each file.
+    docs = list(db.scalars(select(Document).where(
+        Document.kb_id == folder.kb_id, Document.folder_id.in_(subtree), Document.deleted_at.is_(None),
+    ).order_by(Document.id).with_for_update().execution_options(populate_existing=True)))
+    before = document_snapshots(db, docs)
+    deleted_at = utcnow()
+    for doc in docs:
+        doc.deleted_at, doc.version = deleted_at, doc.version + 1
+    db.flush()
+    for doc, previous in zip(docs, before, strict=True):
+        after = {**snapshot(doc), "tag_ids": previous["tag_ids"]}
+        audit(db, actor, doc.kb_id, "update_document", doc.id, previous, after)
     for item in db.scalars(select(Folder).where(Folder.id.in_(subtree))):
         item.deleted_at, item.version = utcnow(), item.version + 1
     return {"status": "trashed", "folders": len(subtree)}
@@ -237,7 +249,8 @@ def documents(kb_id: str, folder_id: str | None = None, include_descendants: boo
         stmt = stmt.where(Document.parse_status == status)
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     order = {"name": Document.display_name, "type": Document.ext, "date": Document.created_at.desc()}.get(sort, Document.created_at.desc())
-    return {"items": [document_snapshot(db, d) for d in db.scalars(stmt.order_by(order, Document.id).offset((page - 1) * page_size).limit(page_size))], "total": total, "page": page, "page_size": page_size}
+    items = db.scalars(stmt.order_by(order, Document.id).offset((page - 1) * page_size).limit(page_size))
+    return {"items": document_snapshots(db, items), "total": total, "page": page, "page_size": page_size}
 
 
 @router.post("/knowledge-bases/{kb_id}/uploads")
