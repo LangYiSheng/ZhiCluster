@@ -117,6 +117,13 @@
   box-shadow: 0 2px 8px var(--color-shadow);
   padding: 13px 14px 10px;
   background: var(--panel-subtle);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+.chat-composer:focus-within {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 7%, transparent);
 }
 .chat-composer textarea {
   border: 0;
@@ -151,6 +158,17 @@
   color: var(--muted);
   margin-top: 10px;
   letter-spacing: 0.2px;
+  text-wrap: balance;
+}
+@media (max-width: 700px) {
+  .composer-note .composer-shortcuts {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-composer {
+    transition: none;
+  }
 }
 .message {
   display: flex;

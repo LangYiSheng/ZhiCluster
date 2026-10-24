@@ -295,6 +295,62 @@ it("受控响应验证processing禁发、真实引用序号与持久会话范围
   expect(screen.getByLabelText("保存的文件夹")).toBeDisabled();
 });
 
+it("旧实例发送完成不会清掉重开知识库后输入的新草稿", async () => {
+  let finish: (response: Response) => void = () => {};
+  const pending = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  vi.stubGlobal(
+    "EventSource",
+    class {
+      addEventListener() {}
+      close() {}
+    },
+  );
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST" && path.endsWith("/messages")) return pending;
+      if (init?.method === "POST")
+        return new Response(
+          JSON.stringify({ id: "created-conversation", title: "new" }),
+        );
+      return new Response("[]");
+    }),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const kb = { id: "race-kb", name: "研究库", description: "", version: 1 };
+  const view = (key: string) => (
+    <QueryClientProvider client={client}>
+      <HistoryChat
+        key={key}
+        kb={kb}
+        knowledgeBases={[kb]}
+        folders={[]}
+        tags={[]}
+        onCitation={vi.fn()}
+      />
+    </QueryClientProvider>
+  );
+  const mounted = render(view("first"));
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("知识库问题"), "已提交的问题");
+  await user.click(screen.getByRole("button", { name: "发送问题" }));
+  mounted.rerender(view("reopened"));
+  await user.clear(screen.getByLabelText("知识库问题"));
+  await user.type(screen.getByLabelText("知识库问题"), "重开后新问题");
+  finish(new Response(JSON.stringify({ id: "message", status: "queued" })));
+  await vi.waitFor(() => expect(client.isMutating()).toBe(0));
+  expect(sessionStorage.getItem("zhicluster:draft:v1:chat:race-kb:new")).toBe(
+    "重开后新问题",
+  );
+  mounted.rerender(view("third"));
+  expect(screen.getByLabelText("知识库问题")).toHaveValue("重开后新问题");
+  client.clear();
+});
+
 it("历史切换运行中的会话只重连事件订阅，新建对话恢复独立草稿", async () => {
   localStorage.setItem("conversation:kb-1", "c-1");
   sessionStorage.setItem("zhicluster:draft:v1:chat:kb-1:new", "新对话未发草稿");

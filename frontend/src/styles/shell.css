@@ -163,6 +163,8 @@
   color: var(--color-accent);
   background: var(--color-accent-soft);
   font-weight: 600;
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--color-accent) 9%, transparent);
 }
 .library-scroll {
   flex: 1;
@@ -190,10 +192,14 @@
   font-size: var(--text-control);
   border-radius: var(--radius-control);
 }
-.sidebar-tools > button:hover,
-.sidebar-tools > button[aria-current="page"] {
+.sidebar-tools > button:hover {
   color: var(--color-text);
   background: var(--color-hover);
+}
+.sidebar-tools > button[aria-current="page"] {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  font-weight: 600;
 }
 .resize-handle {
   position: relative;

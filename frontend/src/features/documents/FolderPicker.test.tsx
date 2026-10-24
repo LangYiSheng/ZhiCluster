@@ -84,3 +84,25 @@ it("按跨层路径搜索并排除自身子树，根目录始终可选", async (
   expect(screen.getAllByRole("option")).toHaveLength(1);
   expect(screen.getByRole("option", { name: "根目录 / 未分类" })).toBeVisible();
 });
+
+it("在目录搜索框按Enter不会隐式提交外层移动表单", async () => {
+  const submitted = vi.fn((event: React.FormEvent) => event.preventDefault());
+  render(
+    <form onSubmit={submitted}>
+      <FolderPicker
+        folders={[folder("target", "归档")]}
+        value=""
+        onValueChange={vi.fn()}
+      />
+      <button type="submit">保存移动</button>
+    </form>,
+  );
+  const user = userEvent.setup();
+  await user.type(
+    screen.getByRole("textbox", { name: "搜索目标文件夹" }),
+    "归档{Enter}",
+  );
+  expect(submitted).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "保存移动" }));
+  expect(submitted).toHaveBeenCalledOnce();
+});

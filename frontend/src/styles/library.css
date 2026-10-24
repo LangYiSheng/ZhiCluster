@@ -64,7 +64,7 @@
 .library-item.active {
   background: var(--primary-soft);
   color: var(--primary);
-  font-weight: 500;
+  font-weight: 600;
 }
 .library-item:not(.active):hover {
   background: var(--hover);

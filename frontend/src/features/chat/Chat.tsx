@@ -114,12 +114,13 @@ export function Chat({
   }, [conversationId, kb.id]);
   const send = useMutation({
     mutationFn: async () => {
+      const submittedText = text;
       let id = conversationId;
       if (!id) {
         const c = await api<Conversation>(
           "/conversations",
           json("POST", {
-            title: text.slice(0, 40) || "新对话",
+            title: submittedText.slice(0, 40) || "新对话",
             scope: draftScope,
           }),
         );
@@ -127,12 +128,12 @@ export function Chat({
       }
       const message = await api<Message>(
         `/conversations/${id}/messages`,
-        json("POST", { content: text, retrieval_mode: retrievalMode }),
+        json("POST", { content: submittedText, retrieval_mode: retrievalMode }),
       );
-      return { message, conversationId: id, draftKey };
+      return { message, conversationId: id, draftKey, submittedText };
     },
     onSuccess: (result) => {
-      clearDraft(result.draftKey);
+      clearDraft(result.draftKey, result.submittedText);
       setConversationId(result.conversationId);
       void qc.invalidateQueries({ queryKey: ["messages"] });
       void qc.invalidateQueries({ queryKey: ["conversations"] });
@@ -311,7 +312,10 @@ export function Chat({
           </div>
         </form>
         <p className="composer-note">
-          Enter 发送 · Shift + Enter 换行 · AI 回答请结合来源核实
+          <span className="composer-shortcuts">
+            Enter 发送 · Shift + Enter 换行 ·{" "}
+          </span>
+          <span>AI 回答请结合来源核实</span>
         </p>
       </div>
       <Dialog

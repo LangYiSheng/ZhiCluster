@@ -65,6 +65,10 @@ export function FolderPicker({
         value={search}
         maxLength={200}
         onChange={(event) => setSearch(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.nativeEvent.isComposing)
+            event.preventDefault();
+        }}
       />
       <Select
         aria-label="目标文件夹"

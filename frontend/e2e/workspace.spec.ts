@@ -119,6 +119,12 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       path: "test-results/workspace-dark-1440.png",
       fullPage: true,
     });
+    await page.goto(`/document?kb=${kb.id}`);
+    await expect(row).toBeVisible();
+    await page.screenshot({
+      path: "test-results/documents-dark-1440.png",
+      fullPage: true,
+    });
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await chooseOption(page, "显示模式", "浅色");
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
@@ -158,7 +164,16 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
     await expect(
       page.locator(".document-row").filter({ hasText: filename }),
     ).toBeVisible();
+    await page.screenshot({
+      path: "test-results/documents-light-1440.png",
+      fullPage: true,
+    });
     await page.setViewportSize({ width: 900, height: 780 });
+    await expect
+      .poll(async () =>
+        Math.round((await page.locator(".workspace").boundingBox())!.x),
+      )
+      .toBe(56);
     await page.screenshot({
       path: "test-results/workspace-tablet-900.png",
       fullPage: true,
