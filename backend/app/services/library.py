@@ -152,6 +152,92 @@ def update_document(db, actor, doc_id, data):
     return doc
 
 
+def _batch_documents(db, actor, kb_id, ids):
+    # Never lock a document in another namespace. The error path may inspect
+    # missing IDs to preserve the existing cross-KB/permission errors.
+    documents = list(db.scalars(select(Document).where(Document.kb_id == kb_id, Document.id.in_(ids))
+        .order_by(Document.id).with_for_update().execution_options(populate_existing=True)))
+    missing = set(ids) - {doc.id for doc in documents}
+    if missing:
+        for doc in db.scalars(select(Document).where(Document.id.in_(missing))):
+            assert_can_read_kb(db, actor, doc.kb_id)
+            if doc.kb_id != kb_id:
+                raise AppError("cross_kb", "不支持跨知识库批量操作")
+        raise AppError("not_found", "文档不存在", 404)
+    return documents
+
+
+def _batch_folders(db, kb_id, documents, data):
+    ids = {data["folder_id"]} if "folder_id" in data and data["folder_id"] is not None else set()
+    if "deleted_at" in data and not data["deleted_at"]:
+        ids |= {data.get("folder_id", doc.folder_id) for doc in documents}
+    ids.discard(None)
+    if not ids:
+        return
+    # Refresh cached folders only after acquiring the namespace lock. A parent
+    # can have been deleted while this transaction waited for that lock.
+    folders = list(db.scalars(select(Folder).where(Folder.kb_id == kb_id, Folder.id.in_(ids))
+        .execution_options(populate_existing=True)))
+    if len(folders) != len(ids) or any(folder.deleted_at for folder in folders):
+        raise AppError("invalid_folder", "文件夹不存在、已删除或属于其他知识库", 400)
+
+
+def _batch_tags(db, kb_id, ids, before, data):
+    current = {item["id"]: set(item["tag_ids"]) for item in before}
+    if "tag_ids" not in data:
+        return current
+    if data["tag_ids"] is None:
+        raise AppError("invalid_tags", "标签列表不能为空值；使用空列表清除标签")
+    target, mode = set(data["tag_ids"]), data.get("tag_mode", "set")
+    if mode not in {"set", "add", "remove"}:
+        raise AppError("invalid_tag_mode", "不支持的标签更新方式")
+    tags = list(db.scalars(select(Tag).where(Tag.id.in_(target))
+        .execution_options(populate_existing=True))) if target else []
+    if len(tags) != len(target) or any(tag.kb_id != kb_id for tag in tags):
+        raise AppError("invalid_tags", "标签不存在或属于其他知识库")
+    final = {doc_id: target if mode == "set" else previous | target if mode == "add" else previous - target
+        for doc_id, previous in current.items()}
+    if any(previous - final[doc_id] for doc_id, previous in current.items()):
+        remove = delete(DocumentTag).where(DocumentTag.document_id.in_(ids))
+        if mode == "set" and target:
+            remove = remove.where(DocumentTag.tag_id.not_in(target))
+        elif mode == "remove":
+            remove = remove.where(DocumentTag.tag_id.in_(target))
+        db.execute(remove)
+    db.add_all(DocumentTag(document_id=doc_id, tag_id=tag_id, kb_id=kb_id)
+        for doc_id, previous in current.items() for tag_id in sorted(final[doc_id] - previous))
+    return final
+
+
+def update_documents(db, actor, kb_id, document_ids, data):
+    """Apply one bounded metadata operation atomically, with per-file audit."""
+    ids = list(dict.fromkeys(document_ids))
+    if not ids or len(ids) > 200:
+        raise AppError("invalid_batch", "请选择 1 至 200 份文档")
+    kb = lock_kb_namespace(db, actor, kb_id)
+    documents = _batch_documents(db, actor, kb.id, ids)
+    _batch_folders(db, kb.id, documents, data)
+    before = document_snapshots(db, documents)
+    tags = _batch_tags(db, kb.id, ids, before, data)
+    deleted_at = utcnow() if data.get("deleted_at") else None
+    for doc in documents:
+        if "folder_id" in data:
+            doc.folder_id = data["folder_id"]
+        if "deleted_at" in data:
+            doc.deleted_at = deleted_at
+        # Even a no-op is an explicit successful operation in the existing API.
+        doc.version += 1
+    # Validate every resource before mutations can autoflush. One flush also
+    # makes updated_at available to both the response and the audit snapshots.
+    db.flush()
+    results = {}
+    for doc, previous in zip(documents, before, strict=True):
+        after = {**snapshot(doc), "tag_ids": sorted(tags[doc.id])}
+        audit(db, actor, kb.id, "update_document", doc.id, previous, after)
+        results[doc.id] = after
+    return [results[doc_id] for doc_id in ids]
+
+
 def snapshot(entity):
     return {c.name: (v.isoformat() if isinstance(v := getattr(entity, c.name), datetime) else v) for c in entity.__table__.columns}
 

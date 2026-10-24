@@ -46,12 +46,13 @@ from app.services.library import (
     normalized_name,
     snapshot,
     update_document,
+    update_documents,
     update_folder,
     valid_name,
     validate_folder,
     version_check,
 )
-from app.services.permissions import assert_can_edit_kb, assert_can_manage_kb, assert_can_read_kb, get_actor
+from app.services.permissions import assert_can_manage_kb, assert_can_read_kb, get_actor
 
 router = APIRouter(prefix="/api")
 
@@ -317,13 +318,8 @@ def upload(kb_id: str, files: list[UploadFile] = File(...), folder_id: str | Non
 @router.post("/documents/batch")
 def batch(body: Batch, db: Session = Depends(get_db, scope="function")):
     actor = get_actor(db)
-    assert_can_edit_kb(db, actor, body.kb_id)
-    for doc_id in body.document_ids:
-        doc = get_document(db, actor, doc_id, include_deleted=True)
-        if doc.kb_id != body.kb_id:
-            raise AppError("cross_kb", "不支持跨知识库批量操作")
     data = {"move": {"folder_id": body.folder_id}, "tags": {"tag_ids": body.tag_ids, "tag_mode": body.tag_mode}, "trash": {"deleted_at": True}, "restore": {"deleted_at": None}}[body.action]
-    return {"items": [document_snapshot(db, update_document(db, actor, doc_id, data)) for doc_id in dict.fromkeys(body.document_ids)]}
+    return {"items": update_documents(db, actor, body.kb_id, body.document_ids, data)}
 
 
 @router.get("/documents/{doc_id}", response_model=DocumentOut)
