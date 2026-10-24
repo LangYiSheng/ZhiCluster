@@ -229,9 +229,6 @@
   .dialog-actions {
     flex-wrap: wrap;
   }
-  .context-menu {
-    max-width: calc(100vw - 24px);
-  }
   .file-filters {
     flex-wrap: wrap;
   }

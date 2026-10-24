@@ -988,7 +988,9 @@ it("独立回收站可恢复文档和知识库，拖入文件不会触发上传"
   expect(
     within(contextMenu).queryByRole("menuitem", { name: "重命名" }),
   ).not.toBeInTheDocument();
-  await user.click(within(contextMenu).getByRole("menuitem", { name: "恢复" }));
+  await user.click(
+    within(contextMenu).getByRole("menuitem", { name: "恢复文档" }),
+  );
   await waitFor(() =>
     expect(fetch).toHaveBeenCalledWith(
       "/api/documents/doc-1/restore",

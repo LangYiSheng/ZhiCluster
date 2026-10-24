@@ -6,7 +6,6 @@ import {
   Archive,
   ArrowDownAZ,
   Check,
-  Download,
   FileText,
   FolderOpen,
   ListFilter,
@@ -28,7 +27,7 @@ import type {
 } from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { Dialog } from "../../components/ui/dialog";
-import { Menu, MenuItem } from "../../components/ui/menu";
+import { ContextMenu, Menu, MenuItem } from "../../components/ui/menu";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Select } from "../../components/ui/select";
 import { Empty, ErrorState, Loading } from "../../components/common";
@@ -98,11 +97,6 @@ export function DocumentsPane({
   const [duplicateFiles, setDuplicateFiles] = useState<File[]>([]);
   const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
-  const [context, setContext] = useState<{
-    x: number;
-    y: number;
-    doc: Document;
-  } | null>(null);
   useEffect(() => {
     activeRef.current = active;
     if (!active) {
@@ -110,7 +104,6 @@ export function DocumentsPane({
       setManageTags(false);
       setForm(null);
       setDuplicateFiles([]);
-      setContext(null);
       setDragging(false);
     }
   }, [active]);
@@ -569,6 +562,7 @@ export function DocumentsPane({
             className="folder-root-drop"
           >
             <FolderTree
+              active={active}
               folders={folders}
               selected={folderId}
               onSelect={(id) => {
@@ -817,89 +811,90 @@ export function DocumentsPane({
               </Empty>
             ) : (
               rows.map((doc) => (
-                <div
+                <ContextMenu
                   key={doc.id}
-                  className={`document-row ${selectedId === doc.id ? "active" : ""} ${selected.has(doc.id) ? "checked" : ""}`}
-                  draggable={!trash}
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData(
-                      "application/x-zhicluster-documents",
-                      JSON.stringify(
-                        selected.has(doc.id) ? [...selected] : [doc.id],
-                      ),
-                    );
-                    e.stopPropagation();
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setContext({
-                      x: Math.min(e.clientX, window.innerWidth - 200),
-                      y: Math.min(e.clientY, window.innerHeight - 240),
-                      doc,
-                    });
-                  }}
-                >
-                  <Checkbox
-                    aria-label={`选择 ${doc.display_name}`}
-                    checked={selected.has(doc.id)}
-                    onChange={(e) =>
-                      setSelected((s) => {
-                        const n = new Set(s);
-                        if (e.target.checked) n.add(doc.id);
-                        else n.delete(doc.id);
-                        return n;
-                      })
-                    }
-                  />
-                  <button
-                    className="document-open"
-                    onClick={() => onOpen(doc, true)}
-                  >
-                    <span className={`file-icon file-${doc.ext}`}>
-                      <FileText size={19} />
-                      <small>{doc.ext.toUpperCase()}</small>
-                    </span>
-                    <span className="file-info">
-                      <strong>{doc.display_name}</strong>
-                      <small>
-                        {new Date(doc.created_at).toLocaleDateString("zh-CN")} ·{" "}
-                        {formatSize(doc.size_bytes)}
-                      </small>
-                      <DocumentProcessing
-                        document={doc}
-                        jobs={jobs.data || []}
+                  active={active}
+                  trigger={
+                    <div
+                      className={`document-row ${selectedId === doc.id ? "active" : ""} ${selected.has(doc.id) ? "checked" : ""}`}
+                      draggable={!trash}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(
+                          "application/x-zhicluster-documents",
+                          JSON.stringify(
+                            selected.has(doc.id) ? [...selected] : [doc.id],
+                          ),
+                        );
+                        e.stopPropagation();
+                      }}
+                    >
+                      <Checkbox
+                        aria-label={`选择 ${doc.display_name}`}
+                        checked={selected.has(doc.id)}
+                        onChange={(e) =>
+                          setSelected((s) => {
+                            const n = new Set(s);
+                            if (e.target.checked) n.add(doc.id);
+                            else n.delete(doc.id);
+                            return n;
+                          })
+                        }
                       />
-                      {!!doc.tag_ids?.length && (
-                        <span className="document-tags">
-                          {tags
-                            .filter((tag) => doc.tag_ids?.includes(tag.id))
-                            .map((tag) => (
-                              <span key={tag.id} className="document-tag">
-                                <span
-                                  className="tag-dot"
-                                  style={{ background: tag.color }}
-                                />
-                                {tag.name}
-                              </span>
-                            ))}
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                  <Menu
-                    trigger={
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        aria-label={`${doc.display_name}文档菜单`}
+                      <button
+                        className="document-open"
+                        onClick={() => onOpen(doc, true)}
                       >
-                        <MoreHorizontal size={15} />
-                      </Button>
-                    }
-                  >
-                    {docMenu(doc)}
-                  </Menu>
-                </div>
+                        <span className={`file-icon file-${doc.ext}`}>
+                          <FileText size={19} />
+                          <small>{doc.ext.toUpperCase()}</small>
+                        </span>
+                        <span className="file-info">
+                          <strong>{doc.display_name}</strong>
+                          <small>
+                            {new Date(doc.created_at).toLocaleDateString(
+                              "zh-CN",
+                            )}{" "}
+                            · {formatSize(doc.size_bytes)}
+                          </small>
+                          <DocumentProcessing
+                            document={doc}
+                            jobs={jobs.data || []}
+                          />
+                          {!!doc.tag_ids?.length && (
+                            <span className="document-tags">
+                              {tags
+                                .filter((tag) => doc.tag_ids?.includes(tag.id))
+                                .map((tag) => (
+                                  <span key={tag.id} className="document-tag">
+                                    <span
+                                      className="tag-dot"
+                                      style={{ background: tag.color }}
+                                    />
+                                    {tag.name}
+                                  </span>
+                                ))}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                      <Menu
+                        trigger={
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            aria-label={`${doc.display_name}文档菜单`}
+                          >
+                            <MoreHorizontal size={15} />
+                          </Button>
+                        }
+                      >
+                        {docMenu(doc)}
+                      </Menu>
+                    </div>
+                  }
+                >
+                  {docMenu(doc)}
+                </ContextMenu>
               ))
             )}
           </div>
@@ -1153,107 +1148,6 @@ export function DocumentsPane({
           </Button>
         </div>
       </Dialog>
-      {context && (
-        <div
-          className="context-backdrop"
-          onClick={() => setContext(null)}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setContext(null);
-          }}
-        >
-          <div
-            className="context-menu"
-            role="menu"
-            style={{ left: context.x, top: context.y }}
-          >
-            {!trash && (
-              <>
-                <button
-                  role="menuitem"
-                  onClick={() => onOpen(context.doc, true)}
-                >
-                  <FolderOpen size={14} />
-                  打开阅读器
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() =>
-                    setForm({
-                      kind: "rename",
-                      name: context.doc.display_name,
-                      document: context.doc,
-                    })
-                  }
-                >
-                  重命名
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() =>
-                    setForm({
-                      kind: "move",
-                      name: "",
-                      ids: [context.doc.id],
-                      parent_id: context.doc.folder_id,
-                    })
-                  }
-                >
-                  移动到…
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() =>
-                    setForm({
-                      kind: "tags",
-                      name: "",
-                      ids: [context.doc.id],
-                      tag_ids: context.doc.tag_ids || [],
-                      tag_mode: "set",
-                    })
-                  }
-                >
-                  设置标签
-                </button>
-                <a
-                  role="menuitem"
-                  href={`/api/documents/${context.doc.id}/download`}
-                >
-                  <Download size={14} />
-                  下载原文件
-                </a>
-              </>
-            )}
-            {trash ? (
-              <button
-                role="menuitem"
-                onClick={() =>
-                  action.mutate({
-                    path: `/documents/${context.doc.id}/restore`,
-                  })
-                }
-              >
-                恢复
-              </button>
-            ) : (
-              <button
-                role="menuitem"
-                className="danger"
-                onClick={() =>
-                  setForm({
-                    kind: "delete",
-                    name: context.doc.display_name,
-                    ids: [context.doc.id],
-                  })
-                }
-              >
-                <Trash2 size={14} />
-                移到回收站
-              </button>
-            )}
-          </div>
-        </div>
-      )}
     </section>
   );
 }

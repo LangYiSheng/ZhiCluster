@@ -66,6 +66,12 @@
   border-radius: var(--radius-control);
   box-shadow: var(--shadow);
   padding: 5px;
+  max-width: calc(100vw - 24px);
+  max-height: min(
+    560px,
+    var(--radix-context-menu-content-available-height, 90dvh)
+  );
+  overflow: auto;
   animation: fade-in 0.12s ease;
 }
 .menu-item {
@@ -79,39 +85,6 @@
   cursor: pointer;
 }
 .menu-item[data-highlighted] {
-  background: var(--hover);
-}
-.context-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-}
-.context-menu {
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  min-width: 180px;
-  max-height: 90vh;
-  overflow: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--background);
-  box-shadow: var(--shadow);
-  padding: 5px;
-}
-.context-menu > button,
-.context-menu > a {
-  font-size: var(--text-caption);
-  color: var(--foreground);
-  padding: 7px 10px;
-  text-align: left;
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  border-radius: 5px;
-}
-.context-menu > button:hover,
-.context-menu > a:hover {
   background: var(--hover);
 }
 .search-input {

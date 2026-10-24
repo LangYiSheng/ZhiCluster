@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SearchDialog } from "./SearchDialog";
@@ -52,6 +52,69 @@ it("搜索结果只展示原文位置，隐藏算法与评分且仍可键盘打�
   expect(screen.queryByText(/cosine|相关度|混合检索/)).not.toBeInTheDocument();
   await user.keyboard("{Enter}");
   expect(open).toHaveBeenCalledWith(item);
+});
+
+function searchFixture() {
+  const item = {
+    document_id: "source",
+    chunk_id: "source-chunk",
+    document_name: "旧词来源.txt",
+    content: "可检查的原文证据",
+    anchors: { paragraph: 1 },
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ items: [item] }))),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  clients.push(client);
+  const opened = vi.fn();
+  const changed = vi.fn();
+  render(
+    <QueryClientProvider client={client}>
+      <SearchDialog open onOpenChange={changed} kbId="kb" onOpen={opened} />
+    </QueryClientProvider>,
+  );
+  return {
+    item,
+    opened,
+    changed,
+    input: screen.getByRole("textbox", { name: "搜索关键词" }),
+  };
+}
+
+it("中文输入法确认候选的Enter不会打开搜索结果或关闭弹窗", async () => {
+  const { item, opened, changed, input } = searchFixture();
+  fireEvent.change(input, { target: { value: "旧词" } });
+  await screen.findByRole("option", { name: /旧词来源/ });
+  fireEvent.keyDown(input, { key: "Enter", isComposing: true, keyCode: 229 });
+  expect(opened).not.toHaveBeenCalled();
+  expect(changed).not.toHaveBeenCalled();
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(opened).toHaveBeenCalledWith(item);
+});
+
+it("改词后的防抖等待期间不会打开上一个关键词的来源", async () => {
+  const { opened, changed, input } = searchFixture();
+  fireEvent.change(input, { target: { value: "旧词" } });
+  await screen.findByRole("option", { name: /旧词来源/ });
+  fireEvent.change(input, { target: { value: "新词" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(opened).not.toHaveBeenCalled();
+  expect(changed).not.toHaveBeenCalled();
+  expect(screen.queryByRole("option")).not.toBeInTheDocument();
+});
+
+it("结果到达前按向下键不会使首项失去键盘选择", async () => {
+  const { item, opened, input } = searchFixture();
+  fireEvent.change(input, { target: { value: "旧词" } });
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  const row = await screen.findByRole("option", { name: /旧词来源/ });
+  expect(row).toHaveAttribute("aria-selected", "true");
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(opened).toHaveBeenCalledWith(item);
 });
 
 it("未配置、需重建索引和服务异常提示保留，普通模式文案不显示", () => {

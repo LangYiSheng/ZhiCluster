@@ -135,6 +135,43 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
       fullPage: true,
     });
     await page.goto(`/document?kb=${kb.id}`);
+    const sourceControl = row.locator(".document-open");
+    await sourceControl.focus();
+    await sourceControl.press("Shift+F10");
+    await expect(
+      page.getByRole("menuitem", { name: "打开阅读器", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(sourceControl).toBeFocused();
+    for (const [width, height] of [
+      [320, 640],
+      [844, 390],
+    ]) {
+      await page.setViewportSize({ width, height });
+      await sourceControl.click({ button: "right" });
+      const menu = page.getByRole("menu");
+      await expect(menu).toBeVisible();
+      await expect
+        .poll(async () => {
+          const box = await menu.boundingBox();
+          return (
+            !!box &&
+            box.x >= 0 &&
+            box.y >= 0 &&
+            box.x + box.width <= width &&
+            box.y + box.height <= height
+          );
+        })
+        .toBe(true);
+      await page.screenshot({
+        path: `test-results/context-menu-${width}x${height}.png`,
+        fullPage: true,
+      });
+      await page.keyboard.press("Escape");
+      await expect(menu).toHaveCount(0);
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
     await row.click({ button: "right" });
     await expect(
       page.getByRole("menuitem", { name: "移到回收站", exact: true }),
