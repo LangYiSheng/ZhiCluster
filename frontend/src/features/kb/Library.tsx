@@ -60,9 +60,9 @@ export function Library({
   const deletion = useMutation({
     mutationFn: (submitted: KnowledgeBase) =>
       api(`/knowledge-bases/${submitted.id}`, json("DELETE")),
-    onSuccess: (_, submitted) => {
+    onSuccess: async (_, submitted) => {
+      await qc.invalidateQueries();
       setRemove((value) => (value === submitted ? null : value));
-      void qc.invalidateQueries();
       toast.success("已删除");
     },
     onError: (e) => toast.error(errorText(e)),

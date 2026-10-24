@@ -1,6 +1,52 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import { forwardRef, useCallback, useRef } from "react";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import { resolveFocusOrigin, restoreFocusOrigin } from "./focusReturn";
+import type { FocusOrigin } from "./focusReturn";
+
+// Portal mounts a fresh Content for each open cycle. Keep the source here until
+// Radix's deferred close autofocus has run, rather than clearing it on open=false.
+const FocusReturnContent = forwardRef<
+  HTMLDivElement,
+  ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
+>(function FocusReturnContent(
+  { onFocusCapture, onCloseAutoFocus, ...props },
+  forwardedRef,
+) {
+  const origin = useRef<FocusOrigin | null>(null);
+  const entered = useRef(false);
+  const content = useRef<HTMLDivElement | null>(null);
+  const contentRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (node) content.current = node;
+      if (typeof forwardedRef === "function") forwardedRef(node);
+      else if (forwardedRef) forwardedRef.current = node;
+    },
+    [forwardedRef],
+  );
+  return (
+    <DialogPrimitive.Content
+      {...props}
+      data-focus-return-scope
+      ref={contentRef}
+      onFocusCapture={(event) => {
+        if (!entered.current) {
+          entered.current = true;
+          origin.current = resolveFocusOrigin(event.relatedTarget);
+        }
+        onFocusCapture?.(event);
+      }}
+      onCloseAutoFocus={(event) => {
+        onCloseAutoFocus?.(event);
+        if (event.defaultPrevented) return;
+        event.preventDefault();
+        restoreFocusOrigin(origin.current, content.current);
+      }}
+    />
+  );
+});
+
 export function Dialog({
   open,
   onOpenChange,
@@ -20,7 +66,7 @@ export function Dialog({
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="dialog-overlay" />
-        <DialogPrimitive.Content
+        <FocusReturnContent
           className={`dialog-content ${wide ? "dialog-wide" : ""}`}
           aria-describedby={description ? "dialog-description" : undefined}
         >
@@ -42,7 +88,7 @@ export function Dialog({
             <X size={18} />
           </DialogPrimitive.Close>
           {children}
-        </DialogPrimitive.Content>
+        </FocusReturnContent>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
   );

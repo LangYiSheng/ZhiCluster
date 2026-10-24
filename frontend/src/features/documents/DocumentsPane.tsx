@@ -203,8 +203,9 @@ export function DocumentsPane({
     }
   }, [active, documents.data, documents.isFetching, documents.isError, page]);
   function refresh() {
-    void qc.invalidateQueries();
+    const refreshed = qc.invalidateQueries();
     setSelected(new Set());
+    return refreshed;
   }
   const action = useMutation({
     mutationFn: async ({
@@ -217,8 +218,10 @@ export function DocumentsPane({
       body?: unknown;
       formToClose?: FormState;
     }) => api(path, json(method, body)),
-    onSuccess: (_, submitted) => {
-      refresh();
+    onSuccess: async (_, submitted) => {
+      // Reconcile rows before closing: returning focus to a row that a later
+      // refetch removes would immediately drop it back onto the document body.
+      await refresh();
       setForm((current) =>
         current === submitted.formToClose ? null : current,
       );

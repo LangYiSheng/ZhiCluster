@@ -136,6 +136,8 @@ export function ReferencePane({
   return (
     <aside
       ref={pane}
+      data-focus-return-scope
+      tabIndex={-1}
       className={`reference-pane ${multiple ? "has-tabs" : ""} ${!active ? "is-collapsed" : ""}`}
       aria-label="参考资料"
       aria-hidden={!active}

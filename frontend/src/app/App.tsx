@@ -319,6 +319,8 @@ export function App() {
       />
       <aside
         className="library-slot"
+        data-focus-return-scope
+        tabIndex={-1}
         aria-label="知识库与主导航"
         hidden={view === "settings"}
         inert={!ui.sidebarOpen && !mobileLibrary}
@@ -418,7 +420,7 @@ export function App() {
           }
         }}
       />
-      <main className="workspace">
+      <main className="workspace" data-focus-return-scope tabIndex={-1}>
         <header className="workspace-header">
           <div className="row gap breadcrumb">
             {view === "settings" ? (

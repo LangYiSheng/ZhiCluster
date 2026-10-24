@@ -39,6 +39,64 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("删除资料等待列表协调后关闭确认，来源消失时回到资料区域", async () => {
+  let deleted = false;
+  let resolveRefresh: (value: Response) => void = () => {};
+  const refreshed = new Promise<Response>((resolve) => {
+    resolveRefresh = resolve;
+  });
+  const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.endsWith("/documents/batch") && init?.method === "POST") {
+      deleted = true;
+      return new Response(JSON.stringify({ results: [] }));
+    }
+    if (path.includes("/documents") && !init?.method) {
+      if (deleted) return refreshed;
+      return new Response(
+        JSON.stringify({ items: [doc], total: 1, page_size: 50 }),
+      );
+    }
+    return new Response("[]");
+  });
+  vi.stubGlobal("fetch", fetch);
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={client()}>
+        <main data-focus-return-scope tabIndex={-1}>
+          <DocumentsPane
+            kb={kb}
+            folders={[]}
+            tags={[]}
+            trash={false}
+            onOpen={vi.fn()}
+            selectedId=""
+          />
+        </main>
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  await screen.findByText("甲.txt");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "甲.txt文档菜单" }));
+  await user.click(screen.getByRole("menuitem", { name: "移到回收站" }));
+  await user.click(screen.getByRole("button", { name: "确认移到回收站" }));
+  await waitFor(() =>
+    expect(
+      fetch.mock.calls.filter(
+        ([path, init]) => path.includes("/documents") && !init?.method,
+      ),
+    ).toHaveLength(2),
+  );
+  expect(screen.getByRole("dialog", { name: "移到回收站" })).toBeVisible();
+  resolveRefresh(
+    new Response(JSON.stringify({ items: [], total: 0, page_size: 50 })),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  await waitFor(() => expect(screen.getByRole("main")).toHaveFocus());
+});
+
 it("旧文档保存成功不关闭新文档的编辑草稿", async () => {
   let resolveSave: (value: Response) => void = () => {};
   const pending = new Promise<Response>((resolve) => {
