@@ -1,6 +1,8 @@
 """Check evaluation math independently of ranking quality or a live server."""
 
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -47,3 +49,20 @@ def test_resume_rejects_revision_settings_and_query_sequence_changes():
         benchmark.validate_checkpoint(saved, {**identity, "revision": "new-image"}, [{"id": "q1"}])
     with pytest.raises(ValueError, match="sequence"):
         benchmark.validate_checkpoint(saved, identity, [{"id": "q2"}])
+
+
+def test_mrc_loader_checks_selected_source_hash_and_keeps_context_question_mapping(tmp_path):
+    payload = {"data": [{"title": "繁體來源", "paragraphs": [
+        {"context": "同一段原文", "qas": [{"id": "one", "question": "原文問題一", "answers": [{"text": "原文"}, {"text": "原文"}]}]},
+        {"context": "同一段原文", "qas": [{"id": "two", "question": "原文問題二", "answers": [{"text": "一段"}]}]},
+    ]}]}
+    path = tmp_path / "dataset.json"
+    raw = json.dumps(payload, ensure_ascii=False).encode()
+    path.write_bytes(raw)
+    with pytest.raises(ValueError, match="checksum"):
+        benchmark.load_corpus(path)
+    corpus, questions = benchmark.load_corpus(path, hashlib.sha256(raw).hexdigest())
+    assert len(corpus) == 1 and len(questions) == 2
+    assert questions[0]["key"] == questions[1]["key"] == next(iter(corpus))
+    assert corpus[questions[0]["key"]] == {"title": "繁體來源", "context": "同一段原文"}
+    assert questions[0]["answers"] == ["原文"] and questions[1]["answers"] == ["一段"]
