@@ -22,6 +22,9 @@ test("真实目录落点上传、副本确认与跨库拖放隔离", async ({ pa
   try {
     const selected = await folder(kb.id, "当前目录");
     const target = await folder(kb.id, "投递目录");
+    const literal = await folder(kb.id, "研究 / 论文");
+    const research = await folder(kb.id, "研究");
+    const nested = await folder(kb.id, "论文", research.id);
     const foreignParent = await folder(other.id, "源父目录");
     const foreign = await folder(other.id, "源子目录", foreignParent.id);
     await page.goto(`/document?kb=${kb.id}`);
@@ -107,6 +110,39 @@ test("真实目录落点上传、副本确认与跨库拖放隔离", async ({ pa
       ).parent_id,
     ).toBe(foreignParent.id);
     expect(selected.id).not.toBe(target.id);
+    await page.getByRole("button", { name: "投递目录", exact: true }).click();
+    await page
+      .locator(".document-row")
+      .first()
+      .getByRole("button", { name: "目录落点.txt文档菜单", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "移动到…", exact: true }).click();
+    const move = page.getByRole("dialog", { name: "移动文档" });
+    await move
+      .getByRole("textbox", { name: "搜索目标文件夹" })
+      .fill("研究 / 论文");
+    await move.getByRole("combobox", { name: "目标文件夹" }).click();
+    await expect(
+      page.getByRole("option", { name: '"研究 / 论文"', exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("option", { name: "研究 / 论文", exact: true })
+      .click();
+    await page.screenshot({
+      path: "test-results/folder-search-destination.png",
+      fullPage: true,
+    });
+    const moved = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/documents/batch") &&
+        response.request().method() === "POST",
+    );
+    await move.getByRole("button", { name: "保存", exact: true }).click();
+    const movedResponse = await moved;
+    expect(movedResponse.ok()).toBeTruthy();
+    const movedDocument = (await movedResponse.json()).items[0];
+    expect(movedDocument.folder_id).toBe(nested.id);
+    expect(movedDocument.folder_id).not.toBe(literal.id);
   } finally {
     await request.delete(`/api/knowledge-bases/${kb.id}`);
     await request.delete(`/api/knowledge-bases/${other.id}`);

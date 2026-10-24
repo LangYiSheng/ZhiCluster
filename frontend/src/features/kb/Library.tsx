@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BookOpen, FolderPlus, MoreHorizontal, Plus } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -26,23 +26,32 @@ export function Library({
 }) {
   const qc = useQueryClient();
   const [edit, setEdit] = useState<Edit | null>(null);
+  const current = useRef({ edit, kbId });
+  useEffect(() => {
+    current.current = { edit, kbId };
+  }, [edit, kbId]);
   const [remove, setRemove] = useState<KnowledgeBase | null>(null);
-  const current = knowledgeBases.find((k) => k.id === kbId);
+  const currentKb = knowledgeBases.find((k) => k.id === kbId);
   const save = useMutation({
-    mutationFn: async () => {
-      if (!edit) return;
-      const entity = await api<KnowledgeBase>(
-        edit.id ? `/knowledge-bases/${edit.id}` : "/knowledge-bases",
-        json(edit.id ? "PATCH" : "POST", {
-          name: edit.name,
-          description: edit.description,
-          version: edit.version,
+    mutationFn: async (submitted: { edit: Edit; kbId: string }) => {
+      return api<KnowledgeBase>(
+        submitted.edit.id
+          ? `/knowledge-bases/${submitted.edit.id}`
+          : "/knowledge-bases",
+        json(submitted.edit.id ? "PATCH" : "POST", {
+          name: submitted.edit.name,
+          description: submitted.edit.description,
+          version: submitted.edit.version,
         }),
       );
-      onSelect(entity.id);
     },
-    onSuccess: () => {
-      setEdit(null);
+    onSuccess: (entity, submitted) => {
+      if (
+        current.current.edit === submitted.edit &&
+        current.current.kbId === submitted.kbId
+      )
+        onSelect(entity.id);
+      setEdit((value) => (value === submitted.edit ? null : value));
       void qc.invalidateQueries();
       toast.success("已保存");
     },
@@ -120,7 +129,7 @@ export function Library({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            save.mutate();
+            if (edit) save.mutate({ edit, kbId });
           }}
         >
           <label>
@@ -176,7 +185,9 @@ export function Library({
           </Button>
         </div>
       </Dialog>
-      {current && <span className="sr-only">当前知识库 {current.name}</span>}
+      {currentKb && (
+        <span className="sr-only">当前知识库 {currentKb.name}</span>
+      )}
     </aside>
   );
 }

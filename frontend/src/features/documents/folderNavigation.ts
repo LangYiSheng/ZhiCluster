@@ -1,5 +1,28 @@
 import type { Folder } from "../../lib/api";
 
+function folderSegment(name: string) {
+  return /[/"\\]/.test(name) ? JSON.stringify(name) : name;
+}
+
+export function folderPathLabel(
+  folders: Folder[] | Map<string, Folder>,
+  id: string,
+) {
+  const byId =
+    folders instanceof Map
+      ? folders
+      : new Map(folders.map((folder) => [folder.id, folder]));
+  const parts: string[] = [];
+  const seen = new Set<string>();
+  let current: Folder | undefined = byId.get(id);
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    parts.push(folderSegment(current.name));
+    current = current.parent_id ? byId.get(current.parent_id) : undefined;
+  }
+  return parts.reverse().join(" / ");
+}
+
 export function indexFolders(folders: Folder[], trash = false) {
   const visible = folders.filter((folder) =>
     trash ? !!folder.deleted_at : !folder.deleted_at,
@@ -50,7 +73,8 @@ export function folderDestinations(folders: Folder[], excludedRoot?: string) {
     const { folder, path } = stack.pop()!;
     if (folder.id === excludedRoot || seen.has(folder.id)) continue;
     seen.add(folder.id);
-    const label = path ? `${path} / ${folder.name}` : folder.name;
+    const segment = folderSegment(folder.name);
+    const label = path ? `${path} / ${segment}` : segment;
     result.push({ value: folder.id, label });
     const children = index.children.get(folder.id) || [];
     for (let i = children.length - 1; i >= 0; i--)

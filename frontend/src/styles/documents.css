@@ -778,3 +778,7 @@
     padding: 10px 16px;
   }
 }
+.folder-destination-picker {
+  display: grid;
+  gap: 8px;
+}

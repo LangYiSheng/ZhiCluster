@@ -36,7 +36,8 @@ import { isActiveJob, jobNeedsAttention, jobProgress } from "../../lib/jobs";
 import { FolderTree } from "./FolderTree";
 import type { FolderAction } from "./FolderTree";
 import { TagManager } from "./TagManager";
-import { folderDestinations } from "./folderNavigation";
+import { folderPathLabel } from "./folderNavigation";
+import { FolderPicker } from "./FolderPicker";
 type FormState = {
   kind: "folder" | "rename" | "move" | "tags" | "delete";
   name: string;
@@ -221,10 +222,13 @@ export function DocumentsPane({
       path: string;
       method?: string;
       body?: unknown;
+      formToClose?: FormState;
     }) => api(path, json(method, body)),
-    onSuccess: () => {
+    onSuccess: (_, submitted) => {
       refresh();
-      setForm(null);
+      setForm((current) =>
+        current === submitted.formToClose ? null : current,
+      );
       toast.success("操作已保存");
     },
     onError: (e) => toast.error(errorText(e)),
@@ -344,6 +348,7 @@ export function DocumentsPane({
           ? `/knowledge-bases/${kb.id}/folders`
           : `/folders/${form.folder?.id}`,
         method: creating ? "POST" : "PATCH",
+        formToClose: form,
         body: {
           name: form.action === "move" ? undefined : form.name,
           parent_id: form.parent_id || null,
@@ -354,13 +359,19 @@ export function DocumentsPane({
       action.mutate({
         path: `/documents/${form.document?.id}`,
         method: "PATCH",
+        formToClose: form,
         body: { display_name: form.name, version: form.document?.version },
       });
     } else if (form.kind === "delete" && form.folder) {
-      action.mutate({ path: `/folders/${form.folder.id}`, method: "DELETE" });
+      action.mutate({
+        path: `/folders/${form.folder.id}`,
+        method: "DELETE",
+        formToClose: form,
+      });
     } else {
       action.mutate({
         path: "/documents/batch",
+        formToClose: form,
         body: {
           kb_id: kb.id,
           document_ids: form.ids,
@@ -1018,27 +1029,18 @@ export function DocumentsPane({
           )}
           {(form?.kind === "move" ||
             (form?.kind === "folder" && form.action !== "rename")) && (
-            <label>
-              目标文件夹
-              <Select
-                aria-label="目标文件夹"
-                value={form.parent_id || ""}
-                onValueChange={(value) =>
-                  setForm((v) =>
-                    v ? { ...v, parent_id: value || null } : null,
-                  )
-                }
-                options={[
-                  { value: "", label: "根目录 / 未分类" },
-                  ...folderDestinations(
-                    folders,
-                    form.kind === "folder" && form.action === "move"
-                      ? form.folder?.id
-                      : undefined,
-                  ),
-                ]}
-              />
-            </label>
+            <FolderPicker
+              folders={folders}
+              excludedRoot={
+                form.kind === "folder" && form.action === "move"
+                  ? form.folder?.id
+                  : undefined
+              }
+              value={form.parent_id || ""}
+              onValueChange={(value) =>
+                setForm((v) => (v ? { ...v, parent_id: value || null } : null))
+              }
+            />
           )}
           {form?.kind === "tags" && (
             <>
@@ -1126,9 +1128,7 @@ export function DocumentsPane({
         <p className="tiny muted">
           保存位置：
           {duplicateTarget
-            ? folderDestinations(folders).find(
-                (option) => option.value === duplicateTarget,
-              )?.label || "原上传文件夹"
+            ? folderPathLabel(folders, duplicateTarget) || "原上传文件夹"
             : "根目录 / 未分类"}
         </p>
         <ul>
