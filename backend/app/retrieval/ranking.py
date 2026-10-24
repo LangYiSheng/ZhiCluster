@@ -121,7 +121,9 @@ def diversify(rows_by_id, scores: dict[str, float]) -> list[str]:
                     if other_key not in fingerprints:
                         fingerprints[other_key] = _fingerprint(rows_by_id[other_key][0].content)
                     other = fingerprints[other_key]
-                    overlap = len(current & other) / max(1, min(len(current), len(other)))
+                    # Judge how much of the candidate is already covered. A
+                    # short selected tail must not suppress a mostly new body.
+                    overlap = len(current & other) / max(1, len(other))
                     if overlap > 0.65:
                         redundancy[other_key] = 0.35
             divisor = 1 + 0.22 * counts[chunk.document_id]
