@@ -66,8 +66,19 @@ def folder_name_conflict(db, kb_id, parent_id, name, exclude=None):
 
 def lock_kb_namespace(db, actor, kb_id):
     """Serialize metadata writes before entity locks, including tree/alias checks."""
-    db.scalar(select(KnowledgeBase).where(KnowledgeBase.id == kb_id).with_for_update().execution_options(populate_existing=True))
-    return assert_can_edit_kb(db, actor, kb_id)
+    kb = lock_metadata_entity(db, KnowledgeBase, kb_id, None, "知识库")
+    return assert_can_edit_kb(db, actor, kb.id)
+
+
+def lock_metadata_entity(db, model, entity_id, kb_id, label):
+    """Re-read under lock; kb_id scopes children of an already locked KB."""
+    query = select(model).where(model.id == entity_id)
+    if kb_id is not None:
+        query = query.where(model.kb_id == kb_id)
+    value = db.scalar(query.with_for_update().execution_options(populate_existing=True))
+    if value is None:
+        raise AppError("not_found", f"{label}不存在", 404)
+    return value
 
 
 def create_folder(db, actor, kb_id, data):
@@ -87,7 +98,7 @@ def update_folder(db, actor, folder_id, data):
     if not folder:
         raise AppError("not_found", "文件夹不存在", 404)
     lock_kb_namespace(db, actor, folder.kb_id)
-    folder = db.scalar(select(Folder).where(Folder.id == folder_id).with_for_update().execution_options(populate_existing=True))
+    folder = lock_metadata_entity(db, Folder, folder_id, folder.kb_id, "文件夹")
     version_check(folder, data.get("version"))
     before = snapshot(folder)
     parent_id = data.get("parent_id", folder.parent_id)
@@ -132,7 +143,7 @@ def update_document(db, actor, doc_id, data):
     if not doc:
         raise AppError("not_found", "文档不存在", 404)
     lock_kb_namespace(db, actor, doc.kb_id)
-    doc = db.scalar(select(Document).where(Document.id == doc_id).with_for_update().execution_options(populate_existing=True))
+    doc = lock_metadata_entity(db, Document, doc_id, doc.kb_id, "文档")
     version_check(doc, data.get("version"))
     before = document_snapshot(db, doc)
     if "display_name" in data:

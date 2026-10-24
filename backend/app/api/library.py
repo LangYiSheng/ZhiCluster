@@ -43,6 +43,7 @@ from app.services.library import (
     folder_name_conflict,
     get_document,
     lock_kb_namespace,
+    lock_metadata_entity,
     normalized_name,
     snapshot,
     update_document,
@@ -81,10 +82,17 @@ def read_kb(kb_id: str, db: Session = Depends(get_db, scope="function")):
     return assert_can_read_kb(db, get_actor(db), kb_id)
 
 
+def _managed_kb_for_update(db, actor, kb_id, *, include_deleted=False):
+    assert_can_manage_kb(db, actor, kb_id, include_deleted=include_deleted)
+    kb = lock_metadata_entity(db, KnowledgeBase, kb_id, None, "知识库")
+    # Waiting for this row lock can outlive a soft deletion or access change.
+    assert_can_manage_kb(db, actor, kb_id, include_deleted=include_deleted)
+    return kb
+
+
 @router.patch("/knowledge-bases/{kb_id}", response_model=KnowledgeBaseOut)
 def patch_kb(kb_id: str, body: KBUpdate, db: Session = Depends(get_db, scope="function")):
-    kb = assert_can_manage_kb(db, get_actor(db), kb_id)
-    db.refresh(kb, with_for_update=True)
+    kb = _managed_kb_for_update(db, get_actor(db), kb_id)
     version_check(kb, body.version)
     if body.name is not None:
         kb.name = valid_name(body.name)
@@ -96,16 +104,14 @@ def patch_kb(kb_id: str, body: KBUpdate, db: Session = Depends(get_db, scope="fu
 
 @router.delete("/knowledge-bases/{kb_id}")
 def delete_kb(kb_id: str, db: Session = Depends(get_db, scope="function")):
-    kb = assert_can_manage_kb(db, get_actor(db), kb_id)
-    db.refresh(kb, with_for_update=True)
+    kb = _managed_kb_for_update(db, get_actor(db), kb_id)
     kb.deleted_at, kb.version = utcnow(), kb.version + 1
     return {"status": "trashed"}
 
 
 @router.post("/knowledge-bases/{kb_id}/restore")
 def restore_kb(kb_id: str, db: Session = Depends(get_db, scope="function")):
-    kb = assert_can_manage_kb(db, get_actor(db), kb_id, include_deleted=True)
-    db.refresh(kb, with_for_update=True)
+    kb = _managed_kb_for_update(db, get_actor(db), kb_id, include_deleted=True)
     kb.deleted_at, kb.version = None, kb.version + 1
     return kb
 
@@ -136,7 +142,7 @@ def delete_folder(folder_id: str, db: Session = Depends(get_db, scope="function"
     if not folder:
         raise AppError("not_found", "文件夹不存在", 404)
     lock_kb_namespace(db, actor, folder.kb_id)
-    db.refresh(folder)
+    folder = lock_metadata_entity(db, Folder, folder_id, folder.kb_id, "文件夹")
     subtree = descendants(db, folder.kb_id, [folder.id])
     # Preserve each resource for explicit restore; content is excluded from search immediately.
     # The namespace is already locked. Lock and snapshot the batch once rather
@@ -163,7 +169,7 @@ def restore_folder(folder_id: str, db: Session = Depends(get_db, scope="function
     if not folder:
         raise AppError("not_found", "文件夹不存在", 404)
     lock_kb_namespace(db, get_actor(db), folder.kb_id)
-    db.refresh(folder, with_for_update=True)
+    folder = lock_metadata_entity(db, Folder, folder_id, folder.kb_id, "文件夹")
     validate_folder(db, folder.kb_id, folder.parent_id)
     folder_name_conflict(db, folder.kb_id, folder.parent_id, folder.name, folder.id)
     folder.deleted_at, folder.version = None, folder.version + 1
@@ -202,7 +208,7 @@ def patch_tag(tag_id: str, body: TagUpdate, db: Session = Depends(get_db, scope=
     if not tag:
         raise AppError("not_found", "标签不存在", 404)
     lock_kb_namespace(db, get_actor(db), tag.kb_id)
-    db.refresh(tag, with_for_update=True)
+    tag = lock_metadata_entity(db, Tag, tag_id, tag.kb_id, "标签")
     version_check(tag, body.version)
     name = valid_name(body.name or tag.name, 100)
     aliases = tag.aliases if body.aliases is None else body.aliases
@@ -220,7 +226,7 @@ def delete_tag(tag_id: str, db: Session = Depends(get_db, scope="function")):
     if not tag:
         raise AppError("not_found", "标签不存在", 404)
     lock_kb_namespace(db, get_actor(db), tag.kb_id)
-    db.refresh(tag, with_for_update=True)
+    tag = lock_metadata_entity(db, Tag, tag_id, tag.kb_id, "标签")
     # Tag changes invalidate pending plans and undo snapshots of affected documents.
     ids = list(db.scalars(select(DocumentTag.document_id).where(DocumentTag.tag_id == tag_id)))
     for doc in db.scalars(select(Document).where(Document.id.in_(ids)).with_for_update()):
