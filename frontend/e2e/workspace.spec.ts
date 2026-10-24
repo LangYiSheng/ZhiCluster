@@ -164,6 +164,7 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
           );
         })
         .toBe(true);
+      await expect(menu).toHaveCSS("opacity", "1");
       await page.screenshot({
         path: `test-results/context-menu-${width}x${height}.png`,
         fullPage: true,
