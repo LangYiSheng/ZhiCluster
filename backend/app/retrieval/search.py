@@ -3,6 +3,8 @@ import time
 from datetime import datetime
 
 from sqlalchemy import case, exists, func, or_, select
+from sqlalchemy.sql import operators
+from sqlalchemy.sql.elements import UnaryExpression
 
 from app.ai.gateway import AIUnavailable, ModelGateway, ProviderError
 from app.core.config import get_settings
@@ -88,15 +90,26 @@ def scoped_query(db, actor, request):
 
 
 def _candidates(db, stmt, order, limit, per_document):
-    # Bound per-document admission before applying the global candidate limit.
-    # Otherwise a filename match on a long document can consume the whole pool.
-    ranked = stmt.with_only_columns(
+    # Keep scope and the expensive relevance expression inside one windowed
+    # candidate query. Hydrating its admitted IDs must not repeat those filters
+    # or recompute the score in the outer entity query.
+    directional = isinstance(order, UnaryExpression) and order.modifier in (operators.desc_op, operators.asc_op)
+    descending = directional and order.modifier is operators.desc_op
+    value = order.element if directional else order
+    scoped = stmt.with_only_columns(
         DocumentChunk.id.label("candidate_id"),
+        value.label("candidate_score"),
         func.row_number().over(partition_by=Document.id, order_by=(order, DocumentChunk.chunk_index)).label("document_rank"),
-    ).subquery()
-    return list(db.execute(stmt.join(ranked, ranked.c.candidate_id == DocumentChunk.id)
-                           .where(ranked.c.document_rank <= per_document)
-                           .order_by(order, DocumentChunk.id).limit(limit)))
+    ).cte("scoped_candidates")
+    score_order = scoped.c.candidate_score.desc() if descending else scoped.c.candidate_score.asc()
+    admitted = select(scoped.c.candidate_id, scoped.c.candidate_score, scoped.c.document_rank).where(
+        scoped.c.document_rank <= per_document,
+    ).order_by(score_order, scoped.c.document_rank, scoped.c.candidate_id).limit(limit).cte("admitted_candidates")
+    final_order = admitted.c.candidate_score.desc() if descending else admitted.c.candidate_score.asc()
+    return list(db.execute(select(DocumentChunk, Document).select_from(admitted)
+                           .join(DocumentChunk, DocumentChunk.id == admitted.c.candidate_id)
+                           .join(Document, Document.id == DocumentChunk.document_id)
+                           .order_by(final_order, admitted.c.document_rank, DocumentChunk.id)))
 
 
 def _current_candidates(db, actor, request, kb_ids, by_id):
@@ -145,9 +158,12 @@ def search_knowledge(db, actor, request: dict, settings=None, *, on_progress=Non
         title_weights.append(case((title, weight * 0.12), else_=0))
     postgres = db.bind.dialect.name == "postgresql"
     relevance = sum(body_weights) + sum(title_weights)
-    requested = request.get("limit", 30) + request.get("offset", 0)
-    candidate_limit = min(600, max(160, requested * 8))
-    per_document = min(100, max(12, requested))
+    # Rebuild the same bounded ranking window on every page. Growing admission
+    # with offset changes IDF/diversity and can repeat or skip earlier hits.
+    # Retain the existing maximum reachable window rather than truncating deep
+    # pages to the smaller budget used by the old first-page request.
+    candidate_limit = 600
+    per_document = 100
     if on_progress:
         on_progress("keyword", {"terms": len(plan.terms)})
     keywords = _candidates(db, stmt.where(or_(*conditions)), relevance.desc(), candidate_limit, per_document)
