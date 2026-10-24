@@ -3,6 +3,7 @@
 import math
 import re
 from collections import Counter
+from heapq import heapify, heappop, heappush
 
 from app.retrieval.terms import QueryPlan, normalized, term_weight
 
@@ -37,7 +38,10 @@ def lexical_scores(rows, plan: QueryPlan) -> dict[str, float]:
     if not rows:
         return {}
     texts = {row[0].id: normalized(row[0].content) for row in rows}
-    frequency = {term: sum(term in text for text in texts.values()) for term in plan.terms}
+    # Share occurrence counts between corpus frequency, BM25 and group coverage
+    # instead of repeatedly scanning every passage for the same term.
+    counts = {key: {term: text.count(term) for term in plan.terms} for key, text in texts.items()}
+    frequency = {term: sum(bool(counts[key][term]) for key in texts) for term in plan.terms}
     average_length = sum(len(text) for text in texts.values()) / len(texts)
     groups = [group for group in plan.groups if group]
     scores = {}
@@ -50,10 +54,10 @@ def lexical_scores(rows, plan: QueryPlan) -> dict[str, float]:
             # headers; filename matches are capped supplementary signals.
             idf = math.log(1 + (len(texts) - frequency[term] + 0.5) / (frequency[term] + 0.5))
             weight = idf * term_weight(term, plan.query)
-            count = min(4, text.count(term))
+            count = min(4, counts[chunk.id][term])
             body_score += weight * count * 2.2 / (count + norm) if count else 0
             title_score += weight if term in title else 0
-        coverage = sum(sum(term in text for term in group) / len(group) for group in groups) / len(groups) if groups else float(plan.query in text)
+        coverage = sum(sum(bool(counts[chunk.id][term]) for term in group) / len(group) for group in groups) / len(groups) if groups else float(plan.query in text)
         # A title-only hit remains discoverable by filename, but an empty form
         # cannot outrank a passage actually answering the same query.
         scores[chunk.id] = body_score * (0.7 + coverage) + min(title_score * 0.12, 1.25)
@@ -86,33 +90,46 @@ def diversify(rows_by_id, scores: dict[str, float]) -> list[str]:
     Selection remains deterministic and preserves original chunks/anchors. Long
     documents may still contribute several complementary passages.
     """
-    remaining = set(scores)
     selected = []
     counts: Counter = Counter()
     fingerprints = {}
     redundancy = {}
-    while remaining:
-        def adjusted(key):
-            chunk = rows_by_id[key][0]
-            return scores[key] * redundancy.get(key, 1) / (1 + 0.22 * counts[chunk.document_id])
-
-        key = min(remaining, key=lambda key: (-adjusted(key), key))
-        remaining.remove(key)
-        selected.append(key)
+    document_chunks = {}
+    for key in scores:
+        document_chunks.setdefault(rows_by_id[key][0].document_id, set()).add(key)
+    # Only a document's best remaining chunk competes globally: all chunks in
+    # that document share the same count penalty. This bounds the heap by the
+    # document count and avoids accumulating stale entries for a long document.
+    queue = []
+    for siblings in document_chunks.values():
+        key = min(siblings, key=lambda key: (-scores[key], key))
+        queue.append((-scores[key], key))
+    heapify(queue)
+    while queue:
+        _, key = heappop(queue)
         chunk = rows_by_id[key][0]
+        selected.append(key)
         counts[chunk.document_id] += 1
-        if key not in fingerprints:
-            fingerprints[key] = _fingerprint(chunk.content)
-        current = fingerprints[key]
-        for other_key in remaining:
-            if rows_by_id[other_key][0].document_id != chunk.document_id or other_key in redundancy:
-                continue
-            if other_key not in fingerprints:
-                fingerprints[other_key] = _fingerprint(rows_by_id[other_key][0].content)
-            other = fingerprints[other_key]
-            overlap = len(current & other) / max(1, min(len(current), len(other)))
-            if overlap > 0.65:
-                redundancy[other_key] = 0.35
+        siblings = document_chunks[chunk.document_id]
+        siblings.remove(key)
+        if siblings:
+            if key not in fingerprints:
+                fingerprints[key] = _fingerprint(chunk.content)
+            current = fingerprints[key]
+            for other_key in siblings:
+                if other_key not in redundancy:
+                    if other_key not in fingerprints:
+                        fingerprints[other_key] = _fingerprint(rows_by_id[other_key][0].content)
+                    other = fingerprints[other_key]
+                    overlap = len(current & other) / max(1, min(len(current), len(other)))
+                    if overlap > 0.65:
+                        redundancy[other_key] = 0.35
+            divisor = 1 + 0.22 * counts[chunk.document_id]
+            next_key = min(siblings, key=lambda other_key: (
+                -scores[other_key] * redundancy.get(other_key, 1) / divisor, other_key,
+            ))
+            adjusted = scores[next_key] * redundancy.get(next_key, 1) / divisor
+            heappush(queue, (-adjusted, next_key))
     return selected
 
 

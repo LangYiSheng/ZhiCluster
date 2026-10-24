@@ -3,7 +3,7 @@
 from hashlib import sha256
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, event, select
 
 from app.ai.gateway import ProviderError
 from app.core.config import Settings
@@ -13,6 +13,7 @@ from app.db.models import (
     DocumentChunk,
     DocumentSection,
     EmbeddingProfile,
+    Folder,
     KnowledgeBase,
     KnowledgeBaseMember,
     utcnow,
@@ -53,6 +54,61 @@ def test_compound_question_keeps_final_topic_and_filters_conversational_fillers(
     long = plan_query("研究材料" * 60 + "，最终费用多少？")
     assert "最终费用" in long.terms
     assert len(long.terms) <= 48
+
+
+def test_english_question_filters_fillers_without_losing_literal_only_queries():
+    plan = plan_query("How can I measure chlorophyll fluorescence in leaves?")
+    assert {"measure", "chlorophyll", "fluorescence", "leaves"} <= set(plan.terms)
+    assert not {"how", "can", "i", "in"} & set(plan.terms)
+    assert plan_query("is").terms == ("is",)
+    assert plan_query("the who").terms == ("the who",)
+
+
+def test_english_fillers_do_not_crowd_evidence_out_of_candidate_pool(factory):
+    with factory() as db:
+        kb = db.scalar(select(KnowledgeBase))
+        for index in range(170):
+            document(db, kb, f"note-{index}.txt", ["How can I measure a simple property in leaves? This is a general note."])
+        target = document(db, kb, "photosynthesis.txt", ["Chlorophyll fluorescence quantifies photosynthetic yield in leaves."])
+        result = search_knowledge(db, get_actor(db), {
+            "query": "How can I measure chlorophyll fluorescence in leaves?", "mode": "keyword", "limit": 10,
+        }, Settings(_env_file=None))
+        assert result["items"][0]["document_id"] == target.id
+
+
+def test_multiple_folder_scopes_expand_each_kb_once_and_preserve_descendant_filter(factory):
+    with factory() as db:
+        kb = db.scalar(select(KnowledgeBase))
+        roots, direct, nested = [], set(), set()
+        for index in range(10):
+            root = Folder(kb_id=kb.id, name=f"root-{index}")
+            db.add(root)
+            db.flush()
+            child = Folder(kb_id=kb.id, parent_id=root.id, name="child")
+            db.add(child)
+            db.flush()
+            roots.append(root.id)
+            direct.add(document(db, kb, f"direct-{index}.txt", ["范围检索证据"], folder_id=root.id).id)
+            nested.add(document(db, kb, f"nested-{index}.txt", ["范围检索证据"], folder_id=child.id).id)
+        document(db, kb, "outside.txt", ["范围检索证据"])
+        folder_reads = []
+
+        def count_folder_reads(_connection, _cursor, statement, _parameters, _context, _many):
+            if statement.lstrip().startswith("SELECT folders."):
+                folder_reads.append(statement)
+
+        event.listen(db.bind, "before_cursor_execute", count_folder_reads)
+        try:
+            request = {"query": "范围检索证据", "folder_ids": roots, "mode": "keyword", "limit": 30}
+            result = search_knowledge(db, get_actor(db), request, Settings(_env_file=None))
+            assert {item["document_id"] for item in result["items"]} == direct | nested
+            assert len(folder_reads) == 4  # Root validation + tree read, before and after ranking.
+            folder_reads.clear()
+            result = search_knowledge(db, get_actor(db), {**request, "include_descendants": False}, Settings(_env_file=None))
+            assert {item["document_id"] for item in result["items"]} == direct
+            assert len(folder_reads) == 2
+        finally:
+            event.remove(db.bind, "before_cursor_execute", count_folder_reads)
 
 
 def test_compound_semantic_queries_are_one_bounded_batch(factory, monkeypatch):

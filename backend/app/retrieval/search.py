@@ -52,11 +52,16 @@ def scoped_query(db, actor, request):
     folder_ids = request.get("folder_ids", [])
     if folder_ids:
         expanded = set()
+        folders = {folder.id: folder for folder in db.scalars(select(Folder).where(Folder.id.in_(folder_ids))
+                                                             .execution_options(populate_existing=True))}
+        grouped = {}
         for folder_id in folder_ids:
-            folder = db.get(Folder, folder_id, populate_existing=True)
+            folder = folders.get(folder_id)
             if not folder or folder.kb_id not in kb_ids or folder.deleted_at:
                 raise AppError("invalid_folder", "搜索文件夹不属于所选范围")
-            expanded |= descendants(db, folder.kb_id, [folder.id]) if request.get("include_descendants", True) else {folder.id}
+            grouped.setdefault(folder.kb_id, set()).add(folder.id)
+        for kb_id, roots in grouped.items():
+            expanded |= descendants(db, kb_id, roots) if request.get("include_descendants", True) else roots
         stmt = stmt.where(Document.folder_id.in_(expanded))
     tags = request.get("tag_ids", [])
     for tag_id in tags:
@@ -112,11 +117,9 @@ def _current_candidates(db, actor, request, kb_ids, by_id):
         if kb_id not in current_kbs:
             raise AppError("not_found", "知识库不存在或已删除", 404)
         assert_can_read_kb(db, actor, kb_id)
-    if request.get("folder_ids"):
-        # descendants() consumes ORM folder relationships as well as IDs; make
-        # moves in another transaction visible before expanding the tree again.
-        list(db.scalars(select(Folder).where(Folder.kb_id.in_(kb_ids))
-                        .execution_options(populate_existing=True)))
+    # scoped_query refreshes selected roots and descendants reads current scalar
+    # parent IDs, so concurrent folder moves are re-expanded without loading the
+    # entire folder tree as ORM entities here.
     current, _ = scoped_query(db, actor, {**request, "kb_ids": kb_ids})
     rows = db.execute(current.where(DocumentChunk.id.in_(by_id))
                       .execution_options(populate_existing=True))

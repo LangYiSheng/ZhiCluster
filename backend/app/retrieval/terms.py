@@ -12,6 +12,12 @@ _FILLER = re.compile(
     r"请问|请帮我|帮我|介绍一下|告诉我|我们|你们|他们|是什么|怎么样|怎么|如何|什么|多少|哪些|有没有|是否|以及|然后|还有|关于|一下|[的了吗呢呀是和与及]"
 )
 _WORD = re.compile(r"[\u3400-\u9fff]+|[a-z0-9][a-z0-9_.+#/%-]*", re.IGNORECASE)
+_ENGLISH_FILLER = frozenset(
+    "a an and are as at be been being by can could did do does for from had has have how "
+    "i if in into is it its may me might my of on or our please should than that the their "
+    "them there these they this those to us was we were what when where which who why will "
+    "with would you your".split()
+)
 
 
 def normalized(text: str) -> str:
@@ -44,7 +50,7 @@ def plan_query(query: str, max_terms: int = 48) -> QueryPlan:
     groups = []
     for match in _WORD.finditer(_FILLER.sub(" ", query)):
         word = match.group().strip(".-/")
-        if not word:
+        if not word or word in _ENGLISH_FILLER:
             continue
         if re.fullmatch(r"[\u3400-\u9fff]+", word):
             if len(word) == 1:
