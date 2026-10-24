@@ -19,9 +19,22 @@ export function useSessionDraft(key: string) {
     }
     setValues((previous) => ({ ...previous, [targetKey]: next }));
   }
-  return [
-    value,
-    (next: string) => write(next),
-    (targetKey = key) => write("", targetKey),
-  ] as const;
+  function clear(targetKey = key, expectedValue?: string) {
+    if (expectedValue === undefined) {
+      write("", targetKey);
+      return;
+    }
+    try {
+      if ((sessionStorage.getItem(targetKey) || "") !== expectedValue) return;
+      sessionStorage.removeItem(targetKey);
+    } catch {
+      // When storage is unavailable, preserve a newer in-memory value too.
+    }
+    setValues((previous) =>
+      previous[targetKey] !== undefined && previous[targetKey] !== expectedValue
+        ? previous
+        : { ...previous, [targetKey]: "" },
+    );
+  }
+  return [value, (next: string) => write(next), clear] as const;
 }

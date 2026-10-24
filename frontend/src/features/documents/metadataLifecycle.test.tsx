@@ -162,3 +162,39 @@ it("仍在当前创建弹窗时保存成功会选中新知识库", async () => {
   await waitFor(() => expect(selected).toHaveBeenCalledWith("new-kb"));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
+
+it("旧知识库删除响应不关闭后来打开的其他库确认", async () => {
+  let finish: (value: Response) => void = () => {};
+  const pending = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  const fetch = vi.fn(async () => pending);
+  vi.stubGlobal("fetch", fetch);
+  const qc = client();
+  render(
+    <QueryClientProvider client={qc}>
+      <Library
+        knowledgeBases={[kb, other]}
+        kbId={kb.id}
+        onSelect={vi.fn()}
+        trash={false}
+      />
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "知识库甲菜单" }));
+  await user.click(screen.getByRole("menuitem", { name: "删除知识库" }));
+  await user.click(screen.getByRole("button", { name: "确认删除" }));
+  await user.click(screen.getByRole("button", { name: "取消" }));
+  await user.click(screen.getByRole("button", { name: "知识库乙菜单" }));
+  await user.click(screen.getByRole("menuitem", { name: "删除知识库" }));
+  finish(new Response("{}"));
+  await waitFor(() => expect(qc.isMutating()).toBe(0));
+  expect(fetch).toHaveBeenCalledWith(
+    "/api/knowledge-bases/a",
+    expect.objectContaining({ method: "DELETE" }),
+  );
+  expect(screen.getByRole("dialog", { name: "确认删除" })).toHaveTextContent(
+    "知识库乙",
+  );
+});

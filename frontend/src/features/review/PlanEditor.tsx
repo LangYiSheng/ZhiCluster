@@ -34,9 +34,8 @@ function readDraft(value: string): PlanDraft | null {
 export function PlanEditor({ run }: { run: ReviewRun }) {
   const client = useQueryClient();
   const plan = run.plan;
-  const [stored, setStored, clearStored] = useSessionDraft(
-    `zhicluster:draft:v1:review-plan:${run.id}`,
-  );
+  const draftKey = `zhicluster:draft:v1:review-plan:${run.id}`;
+  const [stored, setStored, clearStored] = useSessionDraft(draftKey);
   const draft = useMemo(() => readDraft(stored), [stored]);
   const operations =
     (plan?.status === "pending_review" ? draft?.operations : undefined) ||
@@ -111,22 +110,30 @@ export function PlanEditor({ run }: { run: ReviewRun }) {
     !!metadata.data;
   const mutation = useMutation({
     mutationFn: async (action: "save" | "approve" | "reject" | "undo") => {
-      if (action === "undo") return reviewApi.undo(run.id);
-      if (!plan) return;
-      if (action === "reject") return reviewApi.reject(plan.id);
+      const submittedDraft = stored;
+      if (action === "undo") {
+        await reviewApi.undo(run.id);
+        return submittedDraft;
+      }
+      if (!plan) return submittedDraft;
+      if (action === "reject") {
+        await reviewApi.reject(plan.id);
+        return submittedDraft;
+      }
       let current: ReviewPlan = plan;
       if (draft) {
         current = await reviewApi.save(plan, draft.operations);
         client.setQueryData<ReviewRun>(["review", "run", run.id], (previous) =>
           previous ? { ...previous, plan: current } : previous,
         );
-        clearStored();
+        clearStored(draftKey, submittedDraft);
       }
       if (action === "approve")
-        return reviewApi.approve(current.id, current.version, highRisk);
+        await reviewApi.approve(current.id, current.version, highRisk);
+      return submittedDraft;
     },
-    onSuccess: async () => {
-      clearStored();
+    onSuccess: async (submittedDraft) => {
+      clearStored(draftKey, submittedDraft);
       setConfirmation(null);
       await Promise.all([
         client.invalidateQueries({ queryKey: ["review"] }),

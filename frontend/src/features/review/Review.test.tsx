@@ -300,6 +300,50 @@ it("整理方案保存编辑后使用新版本审批，确认前零执行且目�
   });
 });
 
+it("旧方案保存响应不清除卸载后重开的新持久草稿", async () => {
+  let finish: (response: Response) => void = () => {};
+  const pending = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init?: RequestInit) =>
+      init?.method === "PATCH"
+        ? pending
+        : response(path.endsWith("/folders") ? folders : []),
+    ),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  clients.push(client);
+  const view = (key: string) => (
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <PlanEditor key={key} run={planRun} />
+      </QueryClientProvider>
+    </MemoryRouter>
+  );
+  const mounted = render(view("old"));
+  const user = userEvent.setup();
+  await screen.findByText("原建议名称");
+  await user.click(screen.getAllByText("调整参数")[1]);
+  await user.clear(screen.getByLabelText("名称"));
+  await user.type(screen.getByLabelText("名称"), "已经提交的A1");
+  await user.click(screen.getByRole("button", { name: "保存调整" }));
+  mounted.rerender(view("reopened"));
+  await user.click(screen.getAllByText("调整参数")[1]);
+  await user.clear(screen.getByLabelText("名称"));
+  await user.type(screen.getByLabelText("名称"), "重新打开后的A2");
+  finish(response({ ...planRun.plan, version: 2 }));
+  await waitFor(() => expect(client.isMutating()).toBe(0));
+  expect(
+    sessionStorage.getItem(`zhicluster:draft:v1:review-plan:${planRun.id}`),
+  ).toContain("重新打开后的A2");
+  mounted.rerender(view("third"));
+  await screen.findByText("重新打开后的A2");
+});
+
 it("撤销遇到版本冲突显示错误，保留当前方案且不伪装成功", async () => {
   vi.stubGlobal(
     "fetch",

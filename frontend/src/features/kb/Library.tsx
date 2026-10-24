@@ -58,9 +58,10 @@ export function Library({
     onError: (e) => toast.error(errorText(e)),
   });
   const deletion = useMutation({
-    mutationFn: () => api(`/knowledge-bases/${remove?.id}`, json("DELETE")),
-    onSuccess: () => {
-      setRemove(null);
+    mutationFn: (submitted: KnowledgeBase) =>
+      api(`/knowledge-bases/${submitted.id}`, json("DELETE")),
+    onSuccess: (_, submitted) => {
+      setRemove((value) => (value === submitted ? null : value));
       void qc.invalidateQueries();
       toast.success("已删除");
     },
@@ -179,7 +180,7 @@ export function Library({
           <Button
             variant="danger"
             disabled={deletion.isPending}
-            onClick={() => deletion.mutate()}
+            onClick={() => remove && deletion.mutate(remove)}
           >
             确认删除
           </Button>
