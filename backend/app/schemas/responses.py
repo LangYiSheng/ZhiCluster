@@ -93,6 +93,21 @@ class JobOut(EntityOut):
     document_available: bool = True
 
 
+class JobCounts(BaseModel):
+    all: int
+    attention: int
+    active: int
+    completed: int
+
+
+class JobPage(BaseModel):
+    items: list[JobOut]
+    total: int
+    page: int
+    page_size: int
+    counts: JobCounts
+
+
 class SearchItem(BaseModel):
     document_id: str
     document_name: str

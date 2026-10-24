@@ -17,8 +17,15 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { toast } from "sonner";
-import { api, errorText, json, query } from "../../lib/api";
-import type { Document, Folder, Job, KnowledgeBase, Tag } from "../../lib/api";
+import { api, ApiError, errorText, json, query } from "../../lib/api";
+import type {
+  Document,
+  Folder,
+  Job,
+  JobPage,
+  KnowledgeBase,
+  Tag,
+} from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { Dialog } from "../../components/ui/dialog";
 import { Menu, MenuItem } from "../../components/ui/menu";
@@ -29,6 +36,7 @@ import { isActiveJob, jobNeedsAttention, jobProgress } from "../../lib/jobs";
 import { FolderTree } from "./FolderTree";
 import type { FolderAction } from "./FolderTree";
 import { TagManager } from "./TagManager";
+import { folderDestinations } from "./folderNavigation";
 type FormState = {
   kind: "folder" | "rename" | "move" | "tags" | "delete";
   name: string;
@@ -41,6 +49,11 @@ type FormState = {
   action?: FolderAction;
 };
 type UploadItem = { document?: Document; status: string; message?: string };
+type UploadRequest = {
+  files: File[];
+  policy?: string;
+  targetFolderId?: string | null;
+};
 export function DocumentsPane({
   kb,
   folders,
@@ -65,6 +78,8 @@ export function DocumentsPane({
   const qc = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
   const activeRef = useRef(active);
+  const uploadInFlight = useRef(false);
+  const uploadGeneration = useRef(0);
   const [folderId, setFolderId] = useState("");
   const [sort, setSort] = useState("date");
   const [ext, setExt] = useState("");
@@ -76,10 +91,11 @@ export function DocumentsPane({
       : "";
   const [manageTags, setManageTags] = useState(false);
   const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selection, setSelected] = useState<Set<string>>(new Set());
   const [form, setForm] = useState<FormState | null>(null);
   const [dragging, setDragging] = useState(false);
   const [duplicateFiles, setDuplicateFiles] = useState<File[]>([]);
+  const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [context, setContext] = useState<{
     x: number;
@@ -89,6 +105,7 @@ export function DocumentsPane({
   useEffect(() => {
     activeRef.current = active;
     if (!active) {
+      uploadGeneration.current += 1;
       setManageTags(false);
       setForm(null);
       setDuplicateFiles([]);
@@ -112,6 +129,7 @@ export function DocumentsPane({
       api<{ items: Document[]; total: number; page_size: number }>(
         `/knowledge-bases/${kb.id}/documents${query({ folder_id: folderId || undefined, include_descendants: true, tag_ids: tagId, trash, sort, ext, status, page, page_size: 50 })}`,
       ),
+    enabled: active,
     refetchInterval: (q) =>
       q.state.data?.items.some((d) =>
         ["queued", "parsing", "chunking"].includes(d.parse_status),
@@ -119,20 +137,77 @@ export function DocumentsPane({
         ? 2000
         : 5000,
   });
+  const rows = documents.data?.items || [];
+  const jobDocumentIds = rows.map((row) => row.id).join(",");
   const jobs = useQuery({
-    queryKey: ["jobs", kb.id],
-    queryFn: () => api<Job[]>(`/ingestion/jobs?kb_id=${kb.id}`),
+    queryKey: ["document-jobs", kb.id, jobDocumentIds],
+    queryFn: () =>
+      api<Job[]>(
+        `/ingestion/jobs${query({ kb_id: kb.id, document_ids: jobDocumentIds, view: "current" })}`,
+      ),
     refetchInterval: 4000,
+    enabled: active && !!jobDocumentIds,
+  });
+  const jobSummary = useQuery({
+    queryKey: ["job-counts", kb.id],
+    queryFn: () =>
+      api<JobPage>(
+        `/ingestion/jobs/page${query({ kb_id: kb.id, page_size: 1 })}`,
+      ),
+    refetchInterval: 4000,
+    enabled: active,
   });
   const deletedKbs = useQuery({
     queryKey: ["deleted-kbs"],
     queryFn: () =>
       api<KnowledgeBase[]>("/knowledge-bases?include_deleted=true"),
-    enabled: trash,
+    enabled: active && trash,
   });
-  const rows = documents.data?.items || [];
+  const selected = new Set(
+    rows.filter((row) => selection.has(row.id)).map((row) => row.id),
+  );
   const activeFolder = folders.find((f) => f.id === folderId);
   const total = documents.data?.total || 0;
+  useEffect(() => {
+    if (!active || documents.isFetching) return;
+    if (
+      documents.error instanceof ApiError &&
+      documents.error.code === "invalid_folder" &&
+      folderId &&
+      folderId !== "root"
+    ) {
+      setFolderId("");
+      setPage(1);
+      setSelected(new Set());
+      setForm(null);
+      void qc.invalidateQueries({ queryKey: ["folders", kb.id] });
+      toast.info("原文件夹已不可用，已返回全部文档");
+    }
+  }, [active, documents.error, documents.isFetching, folderId, kb.id, qc]);
+  useEffect(() => {
+    if (!documents.data || documents.isFetching || documents.isError) return;
+    const visible = new Set(documents.data.items.map((row) => row.id));
+    setSelected((current) =>
+      [...current].every((id) => visible.has(id))
+        ? current
+        : new Set([...current].filter((id) => visible.has(id))),
+    );
+    setForm((current) =>
+      current?.ids?.some((id) => !visible.has(id)) ? null : current,
+    );
+  }, [documents.data, documents.isFetching, documents.isError]);
+  useEffect(() => {
+    if (!active || !documents.data || documents.isFetching || documents.isError)
+      return;
+    const lastPage = Math.max(
+      1,
+      Math.ceil(documents.data.total / documents.data.page_size),
+    );
+    if (page > lastPage) {
+      setPage(lastPage);
+      setSelected(new Set());
+    }
+  }, [active, documents.data, documents.isFetching, documents.isError, page]);
   function refresh() {
     void qc.invalidateQueries();
     setSelected(new Set());
@@ -158,13 +233,12 @@ export function DocumentsPane({
     mutationFn: async ({
       files,
       policy = "skip",
-    }: {
-      files: File[];
-      policy?: string;
-    }) => {
+      targetFolderId = folderId && folderId !== "root" ? folderId : null,
+    }: UploadRequest) => {
+      const generation = uploadGeneration.current;
       const data = new FormData();
       files.forEach((f) => data.append("files", f));
-      if (folderId && folderId !== "root") data.append("folder_id", folderId);
+      if (targetFolderId) data.append("folder_id", targetFolderId);
       data.append("duplicate_policy", policy);
       return {
         result: await api<{ items: UploadItem[] }>(
@@ -172,20 +246,40 @@ export function DocumentsPane({
           { method: "POST", body: data },
         ),
         files,
+        targetFolderId,
+        generation,
       };
     },
-    onSuccess: ({ result, files }) => {
+    onSuccess: ({ result, files, targetFolderId, generation }) => {
       setUploadItems(result.items);
       const duplicates = result.items
         .flatMap((r, i) => (r.status === "duplicate" ? [files[i]] : []))
         .filter((f): f is File => !!f);
-      if (duplicates.length && activeRef.current) setDuplicateFiles(duplicates);
+      if (
+        duplicates.length &&
+        activeRef.current &&
+        generation === uploadGeneration.current
+      ) {
+        setDuplicateFiles(duplicates);
+        setDuplicateTarget(targetFolderId);
+      }
       const count = result.items.filter((r) => r.status === "queued").length;
       if (count) toast.success(`${count} 个文件已上传，后台正在处理`);
       refresh();
     },
     onError: (e) => toast.error(errorText(e)),
+    onSettled: () => {
+      uploadInFlight.current = false;
+    },
   });
+  function startUpload(request: UploadRequest) {
+    if (uploadInFlight.current) {
+      toast.info("上一批文件仍在上传，请稍后再添加");
+      return;
+    }
+    uploadInFlight.current = true;
+    upload.mutate(request);
+  }
   function openFolderForm(kind: FolderAction, folder?: Folder) {
     if (kind === "trash" || kind === "restore") {
       if (kind === "trash")
@@ -226,13 +320,20 @@ export function DocumentsPane({
       });
     } else if (sourceFolder) {
       const f = folders.find((f) => f.id === sourceFolder);
+      if (!f || f.kb_id !== kb.id || f.deleted_at) {
+        toast.error("只能移动当前知识库中的有效文件夹");
+        return;
+      }
       action.mutate({
         path: `/folders/${sourceFolder}`,
         method: "PATCH",
-        body: { parent_id: target, version: f?.version },
+        body: { parent_id: target, version: f.version },
       });
     } else if (e.dataTransfer.files.length)
-      upload.mutate({ files: Array.from(e.dataTransfer.files) });
+      startUpload({
+        files: Array.from(e.dataTransfer.files),
+        targetFolderId: target,
+      });
   }
   function submit() {
     if (!form) return;
@@ -408,7 +509,7 @@ export function DocumentsPane({
               multiple
               onChange={(e) => {
                 if (e.target.files?.length)
-                  upload.mutate({ files: Array.from(e.target.files) });
+                  startUpload({ files: Array.from(e.target.files) });
                 e.target.value = "";
               }}
             />
@@ -439,6 +540,7 @@ export function DocumentsPane({
                 onClick={() => {
                   setFolderId("root");
                   setPage(1);
+                  setSelected(new Set());
                   onUnclassified?.();
                 }}
               >
@@ -515,7 +617,14 @@ export function DocumentsPane({
                 ["name", "按名称"],
                 ["type", "按类型"],
               ].map(([key, label]) => (
-                <MenuItem key={key} onSelect={() => setSort(key)}>
+                <MenuItem
+                  key={key}
+                  onSelect={() => {
+                    setSort(key);
+                    setPage(1);
+                    setSelected(new Set());
+                  }}
+                >
                   {sort === key && <Check size={13} />} {label}
                 </MenuItem>
               ))}
@@ -530,6 +639,7 @@ export function DocumentsPane({
               onValueChange={(value) => {
                 setExt(value);
                 setPage(1);
+                setSelected(new Set());
               }}
               options={[
                 { value: "", label: "全部类型" },
@@ -546,6 +656,7 @@ export function DocumentsPane({
               onValueChange={(value) => {
                 setStatus(value);
                 setPage(1);
+                setSelected(new Set());
               }}
               options={[
                 { value: "", label: "全部状态" },
@@ -786,7 +897,10 @@ export function DocumentsPane({
               <Button
                 size="sm"
                 disabled={page === 1}
-                onClick={() => setPage((p) => p - 1)}
+                onClick={() => {
+                  setPage((p) => p - 1);
+                  setSelected(new Set());
+                }}
               >
                 上一页
               </Button>
@@ -796,7 +910,10 @@ export function DocumentsPane({
               <Button
                 size="sm"
                 disabled={page * 50 >= total}
-                onClick={() => setPage((p) => p + 1)}
+                onClick={() => {
+                  setPage((p) => p + 1);
+                  setSelected(new Set());
+                }}
               >
                 下一页
               </Button>
@@ -806,10 +923,10 @@ export function DocumentsPane({
             <small>{total} 个文档</small>
             <Link to={`/tasks?kb=${kb.id}`} className="document-tasks-link">
               任务列表
-              {!!jobs.data?.filter(isActiveJob).length &&
-                ` · ${jobs.data.filter(isActiveJob).length} 项进行中`}
-              {!!jobs.data?.filter(jobNeedsAttention).length &&
-                ` · ${jobs.data.filter(jobNeedsAttention).length} 项待处理`}
+              {!!jobSummary.data?.counts?.active &&
+                ` · ${jobSummary.data.counts.active} 项进行中`}
+              {!!jobSummary.data?.counts?.attention &&
+                ` · ${jobSummary.data.counts.attention} 项待处理`}
             </Link>
           </div>
           {dragging && (
@@ -913,13 +1030,12 @@ export function DocumentsPane({
                 }
                 options={[
                   { value: "", label: "根目录 / 未分类" },
-                  ...folders
-                    .filter(
-                      (f) =>
-                        !f.deleted_at &&
-                        (form.action !== "move" || f.id !== form.folder?.id),
-                    )
-                    .map((f) => ({ value: f.id, label: f.name })),
+                  ...folderDestinations(
+                    folders,
+                    form.kind === "folder" && form.action === "move"
+                      ? form.folder?.id
+                      : undefined,
+                  ),
                 ]}
               />
             </label>
@@ -1007,12 +1123,29 @@ export function DocumentsPane({
         title="检测到相同内容"
         description={`${duplicateFiles.length} 个文件已经存在。可以保留现有文档，或明确创建副本。`}
       >
+        <p className="tiny muted">
+          保存位置：
+          {duplicateTarget
+            ? folderDestinations(folders).find(
+                (option) => option.value === duplicateTarget,
+              )?.label || "原上传文件夹"
+            : "根目录 / 未分类"}
+        </p>
+        <ul>
+          {duplicateFiles.map((file, index) => (
+            <li key={`${file.name}-${index}`}>{file.name}</li>
+          ))}
+        </ul>
         <div className="dialog-actions">
           <Button onClick={() => setDuplicateFiles([])}>跳过重复文件</Button>
           <Button
             variant="default"
             onClick={() => {
-              upload.mutate({ files: duplicateFiles, policy: "copy" });
+              startUpload({
+                files: duplicateFiles,
+                policy: "copy",
+                targetFolderId: duplicateTarget,
+              });
               setDuplicateFiles([]);
             }}
           >

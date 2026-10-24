@@ -95,8 +95,19 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
     await page.getByRole("dialog").getByLabel("搜索关键词").fill(marker);
     await expect(page.getByRole("option").first()).toContainText(filename);
     await page.keyboard.press("ArrowDown");
+    await expect(page.getByRole("option").nth(1)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await page.keyboard.press("ArrowUp");
+    await expect(page.getByRole("option").first()).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     await page.keyboard.press("Enter");
-    await expect(page.locator(".citation-banner")).toContainText("行");
+    await expect(
+      page.getByRole("complementary", { name: "当前引用", exact: true }),
+    ).toContainText("第 1 行");
     await expect(page.locator(".text-reader")).toContainText(marker);
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await chooseOption(page, "显示模式", "深色");
@@ -132,21 +143,16 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
     await expect(row).toHaveCount(0);
     await page.getByRole("button", { name: "回收站", exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/trash\\?kb=${kb.id}$`));
-    await expect(page.locator(".documents-page")).toBeVisible();
-    const deletedBases = page.locator(".deleted-kbs");
-    if (await deletedBases.count()) {
-      await expect(deletedBases).not.toHaveAttribute("open");
-      await deletedBases.locator("summary").click();
-      const list = await page.locator(".deleted-kb-list").boundingBox();
-      expect(list!.height).toBeLessThanOrEqual(160);
-      await deletedBases.locator("summary").click();
-    }
-    const trashed = page.locator(".document-row").filter({ hasText: filename });
+    await expect(page.locator(".trash-page")).toBeVisible();
+    await expect(page.getByRole("tab", { name: /^知识库/ })).toBeVisible();
+    await page
+      .getByRole("textbox", { name: "搜索已删除的内容" })
+      .fill(filename);
+    const trashed = page.getByRole("row").filter({ hasText: filename });
     await expect(trashed).toBeVisible();
     await trashed
-      .getByRole("button", { name: `${filename}文档菜单`, exact: true })
+      .getByRole("button", { name: `恢复 ${filename}`, exact: true })
       .click();
-    await page.getByRole("menuitem", { name: "恢复文档", exact: true }).click();
     await expect(trashed).toHaveCount(0);
     await page.goto(`/document?kb=${kb.id}`);
     await expect(
@@ -167,7 +173,10 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
     await page
       .getByRole("button", { name: "展开知识库栏", exact: true })
       .click();
-    await page.getByRole("button", { name: "知识对话", exact: true }).click();
+    await page
+      .getByRole("navigation", { name: "主导航" })
+      .getByRole("button", { name: "知识对话", exact: true })
+      .click();
     await expect(
       page.getByRole("heading", { name: "让知识产生连接" }),
     ).toBeVisible();
@@ -186,7 +195,10 @@ test("真实后端：知识管理、入库、中文搜索、回收恢复与响�
     await expect(
       page.getByRole("button", { name: "新建知识库", exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await page
+      .getByRole("complementary", { name: "知识库与主导航" })
+      .getByRole("button", { name: "设置", exact: true })
+      .click();
     await expect(
       page.getByRole("heading", { name: "外观与布局" }),
     ).toBeVisible();
@@ -213,7 +225,7 @@ test("真实PDF页码与DOCX段落来源定位", async ({ page, request }) => {
     await page.goto(`/chat?kb=${kb.id}`);
     const reference = page
       .getByRole("complementary", { name: "参考资料" })
-      .getByRole("tabpanel");
+      .locator(".reference-view:not([hidden])");
     await page.getByRole("button", { name: "浏览资料", exact: true }).click();
     await page
       .getByLabel("上传文档", { exact: true })
@@ -254,9 +266,9 @@ test("真实PDF页码与DOCX段落来源定位", async ({ page, request }) => {
         return ink > 10;
       }),
     ).toBeTruthy();
-    await expect(reference.locator(".citation-banner")).toContainText(
-      "第 2 页",
-    );
+    await expect(
+      reference.getByRole("complementary", { name: "当前引用", exact: true }),
+    ).toContainText("第 2 页");
     await expect(page).toHaveURL(new RegExp(`/chat\\?kb=${kb.id}$`));
     const downloadUrl = await reference
       .getByRole("link", { name: "下载原文件", exact: true })
@@ -275,7 +287,9 @@ test("真实PDF页码与DOCX段落来源定位", async ({ page, request }) => {
       .fill("PositionCheckDOCX");
     await expect(page.getByRole("option").first()).toContainText("段");
     await page.getByRole("option").first().click();
-    await expect(reference.locator(".citation-banner")).toContainText("段");
+    await expect(
+      reference.getByRole("complementary", { name: "当前引用", exact: true }),
+    ).toContainText("段");
     await expect(reference.locator(".pdf-canvas")).toHaveCount(0);
     await expect(reference.locator(".text-reader")).toContainText(
       "PositionCheckDOCX",

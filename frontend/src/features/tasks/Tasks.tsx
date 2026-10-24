@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { Empty, ErrorState, Loading } from "../../components/common";
 import { Button } from "../../components/ui/button";
 import { api, errorText, json, query } from "../../lib/api";
-import type { Job, KnowledgeBase } from "../../lib/api";
+import type { Job, JobPage, KnowledgeBase } from "../../lib/api";
 import {
   canCancelJob,
   canRetryJob,
@@ -55,6 +55,7 @@ function TaskRow({ job, kbId }: { job: Job; kbId: string }) {
         client.invalidateQueries({ queryKey: ["tasks"] }),
         client.invalidateQueries({ queryKey: ["jobs"] }),
         client.invalidateQueries({ queryKey: ["document-jobs"] }),
+        client.invalidateQueries({ queryKey: ["job-counts"] }),
         client.invalidateQueries({ queryKey: ["documents"] }),
         client.invalidateQueries({ queryKey: ["document"] }),
         client.invalidateQueries({ queryKey: ["messages"] }),
@@ -204,18 +205,34 @@ export function Tasks({
   documentId?: string;
 }) {
   const [filter, setFilter] = useState<Filter>("attention");
+  const scope = JSON.stringify([kb?.id, documentId, filter]);
+  const [pagination, setPagination] = useState({ scope: "", page: 1 });
+  const page = pagination.scope === scope ? pagination.page : 1;
+  function changeFilter(next: Filter) {
+    setFilter(next);
+    setPagination({
+      scope: JSON.stringify([kb?.id, documentId, next]),
+      page: 1,
+    });
+  }
   const jobs = useQuery({
-    queryKey: ["tasks", kb?.id, documentId, filter],
+    queryKey: ["tasks", kb?.id, documentId, filter, page],
     queryFn: () =>
-      api<Job[]>(
-        `/ingestion/jobs${query({ kb_id: kb!.id, document_id: documentId, group: filter === "all" ? undefined : filter })}`,
+      api<JobPage>(
+        `/ingestion/jobs/page${query({ kb_id: kb!.id, document_id: documentId, group: filter === "all" ? undefined : filter, page, page_size: 50 })}`,
       ),
     enabled: Boolean(kb),
-    refetchInterval: 4000,
+    refetchInterval: (q) => (q.state.data?.counts.active ? 4000 : 15000),
   });
+  const total = jobs.data?.total || 0;
+  const pages = Math.max(1, Math.ceil(total / 50));
+  useEffect(() => {
+    if (jobs.data && !jobs.isFetching && page > pages)
+      setPagination({ scope, page: pages });
+  }, [jobs.data, jobs.isFetching, page, pages, scope]);
   if (!kb)
     return <Empty title="先选择一个知识库" icon={<ListChecks size={25} />} />;
-  const visible = jobs.data || [];
+  const visible = jobs.data?.items || [];
   return (
     <section className="tasks-page">
       <header className="tasks-heading">
@@ -241,9 +258,10 @@ export function Tasks({
               type="button"
               className={filter === item.id ? "is-active" : ""}
               aria-pressed={filter === item.id}
-              onClick={() => setFilter(item.id)}
+              onClick={() => changeFilter(item.id)}
             >
               {item.label}
+              {jobs.data && ` (${jobs.data.counts[item.id]})`}
             </button>
           ))}
         </div>
@@ -287,7 +305,7 @@ export function Tasks({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setFilter("all")}
+                onClick={() => changeFilter("all")}
               >
                 查看全部任务
               </Button>
@@ -295,8 +313,30 @@ export function Tasks({
           </Empty>
         )}
       </div>
-      {visible.length >= 200 && (
-        <p className="tasks-limit">显示当前筛选下最近 200 项任务</p>
+      {jobs.data && !jobs.isError && (
+        <nav className="tasks-limit row spread" aria-label="任务分页">
+          <span aria-live="polite">
+            共 {total} 项 · 第 {page} / {pages} 页
+          </span>
+          <div className="row gap">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={page === 1 || jobs.isFetching}
+              onClick={() => setPagination({ scope, page: page - 1 })}
+            >
+              上一页
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={page >= pages || jobs.isFetching}
+              onClick={() => setPagination({ scope, page: page + 1 })}
+            >
+              下一页
+            </Button>
+          </div>
+        </nav>
       )}
     </section>
   );

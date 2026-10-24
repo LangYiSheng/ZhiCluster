@@ -13,7 +13,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DocumentsPane } from "./DocumentsPane";
 import { TagManager } from "./TagManager";
-import type { Document, Tag } from "../../lib/api";
+import type { Document, Folder, Tag } from "../../lib/api";
 function render(ui: ReactElement) {
   return renderView(ui, { wrapper: MemoryRouter });
 }
@@ -43,6 +43,13 @@ const doc: Document = {
   tag_ids: [tag.id],
 };
 const clients: QueryClient[] = [];
+const folder: Folder = {
+  id: "folder-a",
+  kb_id: kb.id,
+  parent_id: null,
+  name: "投递目录",
+  version: 1,
+};
 function client() {
   const value = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -55,6 +62,486 @@ afterEach(() => {
   clients.forEach((value) => value.clear());
   clients.length = 0;
   vi.unstubAllGlobals();
+});
+
+it("拖放上传及重复副本始终保存到落点目录", async () => {
+  const targets: (FormDataEntryValue | null)[] = [];
+  const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.includes("/uploads")) {
+      const body = init?.body as FormData;
+      targets.push(body.get("folder_id"));
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              status:
+                body.get("duplicate_policy") === "copy"
+                  ? "queued"
+                  : "duplicate",
+              document: doc,
+            },
+          ],
+        }),
+      );
+    }
+    return new Response(
+      JSON.stringify(
+        path.includes("/documents")
+          ? { items: [doc], total: 1, page_size: 50 }
+          : [],
+      ),
+    );
+  });
+  vi.stubGlobal("fetch", fetch);
+  render(
+    <QueryClientProvider client={client()}>
+      <DocumentsPane
+        kb={kb}
+        folders={[folder]}
+        tags={[]}
+        trash={false}
+        onOpen={vi.fn()}
+        selectedId=""
+      />
+    </QueryClientProvider>,
+  );
+  await screen.findByText(doc.display_name);
+  fireEvent.drop(
+    screen.getByRole("button", { name: folder.name }).closest(".folder-row")!,
+    {
+      dataTransfer: {
+        files: [new File(["原文"], "拖放.txt", { type: "text/plain" })],
+        getData: () => "",
+      },
+    },
+  );
+  await screen.findByRole("dialog", { name: "检测到相同内容" });
+  await userEvent.click(screen.getByRole("button", { name: "保留副本" }));
+  await waitFor(() => expect(targets).toHaveLength(2));
+  expect(targets).toEqual([folder.id, folder.id]);
+});
+
+it.each(["下一页", "未分类", "文件类型筛选", "处理状态筛选"])(
+  "切换%s清除原视图的勾选",
+  async (control) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (path: string) =>
+          new Response(
+            JSON.stringify(
+              path.includes("/documents")
+                ? { items: [doc], total: 51, page_size: 50 }
+                : [],
+            ),
+          ),
+      ),
+    );
+    render(
+      <QueryClientProvider client={client()}>
+        <DocumentsPane
+          kb={kb}
+          folders={[]}
+          tags={[]}
+          trash={false}
+          onOpen={vi.fn()}
+          selectedId=""
+        />
+      </QueryClientProvider>,
+    );
+    await screen.findByText(doc.display_name);
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: `选择 ${doc.display_name}` }),
+    );
+    expect(screen.getByText("已选 1 项")).toBeInTheDocument();
+    if (control.endsWith("筛选")) {
+      await userEvent.click(screen.getByRole("combobox", { name: control }));
+      await userEvent.click(
+        screen.getByRole("option", {
+          name: control === "文件类型筛选" ? "PDF" : "处理失败",
+        }),
+      );
+    } else await userEvent.click(screen.getByRole("button", { name: control }));
+    expect(screen.queryByText("已选 1 项")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "批量操作" }),
+    ).not.toBeInTheDocument();
+  },
+);
+
+it("末页总量收缩后回到仍存在的页", async () => {
+  let total = 51;
+  const fetch = vi.fn(async (path: string) => {
+    const page = new URL(path, "http://localhost").searchParams.get("page");
+    return new Response(
+      JSON.stringify(
+        path.includes("/documents")
+          ? {
+              items: page === "2" && total <= 50 ? [] : [doc],
+              total,
+              page_size: 50,
+            }
+          : [],
+      ),
+    );
+  });
+  vi.stubGlobal("fetch", fetch);
+  const qc = client();
+  render(
+    <QueryClientProvider client={qc}>
+      <DocumentsPane
+        kb={kb}
+        folders={[]}
+        tags={[]}
+        trash={false}
+        onOpen={vi.fn()}
+        selectedId=""
+      />
+    </QueryClientProvider>,
+  );
+  await screen.findByText(doc.display_name);
+  await userEvent.click(screen.getByRole("button", { name: "下一页" }));
+  await screen.findByText("2 / 2");
+  total = 50;
+  await qc.invalidateQueries({ queryKey: ["documents"] });
+  await waitFor(() =>
+    expect(
+      fetch.mock.calls
+        .filter(([path]) => path.includes("/documents"))
+        .at(-1)?.[0],
+    ).toContain("page=1"),
+  );
+  await waitFor(() => {
+    expect(screen.getByText(doc.display_name)).toBeVisible();
+    expect(screen.queryByText("这里还没有文档")).not.toBeInTheDocument();
+  });
+});
+
+it("隐藏资料区不发起文档或任务查询", async () => {
+  const fetch = vi.fn(
+    async (path: string) =>
+      new Response(
+        JSON.stringify(
+          path.includes("/documents")
+            ? { items: [], total: 0, page_size: 50 }
+            : [],
+        ),
+      ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  render(
+    <QueryClientProvider client={client()}>
+      <DocumentsPane
+        kb={kb}
+        folders={[]}
+        tags={[]}
+        trash={false}
+        active={false}
+        onOpen={vi.fn()}
+        selectedId=""
+      />
+    </QueryClientProvider>,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("资料页按可见文档读取当前任务，并显示整库准确统计", async () => {
+  const fetch = vi.fn(async (path: string) => {
+    if (path.includes("/documents"))
+      return new Response(
+        JSON.stringify({ items: [doc], total: 848, page_size: 50 }),
+      );
+    if (path.includes("/ingestion/jobs/page"))
+      return new Response(
+        JSON.stringify({
+          items: [],
+          total: 848,
+          page: 1,
+          page_size: 1,
+          counts: { all: 848, active: 0, attention: 848, completed: 0 },
+        }),
+      );
+    return new Response(
+      JSON.stringify([
+        {
+          id: "old-document-job",
+          document_id: doc.id,
+          status: "partial_ready",
+          stage: "completed",
+          progress: 100,
+          attempts: 1,
+        },
+      ]),
+    );
+  });
+  vi.stubGlobal("fetch", fetch);
+  render(
+    <QueryClientProvider client={client()}>
+      <DocumentsPane
+        kb={kb}
+        folders={[]}
+        tags={[]}
+        trash={false}
+        onOpen={vi.fn()}
+        selectedId=""
+      />
+    </QueryClientProvider>,
+  );
+  await screen.findByText("任务待处理");
+  expect(
+    await screen.findByRole("link", { name: /848 项待处理/ }),
+  ).toBeInTheDocument();
+  expect(
+    fetch.mock.calls.some(
+      ([path]) =>
+        path.includes("document_ids=doc-1") && path.includes("view=current"),
+    ),
+  ).toBe(true);
+});
+
+it("其他知识库的目录拖到根目录时不修改源目录", async () => {
+  const fetch = vi.fn(
+    async (path: string) =>
+      new Response(
+        JSON.stringify(
+          path.includes("/documents")
+            ? { items: [doc], total: 1, page_size: 50 }
+            : [],
+        ),
+      ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  render(
+    <QueryClientProvider client={client()}>
+      <DocumentsPane
+        kb={kb}
+        folders={[folder]}
+        tags={[]}
+        trash={false}
+        onOpen={vi.fn()}
+        selectedId=""
+      />
+    </QueryClientProvider>,
+  );
+  await screen.findByText(doc.display_name);
+  fireEvent.drop(document.querySelector(".folder-root-drop")!, {
+    dataTransfer: {
+      files: [],
+      getData: (type: string) =>
+        type === "application/x-zhicluster-folder" ? "foreign-folder" : "",
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(
+    fetch.mock.calls.some(([path]) => path.includes("/folders/foreign-folder")),
+  ).toBe(false);
+});
+
+it("轮询后消失的文档不再进入勾选与批量操作", async () => {
+  let items = [doc];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async (path: string) =>
+        new Response(
+          JSON.stringify(
+            path.includes("/documents")
+              ? { items, total: 1, page_size: 50 }
+              : [],
+          ),
+        ),
+    ),
+  );
+  const qc = client();
+  render(
+    <QueryClientProvider client={qc}>
+      <DocumentsPane
+        kb={kb}
+        folders={[]}
+        tags={[]}
+        trash={false}
+        onOpen={vi.fn()}
+        selectedId=""
+      />
+    </QueryClientProvider>,
+  );
+  await screen.findByText(doc.display_name);
+  await userEvent.click(
+    screen.getByRole("checkbox", { name: `选择 ${doc.display_name}` }),
+  );
+  items = [{ ...doc, id: "doc-new", display_name: "另一个文档.txt" }];
+  await qc.invalidateQueries({ queryKey: ["documents"] });
+  await screen.findByText("另一个文档.txt");
+  expect(
+    screen.queryByRole("button", { name: "批量操作" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("已选 1 项")).not.toBeInTheDocument();
+});
+
+it("当前文件夹被删除后自动回到全部文档", async () => {
+  let removed = false;
+  const fetch = vi.fn(async (path: string) => {
+    if (path.includes("/documents")) {
+      if (
+        removed &&
+        new URL(path, "http://localhost").searchParams.get("folder_id")
+      )
+        return new Response(
+          JSON.stringify({
+            error: { code: "invalid_folder", message: "目录已删除" },
+          }),
+          { status: 400 },
+        );
+      return new Response(
+        JSON.stringify({ items: [doc], total: 1, page_size: 50 }),
+      );
+    }
+    return new Response("[]");
+  });
+  vi.stubGlobal("fetch", fetch);
+  const qc = client();
+  render(
+    <QueryClientProvider client={qc}>
+      <DocumentsPane
+        kb={kb}
+        folders={[folder]}
+        tags={[]}
+        trash={false}
+        onOpen={vi.fn()}
+        selectedId=""
+      />
+    </QueryClientProvider>,
+  );
+  await screen.findByText(doc.display_name);
+  await userEvent.click(screen.getByRole("button", { name: folder.name }));
+  await waitFor(() =>
+    expect(
+      fetch.mock.calls.some(([path]) => path.includes("folder_id=folder-a")),
+    ).toBe(true),
+  );
+  removed = true;
+  await qc.invalidateQueries({ queryKey: ["documents"] });
+  await waitFor(() =>
+    expect(
+      fetch.mock.calls
+        .filter(([path]) => path.includes("/documents"))
+        .at(-1)?.[0],
+    ).not.toContain("folder_id="),
+  );
+  await waitFor(() =>
+    expect(
+      document.querySelector(".document-navigation .selected"),
+    ).toHaveTextContent("全部文档"),
+  );
+});
+
+it("上传请求未完成时不并发覆盖确认，隐藏再打开也不重开旧确认", async () => {
+  let resolveUpload: (value: Response) => void = () => {};
+  const pending = new Promise<Response>((resolve) => {
+    resolveUpload = resolve;
+  });
+  const fetch = vi.fn(async (path: string) =>
+    path.includes("/uploads")
+      ? pending
+      : new Response(
+          JSON.stringify(
+            path.includes("/documents")
+              ? { items: [doc], total: 1, page_size: 50 }
+              : [],
+          ),
+        ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const qc = client();
+  const view = (active: boolean) => (
+    <QueryClientProvider client={qc}>
+      <DocumentsPane
+        kb={kb}
+        folders={[folder]}
+        tags={[]}
+        trash={false}
+        active={active}
+        onOpen={vi.fn()}
+        selectedId=""
+      />
+    </QueryClientProvider>
+  );
+  const mounted = render(view(true));
+  await screen.findByText(doc.display_name);
+  const transfer = {
+    files: [new File(["原文"], "慢上传.txt", { type: "text/plain" })],
+    getData: () => "",
+  };
+  fireEvent.drop(document.querySelector(".folder-root-drop")!, {
+    dataTransfer: transfer,
+  });
+  fireEvent.drop(document.querySelector(".folder-root-drop")!, {
+    dataTransfer: transfer,
+  });
+  await waitFor(() =>
+    expect(
+      fetch.mock.calls.filter(([path]) => path.includes("/uploads")),
+    ).toHaveLength(1),
+  );
+  mounted.rerender(view(false));
+  mounted.rerender(view(true));
+  resolveUpload(
+    new Response(
+      JSON.stringify({ items: [{ status: "duplicate", document: doc }] }),
+    ),
+  );
+  await screen.findByText("文件已存在，已跳过", { exact: false });
+  expect(
+    screen.queryByRole("dialog", { name: "检测到相同内容" }),
+  ).not.toBeInTheDocument();
+});
+
+it("换页缓存过期时等待新响应，旧空页不会把用户踢回首页", async () => {
+  let resolveSecond: (value: Response) => void = () => {};
+  const second = new Promise<Response>((resolve) => {
+    resolveSecond = resolve;
+  });
+  const fetch = vi.fn(async (path: string) => {
+    if (!path.includes("/documents")) return new Response("[]");
+    if (new URL(path, "http://localhost").searchParams.get("page") === "2")
+      return second;
+    return new Response(
+      JSON.stringify({ items: [doc], total: 51, page_size: 50 }),
+    );
+  });
+  vi.stubGlobal("fetch", fetch);
+  const qc = client();
+  qc.setQueryData(["documents", kb.id, "", "", false, "date", "", "", 2], {
+    items: [],
+    total: 0,
+    page_size: 50,
+  });
+  render(
+    <QueryClientProvider client={qc}>
+      <DocumentsPane
+        kb={kb}
+        folders={[]}
+        tags={[]}
+        trash={false}
+        onOpen={vi.fn()}
+        selectedId=""
+      />
+    </QueryClientProvider>,
+  );
+  await screen.findByText(doc.display_name);
+  await userEvent.click(screen.getByRole("button", { name: "下一页" }));
+  resolveSecond(
+    new Response(
+      JSON.stringify({
+        items: [{ ...doc, id: "doc-2", display_name: "第二页文档.txt" }],
+        total: 51,
+        page_size: 50,
+      }),
+    ),
+  );
+  await screen.findByText("第二页文档.txt");
+  expect(screen.getByText("2 / 2")).toBeVisible();
 });
 
 it("文档显示标签，标签筛选进入查询并在知识库切换时清除", async () => {

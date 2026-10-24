@@ -162,6 +162,19 @@ export type Job = {
   updated_at?: string;
   next_attempt_at?: string | null;
 };
+export type JobCounts = {
+  all: number;
+  attention: number;
+  active: number;
+  completed: number;
+};
+export type JobPage = {
+  items: Job[];
+  total: number;
+  page: number;
+  page_size: number;
+  counts: JobCounts;
+};
 export type Suggestion = {
   id?: string;
   status: string;

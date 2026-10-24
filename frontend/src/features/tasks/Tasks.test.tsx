@@ -10,7 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { Tasks } from "./Tasks";
-import type { Job } from "../../lib/api";
+import type { Job, JobPage } from "../../lib/api";
 
 const kb = { id: "kb-1", name: "研究库", description: "", version: 1 };
 const clients: QueryClient[] = [];
@@ -28,6 +28,31 @@ const partial: Job = {
   attempts: 1,
   created_at: "2026-10-23T00:00:00Z",
 };
+function pageOf(
+  items: Job[],
+  all = items,
+  page = 1,
+  total = items.length,
+): JobPage {
+  return {
+    items,
+    page,
+    page_size: 50,
+    total,
+    counts: {
+      all: all.length,
+      attention: all.filter(
+        (job) =>
+          ["failed", "partial_ready"].includes(job.status) ||
+          (job.status === "retry_wait" && Boolean(job.error)),
+      ).length,
+      active: all.filter((job) =>
+        ["queued", "running", "processing", "retry_wait"].includes(job.status),
+      ).length,
+      completed: all.filter((job) => job.status === "completed").length,
+    },
+  };
+}
 function renderTasks(documentId?: string) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -74,9 +99,12 @@ it("部分完成的100%任务作为待处理问题显示，重试走真实任务
     ];
     return new Response(
       JSON.stringify(
-        path.includes("group=attention")
-          ? jobs.filter((job) => job.status === "partial_ready")
-          : jobs,
+        pageOf(
+          path.includes("group=attention")
+            ? jobs.filter((job) => job.status === "partial_ready")
+            : jobs,
+          jobs,
+        ),
       ),
     );
   });
@@ -118,7 +146,11 @@ it("文档任务支持真实进度、取消与可见的操作错误", async () =
           status: 409,
         })
       : new Response(
-          JSON.stringify(path.includes("group=attention") ? [] : [running]),
+          JSON.stringify(
+            pageOf(path.includes("group=attention") ? [] : [running], [
+              running,
+            ]),
+          ),
         ),
   );
   vi.stubGlobal("fetch", fetch);
@@ -132,7 +164,7 @@ it("文档任务支持真实进度、取消与可见的操作错误", async () =
   expect(screen.getByText("正在处理 42%")).toBeInTheDocument();
   expect(screen.getByText("生成向量索引")).toBeInTheDocument();
   expect(fetch).toHaveBeenCalledWith(
-    "/api/ingestion/jobs?kb_id=kb-1&document_id=doc-1&group=active",
+    "/api/ingestion/jobs/page?kb_id=kb-1&document_id=doc-1&group=active&page=1&page_size=50",
     expect.anything(),
   );
   expect(screen.getByRole("link", { name: "查看整个知识库" })).toHaveAttribute(
@@ -166,18 +198,20 @@ it.each([
     vi.fn(
       async () =>
         new Response(
-          JSON.stringify([
-            {
-              ...partial,
-              document_id: null,
-              document_name: null,
-              kind: "organize",
-              status: "failed",
-              stage,
-              progress: 0,
-              error,
-            },
-          ]),
+          JSON.stringify(
+            pageOf([
+              {
+                ...partial,
+                document_id: null,
+                document_name: null,
+                kind: "organize",
+                status: "failed",
+                stage,
+                progress: 0,
+                error,
+              },
+            ]),
+          ),
         ),
     ),
   );
@@ -225,7 +259,7 @@ it("重试运行和等待明确标出上次错误，整理任务只显示真实�
   ];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(JSON.stringify(jobs))),
+    vi.fn(async () => new Response(JSON.stringify(pageOf(jobs)))),
   );
   renderTasks();
   const rows = await screen.findAllByRole("article");
@@ -251,4 +285,94 @@ it("重试运行和等待明确标出上次错误，整理任务只显示真实�
     }),
   );
   expect(screen.queryByText("不应继续显示的旧错误")).not.toBeInTheDocument();
+});
+
+it("任务超过200项仍可分页查看，并显示服务端完整计数", async () => {
+  const all = Array.from({ length: 260 }, (_, index) => ({
+    ...partial,
+    id: `history-${index}`,
+    document_id: `doc-${index}`,
+    document_name: `历史资料${index}.md`,
+  }));
+  const fetch = vi.fn(async (path: string) => {
+    const url = new URL(path, "http://localhost");
+    const page = Number(url.searchParams.get("page") || "1");
+    return new Response(
+      JSON.stringify(
+        pageOf(all.slice((page - 1) * 50, page * 50), all, page, all.length),
+      ),
+    );
+  });
+  vi.stubGlobal("fetch", fetch);
+  renderTasks();
+  expect(await screen.findByText("历史资料0.md")).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "需要处理 (260)" }),
+  ).toBeInTheDocument();
+  const navigation = () => screen.getByRole("navigation", { name: "任务分页" });
+  expect(
+    within(navigation()).getByText("共 260 项 · 第 1 / 6 页"),
+  ).toBeInTheDocument();
+  expect(
+    within(navigation()).getByRole("button", { name: "上一页" }),
+  ).toBeDisabled();
+  for (let page = 2; page <= 6; page++) {
+    await userEvent.click(
+      within(navigation()).getByRole("button", { name: "下一页" }),
+    );
+    await screen.findByText(`历史资料${(page - 1) * 50}.md`);
+  }
+  expect(screen.getByText("历史资料259.md")).toBeInTheDocument();
+  expect(
+    within(navigation()).getByRole("button", { name: "下一页" }),
+  ).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "全部 (260)" }));
+  expect(await screen.findByText("历史资料0.md")).toBeInTheDocument();
+  expect(fetch).toHaveBeenLastCalledWith(
+    "/api/ingestion/jobs/page?kb_id=kb-1&page=1&page_size=50",
+    expect.anything(),
+  );
+});
+
+it("末页任务重试后离开当前筛选，页码自动回到有效范围", async () => {
+  let retried = false;
+  const all = Array.from({ length: 51 }, (_, index) => ({
+    ...partial,
+    id: `retry-history-${index}`,
+    document_id: `retry-doc-${index}`,
+    document_name: `重试历史${index}.md`,
+  }));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        retried = true;
+        return new Response(JSON.stringify({ ...all[50], status: "queued" }));
+      }
+      const page = Number(
+        new URL(path, "http://localhost").searchParams.get("page") || "1",
+      );
+      const items = retried ? all.slice(0, 50) : all;
+      return new Response(
+        JSON.stringify(
+          pageOf(
+            items.slice((page - 1) * 50, page * 50),
+            items,
+            page,
+            items.length,
+          ),
+        ),
+      );
+    }),
+  );
+  renderTasks();
+  await screen.findByText("重试历史0.md");
+  await userEvent.click(screen.getByRole("button", { name: "下一页" }));
+  await screen.findByText("重试历史50.md");
+  await userEvent.click(
+    screen.getByRole("button", { name: "重试 重试历史50.md" }),
+  );
+  expect(await screen.findByText("重试历史0.md")).toBeInTheDocument();
+  expect(await screen.findByText("共 50 项 · 第 1 / 1 页")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
 });

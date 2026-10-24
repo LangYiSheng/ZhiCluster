@@ -2,7 +2,7 @@ from datetime import UTC, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Body, Depends, Header, Query
-from sqlalchemy import and_, exists, func, or_, select, text
+from sqlalchemy import and_, case, exists, func, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.gateway import ModelCatalogError, ModelGateway
@@ -27,7 +27,7 @@ from app.db.models import (
 from app.db.session import get_db
 from app.retrieval.search import scoped_query, search_knowledge
 from app.schemas.requests import ChatMessage, ConversationCreate, ConversationUpdate, Rebuild, Search
-from app.schemas.responses import ConversationOut, JobOut, SearchOut
+from app.schemas.responses import ConversationOut, JobOut, JobPage, SearchOut
 from app.schemas.settings import ConfigurationDraft, ConfigurationSave, ModelListRequest, ModelTestRequest
 from app.services.chat import emit_chat
 from app.services.library import get_document, snapshot
@@ -130,13 +130,19 @@ def search(body: Search, db: Session = Depends(get_db, scope="function")):
     return search_knowledge(db, get_actor(db), body.model_dump(), rerank=body.rerank)
 
 
-@router.get("/ingestion/jobs", response_model=list[JobOut])
-def jobs(kb_id: str | None = None, document_id: str | None = None, group: Literal["attention", "active", "completed"] | None = None, db: Session = Depends(get_db, scope="function")):
-    actor = get_actor(db)
+def _job_scope(db, actor, kb_id=None, document_id=None):
+    """One visibility boundary for history, current status and aggregate counts."""
     allowed = [kb_id] if kb_id else accessible_kb_ids(db, actor)
     if kb_id:
         assert_can_read_kb(db, actor, kb_id)
-    stmt = select(IngestionJob, Document).outerjoin(Document, IngestionJob.document_id == Document.id).where(IngestionJob.kb_id.in_(allowed))
+    # Project exactly the public fields. Polling does not need document summaries,
+    # job payloads, or lease internals, which can grow much larger than status.
+    stmt = select(IngestionJob.id, IngestionJob.created_at, IngestionJob.updated_at,
+        IngestionJob.kb_id, IngestionJob.document_id, IngestionJob.kind, IngestionJob.status,
+        IngestionJob.stage, IngestionJob.progress, IngestionJob.attempts, IngestionJob.error,
+        IngestionJob.next_attempt_at, Document.display_name.label("document_name"),
+        Document.deleted_at.label("document_deleted_at"), Document.id.label("available_document_id")).outerjoin(
+        Document, IngestionJob.document_id == Document.id).where(IngestionJob.kb_id.in_(allowed))
     own_conversation = exists(select(Conversation.id).where(Conversation.id == IngestionJob.payload["conversation_id"].as_string(), Conversation.user_id == actor.id, Conversation.deleted_at.is_(None)))
     stmt = stmt.where(or_(IngestionJob.kind != "chat", own_conversation))
     own_run = exists(select(AgentRun.id).where(AgentRun.id == IngestionJob.payload["run_id"].as_string(), AgentRun.actor_id == actor.id))
@@ -146,13 +152,78 @@ def jobs(kb_id: str | None = None, document_id: str | None = None, group: Litera
         if kb_id and document.kb_id != kb_id:
             raise AppError("scope_mismatch", "文档不属于当前知识库", 400)
         stmt = stmt.where(IngestionJob.document_id == document_id)
-    if group == "attention":
-        stmt = stmt.where(or_(IngestionJob.status.in_(["failed", "partial_ready"]), and_(IngestionJob.status == "retry_wait", IngestionJob.error.is_not(None), IngestionJob.error != "")))
-    elif group == "active":
-        stmt = stmt.where(IngestionJob.status.in_(["queued", "running", "processing", "retry_wait"]))
-    elif group == "completed":
-        stmt = stmt.where(IngestionJob.status == "completed")
-    return [{**snapshot(job), "document_name": document.display_name if document and not document.deleted_at else None, "document_available": not job.document_id or bool(document and not document.deleted_at)} for job, document in db.execute(stmt.order_by(IngestionJob.created_at.desc()).limit(200))]
+    return stmt
+
+
+def _job_group(group, model=IngestionJob):
+    return {
+        "attention": or_(model.status.in_(["failed", "partial_ready"]),
+            and_(model.status == "retry_wait", model.error.is_not(None), model.error != "")),
+        "active": model.status.in_(["queued", "running", "processing", "retry_wait"]),
+        "completed": model.status == "completed",
+    }.get(group)
+
+
+def _job_items(db, stmt):
+    items = []
+    for row in db.execute(stmt):
+        item = dict(row._mapping)
+        available_id = item.pop("available_document_id")
+        deleted_at = item.pop("document_deleted_at")
+        available = bool(available_id and not deleted_at)
+        if not available:
+            item["document_name"] = None
+        item["document_available"] = not item["document_id"] or available
+        items.append(item)
+    return items
+
+
+@router.get("/ingestion/jobs", response_model=list[JobOut])
+def jobs(kb_id: str | None = None, document_id: str | None = None,
+    group: Literal["attention", "active", "completed"] | None = None, document_ids: str | None = None,
+    view: Literal["current"] | None = None, db: Session = Depends(get_db, scope="function")):
+    stmt = _job_scope(db, get_actor(db), kb_id, document_id)
+    if document_ids is not None:
+        if len(document_ids) > 7400:
+            raise AppError("invalid_documents", "请提供 1 至 200 个有效文档 ID")
+        ids = list(dict.fromkeys(value.strip() for value in document_ids.split(",") if value.strip()))
+        if not ids or len(ids) > 200 or any(len(value) > 36 for value in ids):
+            raise AppError("invalid_documents", "请提供 1 至 200 个有效文档 ID")
+        # A batch ID filter never broadens the established KB/actor boundary.
+        stmt = stmt.where(IngestionJob.document_id.in_(ids), Document.deleted_at.is_(None), Document.id.is_not(None))
+    if group:
+        stmt = stmt.where(_job_group(group))
+    if view == "current":
+        if document_ids is None or group:
+            raise AppError("invalid_job_view", "当前状态视图需要文档 ID 列表，且不能同时筛选任务分组")
+        priority = case((IngestionJob.status.in_(["running", "processing"]), 0),
+            (IngestionJob.status.in_(["queued", "retry_wait"]), 1), else_=2)
+        ranked = stmt.with_only_columns(IngestionJob.id.label("job_id"), func.row_number().over(
+            partition_by=IngestionJob.document_id,
+            order_by=(priority, IngestionJob.created_at.desc(), IngestionJob.id.desc()),
+        ).label("document_rank")).subquery()
+        stmt = stmt.where(IngestionJob.id.in_(select(ranked.c.job_id).where(ranked.c.document_rank == 1)))
+    return _job_items(db, stmt.order_by(IngestionJob.created_at.desc(), IngestionJob.id.desc()).limit(200))
+
+
+@router.get("/ingestion/jobs/page", response_model=JobPage)
+def job_page(kb_id: str | None = None, document_id: str | None = None,
+    group: Literal["attention", "active", "completed"] | None = None,
+    page: int = Query(1, ge=1, le=1000000), page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db, scope="function")):
+    stmt = _job_scope(db, get_actor(db), kb_id, document_id)
+    scoped = stmt.with_only_columns(IngestionJob.id, IngestionJob.status, IngestionJob.error).subquery()
+    # Counts are for the complete visible scope; a retry_wait with an error
+    # belongs to both active and attention, so these categories are not summed.
+    counts = dict(db.execute(select(func.count().label("all"), *[
+        func.coalesce(func.sum(case((_job_group(name, scoped.c), 1), else_=0)), 0).label(name)
+        for name in ("attention", "active", "completed")
+    ]).select_from(scoped)).one()._mapping)
+    if group:
+        stmt = stmt.where(_job_group(group))
+    items = _job_items(db, stmt.order_by(IngestionJob.created_at.desc(), IngestionJob.id.desc())
+        .offset((page - 1) * page_size).limit(page_size))
+    return {"items": items, "total": counts[group or "all"], "page": page, "page_size": page_size, "counts": counts}
 
 
 def checked_job(db, job_id, edit=False):

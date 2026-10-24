@@ -468,7 +468,9 @@ test("隔离库真实HTTP：草稿连接测试、网页保存、密钥保留清�
     );
     await expect(page.locator(".citations button")).toHaveCount(1);
     await page.locator(".citations button").click();
-    await expect(page.locator(".citation-banner")).toContainText("第 1 行");
+    await expect(
+      page.getByRole("complementary", { name: "当前引用", exact: true }),
+    ).toContainText("第 1 行");
     await expect(page.locator(".text-reader")).toContainText(
       "知识配置生效验证",
     );

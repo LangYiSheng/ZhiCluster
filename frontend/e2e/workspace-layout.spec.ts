@@ -51,20 +51,38 @@ test("完整文档页、独立回收站和聊天右侧按需资料标签", async
     const composer = page.getByRole("textbox", { name: "知识库问题" });
     await expect(composer).toBeVisible();
     const pane = page.getByRole("complementary", { name: "参考资料" });
-    const activeReference = pane.getByRole("tabpanel");
+    const activeReference = pane.locator(".reference-view:not([hidden])");
     const tabs = page.getByRole("tablist", { name: "打开的资料" });
     await expect(pane).toHaveCount(0);
     await composer.fill("查看资料时保留这段草稿");
     await page.getByRole("button", { name: "浏览资料", exact: true }).click();
     await expect(pane).toBeVisible();
     await expect(tabs).toHaveCount(0);
-    const chatBox = await page.locator(".chat-main").boundingBox();
-    const paneBox = await pane.boundingBox();
-    expect(paneBox!.x).toBeGreaterThanOrEqual(chatBox!.x + chatBox!.width - 1);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const chat = document
+            .querySelector(".chat-main")!
+            .getBoundingClientRect();
+          const reference = document
+            .querySelector(".reference-pane")!
+            .getBoundingClientRect();
+          const dock = document
+            .querySelector(".reference-dock")!
+            .getBoundingClientRect();
+          const main = document.querySelector("main")!.getBoundingClientRect();
+          return {
+            adjacent: reference.left >= chat.right - 1,
+            fullHeight:
+              Math.abs(dock.top - main.top) < 1 &&
+              Math.abs(dock.height - main.height) < 1 &&
+              Math.abs(reference.top - dock.top - 1) < 1 &&
+              Math.abs(reference.height - dock.height + 2) < 1,
+          };
+        }),
+      )
+      .toEqual({ adjacent: true, fullHeight: true });
     await expect(page.locator("main .reference-pane")).toHaveCount(0);
-    const mainBox = await page.locator("main").boundingBox();
-    expect(paneBox!.y).toBe(mainBox!.y);
-    expect(paneBox!.height).toBe(mainBox!.height);
     await expect(pane.locator(".reference-pane-heading")).toHaveCount(0);
 
     async function openReader(name: string) {
@@ -83,9 +101,12 @@ test("完整文档页、独立回收站和聊天右侧按需资料标签", async
     await page.getByRole("dialog").getByLabel("搜索关键词").fill(marker);
     await expect(page.getByRole("option").first()).toContainText(names[0]);
     await page.getByRole("option").first().click();
-    await expect(activeReference.locator(".citation-banner")).toContainText(
-      "行",
-    );
+    await expect(
+      activeReference.getByRole("complementary", {
+        name: "当前引用",
+        exact: true,
+      }),
+    ).toContainText("行");
     await expect(tabs.getByRole("tab")).toHaveCount(2);
     await expect(page).toHaveURL(new RegExp(`/chat\\?kb=${kb.id}$`));
     await expect(composer).toHaveValue("查看资料时保留这段草稿");
@@ -119,13 +140,22 @@ test("完整文档页、独立回收站和聊天右侧按需资料标签", async
       [320, 640],
     ]) {
       await page.setViewportSize({ width, height });
-      await page.getByRole("button", { name: "浏览资料", exact: true }).click();
+      await page
+        .getByRole("button", { name: "展开资料侧栏", exact: true })
+        .click();
       await expect(pane).toBeVisible();
       await expect(tabs).toHaveCount(0);
-      const bounds = await pane.boundingBox();
-      expect(bounds!.x).toBeGreaterThanOrEqual(0);
-      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
-      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height);
+      await expect
+        .poll(async () => {
+          const bounds = await pane.boundingBox();
+          return (
+            !!bounds &&
+            bounds.x >= 0 &&
+            bounds.x + bounds.width <= width &&
+            bounds.y + bounds.height <= height
+          );
+        })
+        .toBe(true);
       await expectNoOverflow(page);
       if (width <= 780) {
         const closeReference = pane.getByRole("button", {
@@ -147,7 +177,7 @@ test("完整文档页、独立回收站和聊天右侧按需资料标签", async
       await expect(composer).toBeVisible();
       if (width <= 780)
         await expect(
-          page.getByRole("button", { name: "浏览资料", exact: true }),
+          page.getByRole("button", { name: "展开资料侧栏", exact: true }),
         ).toBeFocused();
       await expectNoOverflow(page);
     }
@@ -160,7 +190,7 @@ test("完整文档页、独立回收站和聊天右侧按需资料标签", async
     );
     await trash.click();
     await expect(page).toHaveURL(new RegExp(`/trash\\?kb=${kb.id}$`));
-    await expect(page.locator(".documents-page")).toBeVisible();
+    await expect(page.locator(".trash-page")).toBeVisible();
     await expect(pane).toHaveCount(0);
     await expect(composer).toHaveCount(0);
     for (const [width, height] of [
