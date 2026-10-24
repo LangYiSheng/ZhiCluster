@@ -102,6 +102,8 @@ Windows/WSL2 请开启 Docker Desktop Linux engine。若有 3000/8000/55432 冲�
 
 ## 检查与测试
 
+公开数据和规模评估可使用独立配置：`docker compose -p zhicluster-eval -f compose.yaml -f compose.eval.yaml up --build -d`，网页为 `http://localhost:13000`。该项目使用独立数据卷，明确禁用 `.env` 中的模型连接；评估过程中不要在该站点保存模型配置。中文真实上传与检索运行 `backend/.venv/Scripts/python scripts/benchmark_cmrc.py --download --label baseline`；英文标注集和目录规模分别使用 `scripts/retrieval_benchmark.py`、`scripts/library_benchmark.py`。来源、指标口径、已验证改进和局限见[持续优化阶段记录](docs/continuous-optimization-report.md)。
+
 ```powershell
 cd backend
 uv sync --frozen

@@ -1,0 +1,41 @@
+# Isolated, model-free evaluation instance. Always use a separate project name:
+# docker compose -p zhicluster-eval -f compose.yaml -f compose.eval.yaml up --build -d
+name: zhicluster-eval
+services:
+  db:
+    ports: !override
+      - "127.0.0.1:25432:5432"
+  migrate:
+    env_file: !reset []
+    environment:
+      LLM_BASE_URL: ""
+      LLM_API_KEY: ""
+      LLM_MODEL: ""
+      EMBEDDING_BASE_URL: ""
+      EMBEDDING_API_KEY: ""
+      EMBEDDING_MODEL: ""
+  api:
+    env_file: !reset []
+    ports: !override
+      - "127.0.0.1:18000:8000"
+    environment:
+      CORS_ORIGINS: '["http://localhost:13000", "http://127.0.0.1:13000"]'
+      LLM_BASE_URL: ""
+      LLM_API_KEY: ""
+      LLM_MODEL: ""
+      EMBEDDING_BASE_URL: ""
+      EMBEDDING_API_KEY: ""
+      EMBEDDING_MODEL: ""
+  worker:
+    env_file: !reset []
+    environment:
+      LLM_BASE_URL: ""
+      LLM_API_KEY: ""
+      LLM_MODEL: ""
+      EMBEDDING_BASE_URL: ""
+      EMBEDDING_API_KEY: ""
+      EMBEDDING_MODEL: ""
+      WORKER_POLL_SECONDS: "0.2"
+  web:
+    ports: !override
+      - "127.0.0.1:13000:80"
