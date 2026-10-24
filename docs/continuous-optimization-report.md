@@ -44,6 +44,7 @@ SciFact 与 NFCorpus 的六个汇总质量指标均有小幅提高，但仍存�
 - `b6bfcea`：目录上传与选择完整性、失效范围恢复、深目录和移动路径，以及任务历史分页、准确统计与当前文档状态查询，附 7 条真实浏览器流程验收。
 - `516461e`：200 份文档批量移动、标签、回收与恢复的 SELECT 从 2,202–2,602 次降为 6–7 次，保留逐份审计、版本、原输入顺序及回滚，详见[批量管理验收](library-batch-validation.md)。
 - `e4eae4b`：目录按叶名和路径搜索、有限选项构造、含分隔符名称区分，以及迟到保存不抢占新草稿/新知识库。
+- `4c50208`：整理方案只清除实际提交值相同的草稿，保留卸载重开后的新内容；知识库旧删除不会关闭新确认。
 
 ## 正在集成与下一轮
 
@@ -63,3 +64,19 @@ backend/.venv/Scripts/python scripts/benchmark_cmrc.py --url http://127.0.0.1:18
 # 若该次未完成且仍运行相同镜像，才使用以下命令恢复：
 backend/.venv/Scripts/python scripts/benchmark_cmrc.py --url http://127.0.0.1:18000 --queries 3219 --label pre-pagination-full --revision $evalImage --resume
 ```
+
+## 全量中文对照（进行中）
+
+旧候选方案的 3,219 题已全部完成，镜像摘要为 `sha256:e06401d0951b9ae50eb0f0f0927b0ab8669b47321cf430cfe2f892f940be0be5`，真实 API 读取相同 848 份资料，原始结果为 `.data/continuous-optimization/cmrc-pre-pagination-full.json`。
+
+| 指标 | 旧候选方案全量基线 |
+| --- | ---: |
+| 首位文档命中率 | 0.963964 |
+| 前五文档命中率 | 0.994719 |
+| 前十文档命中率 | 0.996893 |
+| MRR@10 | 0.977631 |
+| 前五 chunk 答案证据命中率 | 0.990059 |
+
+固定 600 候选、同相关性按文档轮次分散准入的隔离 API 已构建，正在以相同种子、题目、资料和请求参数执行全量对照。结果完成前不提交该检索参数改动，也不把新方案的中文质量写为已验证。中间结果存储在 `cmrc-pagination-full.partial.json`，对应最终文件为 `cmrc-pagination-full.json`。
+
+只读 SQL 剖析另发现候选获取占平均耗时约 79%，可信 CTE 快照有进一步降低重复规划/计算的证据；实现尚未合入，见[SQL 剖析](retrieval-sql-profile.md)。它与候选预算质量变更分开验证，不能把快照结果写成运行服务已获得的加速。
