@@ -3,6 +3,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 spec = importlib.util.spec_from_file_location("benchmark_cmrc", Path(__file__).resolve().parents[2] / "scripts" / "benchmark_cmrc.py")
 benchmark = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(benchmark)
@@ -35,3 +37,13 @@ def test_rank_after_ten_unique_documents_does_not_inflate_at_ten_metrics():
 def test_empty_results_and_alternative_answer_spans():
     assert benchmark.retrieval_metrics([], "expected", ["answer"])["recall_at_5"] == 0
     assert benchmark.retrieval_metrics([item("expected", "alternative")], "expected", ["answer", "alternative"])["answer_evidence_at_5_chunks"] == 1
+
+
+def test_resume_rejects_revision_settings_and_query_sequence_changes():
+    identity = {"revision": "old-image", "seed": 42}
+    saved = {"identity": identity, "rows": [{"id": "q1"}]}
+    assert benchmark.validate_checkpoint(saved, identity, [{"id": "q1"}, {"id": "q2"}]) == [{"id": "q1"}]
+    with pytest.raises(ValueError, match="settings changed"):
+        benchmark.validate_checkpoint(saved, {**identity, "revision": "new-image"}, [{"id": "q1"}])
+    with pytest.raises(ValueError, match="sequence"):
+        benchmark.validate_checkpoint(saved, identity, [{"id": "q2"}])

@@ -42,9 +42,24 @@ SciFact 与 NFCorpus 的六个汇总质量指标均有小幅提高，但仍存�
 - `ca0a355`：目录邻接遍历、分页标签批读和子树软删除批量锁定，保留逐份审计与版本。合成数据的 SQL 次数及真实 PostgreSQL 交错事务见[管理规模验收](library-management-validation.md)。
 - `ffe53e2`：英文停用词、多样性堆排序与按知识库合并目录范围展开，附公开数据基准脚本和验收说明。
 - `b6bfcea`：目录上传与选择完整性、失效范围恢复、深目录和移动路径，以及任务历史分页、准确统计与当前文档状态查询，附 7 条真实浏览器流程验收。
+- `516461e`：200 份文档批量移动、标签、回收与恢复的 SELECT 从 2,202–2,602 次降为 6–7 次，保留逐份审计、版本、原输入顺序及回滚，详见[批量管理验收](library-batch-validation.md)。
+- `e4eae4b`：目录按叶名和路径搜索、有限选项构造、含分隔符名称区分，以及迟到保存不抢占新草稿/新知识库。
 
 ## 正在集成与下一轮
 
 前端拖放目标与重复副本目录、分页选择与缓存、失效目录恢复、并发上传确认、深层目录和移动路径已修复。任务分页、准确统计与当前文档状态也已完成，848 条历史可完整访问。集成回归为后端 338 passed / 29 skipped、前端 114 passed、串行浏览器 7 passed，详见[管理交互与任务验收](management-integrity-validation.md)。
 
 下一轮在评估检索 API 分页的稳定性：当前候选预算随 limit/offset 改变，在静态资料上也可能造成跨页重复。已建立公开数据和长文档压力对照，尚未把实验参数当作正式运行结果；需同时权衡召回质量、长文档候选覆盖与耗时。
+
+目录目标搜索和迟到保存上下文也已修正，见[目录选择与保存验收](folder-selection-lifecycle-validation.md)。最新后端集成为 361 passed / 38 skipped；另在专用 PostgreSQL 库联合运行目录、批量和检索分页 11 项，全部通过。检索候选分页方案仍等待全量中文对照，未提前计为已完成。
+
+首次尝试 3,219 题全量中文旧版本基线时，评估网页重建导致代理连接中断，且旧脚本没有中途保存，故该次不计为完整结果。评估工具已增加原子断点、版本和查询序列校验、传输错误的有界重试，并改为直连 API 18000；没有复用缺少可检查结果的失败运行。
+
+长评估建议记录被测容器镜像摘要，使用独立标签。失败后保持同一被测实现，再加 `--resume`；版本、数据、种子、题数或题目顺序不一致会拒绝拼接。不要在一轮评估中替换 API 镜像。
+
+```powershell
+$evalImage = (docker inspect zhicluster-eval-api-1 --format '{{.Image}}').Trim()
+backend/.venv/Scripts/python scripts/benchmark_cmrc.py --url http://127.0.0.1:18000 --queries 3219 --label pre-pagination-full --revision $evalImage
+# 若该次未完成且仍运行相同镜像，才使用以下命令恢复：
+backend/.venv/Scripts/python scripts/benchmark_cmrc.py --url http://127.0.0.1:18000 --queries 3219 --label pre-pagination-full --revision $evalImage --resume
+```

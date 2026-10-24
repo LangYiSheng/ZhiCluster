@@ -22,7 +22,18 @@ SHA256 = "e9ff74231f05c230c6fa88b84441ee334d97234cbb610991cd94b82db00c7f1f"
 
 def write_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
+def validate_checkpoint(checkpoint, identity, selected):
+    if checkpoint.get("identity") != identity:
+        raise ValueError("Checkpoint dataset, revision or evaluation settings changed; use another label")
+    rows = checkpoint.get("rows", [])
+    if len(rows) > len(selected) or any(row["id"] != question["id"] for row, question in zip(rows, selected, strict=False)):
+        raise ValueError("Checkpoint query sequence does not match this evaluation")
+    return rows
 
 
 def load_corpus(path):
@@ -61,6 +72,8 @@ def main():
     parser.add_argument("--queries", type=int, default=300)
     parser.add_argument("--seed", type=int, default=20261024)
     parser.add_argument("--label", default="baseline")
+    parser.add_argument("--revision", default="", help="Deployed API image digest or verified source revision")
+    parser.add_argument("--resume", action="store_true", help="Resume matching checkpoint; requires --revision")
     parser.add_argument("--cleanup", action="store_true")
     args = parser.parse_args()
     parsed = urlsplit(args.url)
@@ -68,6 +81,8 @@ def main():
         parser.error("Only the isolated local evaluation ports 13000/18000 are allowed")
     if args.queries < 1 or not args.label.replace("-", "").replace("_", "").isalnum():
         parser.error("queries must be positive; label must be a simple file name")
+    if args.resume and not args.revision:
+        parser.error("--resume requires the same explicit --revision used by the original run")
     args.workdir.mkdir(parents=True, exist_ok=True)
     dataset = args.dataset or args.workdir / "cmrc2018_dev.json"
     state_path = args.workdir / "cmrc-state.json"
@@ -83,7 +98,7 @@ def main():
         if args.cleanup:
             state = json.loads(state_path.read_text(encoding="utf-8"))
             kb = api("GET", f"/knowledge-bases/{state['kb_id']}")
-            if state["url"] != args.url or kb["name"] != state["name"]:
+            if kb["name"] != state["name"]:
                 raise ValueError("Saved fixture identity does not match the evaluation instance")
             api("DELETE", f"/knowledge-bases/{state['kb_id']}")
             result = api("POST", "/trash/purge", json={"kind": "knowledge_base", "ids": [state["kb_id"]], "confirm": True})
@@ -97,9 +112,11 @@ def main():
         corpus, questions = load_corpus(dataset)
         if state_path.exists():
             state = json.loads(state_path.read_text(encoding="utf-8"))
-            if state["url"] != args.url or state["sha256"] != SHA256:
+            if state["sha256"] != SHA256:
                 raise ValueError("Use a different workdir for a different dataset or instance")
-            api("GET", f"/knowledge-bases/{state['kb_id']}")
+            existing = api("GET", f"/knowledge-bases/{state['kb_id']}")
+            if existing["name"] != state["name"]:
+                raise ValueError("Saved fixture identity does not match the evaluation instance")
         else:
             name = "一次性检索评估 CMRC2018 " + str(time.time_ns())
             kb = api("POST", "/knowledge-bases", json={"name": name,
@@ -136,18 +153,37 @@ def main():
             time.sleep(1)
         ingestion_elapsed = time.monotonic() - started if entries else None
         selected = random.Random(args.seed).sample(questions, min(args.queries, len(questions)))
-        rows = []
-        for index, question in enumerate(selected):
-            before = time.monotonic()
-            result = api("POST", "/search", json={"query": question["query"], "kb_ids": [state["kb_id"]],
-                         "mode": "keyword", "limit": 30, "rerank": False})
-            rows.append({**question, "elapsed_ms": (time.monotonic() - before) * 1000,
-                         "server_elapsed_ms": result["elapsed_ms"],
-                         **retrieval_metrics(result["items"], state["documents"][question["key"]], question["answers"])})
-            if (index + 1) % 25 == 0:
-                print(f"Evaluated {index + 1}/{len(selected)}", flush=True)
+        identity = {"sha256": SHA256, "kb_id": state["kb_id"], "seed": args.seed,
+                    "queries": len(selected), "limit": 30, "mode": "keyword", "revision": args.revision}
+        checkpoint_path = args.workdir / f"cmrc-{args.label}.partial.json"
+        rows = validate_checkpoint(json.loads(checkpoint_path.read_text(encoding="utf-8")), identity, selected) if args.resume else []
+        if checkpoint_path.exists() and not args.resume:
+            raise ValueError("An unfinished evaluation exists; use --resume with its revision or another label")
+        write_json(checkpoint_path, {"identity": identity, "rows": rows})
+        try:
+            for question in selected[len(rows):]:
+                before = time.monotonic()
+                retries = 0
+                while True:
+                    try:
+                        result = api("POST", "/search", json={"query": question["query"], "kb_ids": [state["kb_id"]],
+                                     "mode": "keyword", "limit": 30, "rerank": False})
+                        break
+                    except httpx.TransportError:
+                        if retries == 2:
+                            raise
+                        retries += 1
+                        time.sleep(0.5)
+                rows.append({**question, "elapsed_ms": (time.monotonic() - before) * 1000,
+                             "server_elapsed_ms": result["elapsed_ms"], "transport_retries": retries,
+                             **retrieval_metrics(result["items"], state["documents"][question["key"]], question["answers"])})
+                if len(rows) % 25 == 0:
+                    write_json(checkpoint_path, {"identity": identity, "rows": rows})
+                    print(f"Evaluated {len(rows)}/{len(selected)}", flush=True)
+        finally:
+            write_json(checkpoint_path, {"identity": identity, "rows": rows})
         durations = sorted(row["elapsed_ms"] for row in rows)
-        output = {"source": SOURCE, "license": "CC BY-SA 4.0", "sha256": SHA256, "seed": args.seed,
+        output = {"source": SOURCE, "license": "CC BY-SA 4.0", "sha256": SHA256, "seed": args.seed, "revision": args.revision,
                   "corpus_documents": len(corpus), "available_questions": len(questions), "queries": len(rows),
                   "mode": "keyword; real HTTP upload/worker; no embeddings or LLM", "limit": 30,
                   "initial_upload_and_parse_seconds": ingestion_elapsed,
@@ -156,6 +192,7 @@ def main():
                   "latency_ms": {"median": statistics.median(durations), "p95": durations[max(0, int(len(rows) * .95) - 1)]},
                   "rows": rows}
         write_json(args.workdir / f"cmrc-{args.label}.json", output)
+        checkpoint_path.unlink()
         print(json.dumps({key: value for key, value in output.items() if key != "rows"}, ensure_ascii=True, indent=2))
 
 
