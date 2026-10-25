@@ -39,6 +39,26 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
+it("思考过程中的已浏览资料复用聊天引用回调，不创建另一套阅读入口", async () => {
+  localStorage.setItem("conversation:kb-1", "c-1");
+  vi.stubGlobal("EventSource", class { addEventListener() {} close() {} });
+  const source = { document_id: "doc", chunk_id: "chunk", document_name: "政策.pdf", anchors: { page_start: 3 }, available: true };
+  vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(
+    path.endsWith("/settings/chat-models") ? { models: ["fixture"], default_model: "fixture" }
+      : path.endsWith("/messages") ? [{ id: "m-1", role: "assistant", content: "答案", status: "completed", retrieval: {
+        retrieval_mode: "model", execution: [{ stage: "tool_activity", tool_name: "read_document", call_id: "read-one", status: "completed", source }],
+      } }]
+        : [{ id: "c-1", kb_id: "kb-1", title: "政策问答", scope: { kb_ids: ["kb-1"] } }],
+  ))));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const onCitation = vi.fn();
+  const kb = { id: "kb-1", name: "政策库", description: "", version: 1 };
+  render(<QueryClientProvider client={client}><Chat kb={kb} knowledgeBases={[kb]} tags={[]} folders={[]} onCitation={onCitation} /></QueryClientProvider>);
+  await userEvent.click(await screen.findByText("思考过程"));
+  await userEvent.click(screen.getByRole("button", { name: "打开查阅原文：政策.pdf" }));
+  expect(onCitation).toHaveBeenCalledExactlyOnceWith(source);
+});
+
 it("历史与范围为锚定的非模态卡片，Esc还原焦点且点击外部不阻挡输入", async () => {
   vi.stubGlobal(
     "fetch",

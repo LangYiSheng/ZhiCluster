@@ -83,3 +83,21 @@ it("重试重置旧正文和来源，完成消息保留正文与执行步骤，�
   };
   expect(mergeChatEvents([persisted], events)).toEqual([persisted]);
 });
+
+it("SSE过程保留模式与真实工具快照，新的权限遮蔽快照优先于旧重放事件", () => {
+  const steps = [{
+    stage: "tool_activity", tool_name: "read_document", call_id: "read-one", label: "阅读原文", status: "completed",
+    source: { document_id: "doc", chunk_id: "chunk", document_name: "旧标题", snippet: "旧片段", available: true },
+  }];
+  const events: StreamEvent[] = [{
+    type: "progress", sequence: 4, data: { message_id: "m-1", retrieval_mode: "model", steps },
+  }];
+  const projected = mergeChatEvents([], events)[0];
+  expect(projected.retrieval).toMatchObject({ retrieval_mode: "model", execution: steps });
+  expect(projected.content).toBe("");
+  const redacted = { ...projected, retrieval: {
+    ...projected.retrieval, stream_sequence: 4,
+    execution: [{ stage: "tool_activity", tool_name: "read_document", call_id: "read-one", label: "阅读原文", status: "completed" as const, available: false }],
+  } };
+  expect(mergeChatEvents([redacted], events)).toEqual([redacted]);
+});

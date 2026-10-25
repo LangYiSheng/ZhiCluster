@@ -94,6 +94,7 @@ export type ChatStep = {
   mode?: string;
   notice?: string;
   query?: string;
+  error_code?: string;
   tool_name?: string;
   call_id?: string;
   round?: number;
@@ -102,6 +103,12 @@ export type ChatStep = {
   // Earlier embedding progress used this field for a numeric query count.
   queries?: string[] | number;
   query_count?: number;
+  result_count?: number;
+  document_id?: string;
+  document_name?: string;
+  detail?: string;
+  available?: boolean;
+  source?: Citation;
 };
 export type Message = {
   id: string;
@@ -114,6 +121,7 @@ export type Message = {
     execution?: ChatStep[];
     stream_sequence?: number;
     mode?: string;
+    retrieval_mode?: "direct" | "model";
     notice?: string;
   };
 };

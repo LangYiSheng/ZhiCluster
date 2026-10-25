@@ -29,6 +29,7 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.retrieval.search import scoped_query, search_knowledge
+from app.retrieval.tool_activity import visible_execution, visible_retrieval
 from app.schemas.requests import ChatMessage, ConversationCreate, ConversationUpdate, Rebuild, Search
 from app.schemas.responses import ConversationOut, JobOut, JobPage, SearchOut
 from app.schemas.settings import ConfigurationDraft, ConfigurationSave, ModelListRequest, ModelTestRequest
@@ -435,6 +436,7 @@ def messages(conversation_id: str, db: Session = Depends(get_db, scope="function
     result = []
     for message in db.scalars(select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at, Message.id)):
         item = snapshot(message)
+        item["retrieval"] = visible_retrieval(db, get_actor(db), conversation.scope, item.get("retrieval"))
         citations = []
         for citation in db.scalars(select(MessageCitation).where(MessageCitation.message_id == message.id).order_by(MessageCitation.ordinal)):
             citations.append(visible_citation(db, get_actor(db), snapshot(citation), kb_ids=conversation.scope["kb_ids"]))
@@ -484,6 +486,12 @@ def conversation_events(conversation_id: str, after: int = Query(0, ge=0), last_
         if item.type == "citation":
             conversation = checked_conversation(session, conversation_id)
             data = visible_citation(session, get_actor(session), data, kb_ids=conversation.scope["kb_ids"])
+        elif item.type in {"progress", "completed", "error"}:
+            conversation = checked_conversation(session, conversation_id)
+            if "steps" in data:
+                data["steps"] = visible_execution(session, get_actor(session), conversation.scope, data["steps"])
+            if "retrieval" in data:
+                data["retrieval"] = visible_retrieval(session, get_actor(session), conversation.scope, data["retrieval"])
         return data
 
     return event_stream(ConversationEvent, ConversationEvent.conversation_id, conversation_id, cursor, terminal=lambda session: not session.scalar(select(Message.id).where(Message.conversation_id == conversation_id, Message.status.in_(["queued", "processing"]))), session_factory=sessionmaker(db.get_bind(), expire_on_commit=False), authorize=lambda session: checked_conversation(session, conversation_id), transform=visible_event)

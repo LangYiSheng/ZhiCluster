@@ -25,6 +25,8 @@ export function mergeChatEvents(
     if (event.sequence && event.sequence <= watermark) continue;
     const message = { ...previous };
     message.retrieval = { ...previous.retrieval };
+    if (data.retrieval_mode === "direct" || data.retrieval_mode === "model")
+      message.retrieval.retrieval_mode = data.retrieval_mode;
     if (Array.isArray(data.steps))
       message.retrieval.execution = data.steps as ChatStep[];
     if (event.type === "status") {

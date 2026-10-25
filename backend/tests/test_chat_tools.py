@@ -78,7 +78,7 @@ def test_opt_in_chat_executes_real_queries_then_keeps_stream_and_citation_whitel
 
     def plan(self, messages, **options):
         planned.append((messages.copy(), options))
-        assert self.settings.llm_timeout_seconds == 12 and self.settings.llm_max_retries == 0
+        assert self.settings.llm_timeout_seconds == 30 and self.settings.llm_max_retries == 0
         if len(planned) == 1:
             queries = ["年度申请政策", "计算学部名额"]
         else:
@@ -226,7 +226,9 @@ def test_search_budget_deduplicates_and_context_includes_separator_budget(factor
             native, turns = False, 0
             def next_turn(self, remaining):
                 self.turns += 1
-                assert remaining == (3 if self.turns == 1 else 1)
+                assert remaining == (3 if self.turns == 1 else 1 if self.turns == 2 else 0)
+                if remaining == 0:
+                    return []
                 return [{"query": "政策"}, {"query": " 政策 "}, {"query": "申请政策"}] if self.turns == 1 else [{"query": "名额政策"}]
             def feedback(self, value):
                 assert len(str(value)) < 6500
@@ -238,7 +240,7 @@ def test_search_budget_deduplicates_and_context_includes_separator_budget(factor
         result = model_retrieval(db, get_actor(db), {"kb_ids": [kb.id]}, "初始问题", settings(),
             search=search, progress=lambda *_args, **_kwargs: None, check_active=lambda: None, planner=Planner())
         assert calls == ["政策", "申请政策", "名额政策"]
-        assert result["model_retrieval"]["rounds"] == 2 and len(result["items"]) == 1
+        assert result["model_retrieval"]["rounds"] == 3 and len(result["items"]) == 1
         contexts, hits = build_context([{"document_name": str(index), "content": "文" * 6000} for index in range(20)])
         assert len(contexts) <= 24000 and len(hits) == 3
 
@@ -417,3 +419,49 @@ def test_native_planner_rejects_unknown_tools_and_scope_arguments(calls):
     planner = SearchPlanner(settings(llm_supports_tools=True), "问题", gateway=Gateway())
     with pytest.raises(ValueError):
         planner.next_turn(3)
+
+
+def test_json_planner_receives_all_six_tools_and_their_real_argument_contracts():
+    from app.retrieval.chat_tools import READ_ONLY_TOOLS
+
+    seen = []
+    class Gateway:
+        llm_configured = True
+        def chat(self, messages, **options):
+            seen.extend(messages)
+            assert options["json_mode"] is True and "tools" not in options
+            return '{"tools":[{"tool":"list_documents","arguments":{"query":"名额"}}]}'
+    planner = SearchPlanner(settings(), "学院推免名额", gateway=Gateway())
+    assert planner.next_turn(3)[0]["tool_name"] == "list_documents"
+    rules = seen[0]["content"]
+    catalog = json.loads(rules.split("<tool_catalog>\n", 1)[1].split("\n</tool_catalog>", 1)[0])
+    definitions = {tool["name"]: tool for tool in catalog}
+    assert set(definitions) == {tool["function"]["name"] for tool in READ_ONLY_TOOLS}
+    expected = {
+        "search_knowledge": {"query", "kb_ids", "folder_ids", "tag_ids", "include_descendants", "tag_match"},
+        "get_current_scope": set(),
+        "list_scope_metadata": {"kind", "kb_id", "parent_id", "query", "offset", "limit"},
+        "list_documents": {"query", "kb_ids", "folder_ids", "tag_ids", "include_descendants", "tag_match", "offset", "limit"},
+        "get_document_outline": {"document_id", "offset", "limit"},
+        "read_document": {"document_id", "section_ids", "page", "offset", "limit"},
+    }
+    for name, properties in expected.items():
+        assert set(definitions[name]["parameters"]["properties"]) == properties
+        assert definitions[name]["description"]
+        assert definitions[name]["parameters"]["additionalProperties"] is False
+    assert definitions["read_document"]["parameters"]["required"] == ["document_id"]
+    assert definitions["read_document"]["parameters"]["properties"]["limit"]["maximum"] == 4
+    assert '"title"' not in json.dumps(catalog)
+    assert "必须等待本轮工具反馈" in rules and "正文保持为空" not in rules
+    assert "已找到的ID" not in rules and "可以简短说明" not in rules
+
+
+def test_native_planner_rules_do_not_request_unpublished_explanations():
+    class Gateway:
+        llm_configured = True
+        def chat_tools(self, messages, **_options):
+            rules = messages[0]["content"]
+            assert "正文保持为空" in rules and "可以简短说明" not in rules
+            assert "必须等待本轮工具反馈" in rules
+            return {"role": "assistant", "content": "", "tool_calls": []}
+    assert SearchPlanner(settings(llm_supports_tools=True), "名额", gateway=Gateway()).next_turn(3) == []

@@ -135,7 +135,7 @@ def test_metadata_then_filtered_searches_use_real_tools_and_keep_scope_summaries
         turns.append(messages.copy())
         if native:
             assert {tool["function"]["name"] for tool in options["tools"]} == {
-                "search_knowledge", "get_current_scope", "list_scope_metadata"}
+                "search_knowledge", "get_current_scope", "list_scope_metadata", "list_documents", "get_document_outline", "read_document"}
         if len(turns) == 1:
             calls = [("list_scope_metadata", {"kind": "folders"}), ("list_scope_metadata", {"kind": "tags"})]
         elif len(turns) == 2:
@@ -227,15 +227,15 @@ def test_metadata_and_planning_turn_budgets_leave_room_for_last_search(factory):
             native, turns = False, 0
             def next_turn(self, remaining):
                 self.turns += 1
-                assert remaining == 3
-                return [{"tool_name": "get_current_scope"}] if self.turns <= 3 else [{"query": "政策"}]
+                assert remaining == (3 if self.turns <= 4 else 2)
+                return [{"tool_name": "get_current_scope"}] if self.turns <= 3 else [{"query": "政策"}] if self.turns == 4 else []
             def feedback(self, calls):
                 assert len(json.dumps([payload for _call, payload in calls], ensure_ascii=False)) < 6000
         planner = Planner()
         result = model_retrieval(db, get_actor(db), {"kb_ids": [kb.id]}, "政策", settings(), planner=planner,
             search=lambda request, callback: search_knowledge(db, get_actor(db), {**request, "mode": "keyword"}, settings()),
             progress=lambda *_args, **_kwargs: None, check_active=lambda: None)
-        assert result["tool_usage"] == {"model_turns": 4, "search_rounds": 1, "metadata_calls": 3, "tool_calls": 4}
+        assert result["tool_usage"] == {"model_turns": 5, "search_rounds": 1, "metadata_calls": 3, "tool_calls": 4}
         assert len(result["items"]) == 1
 
 

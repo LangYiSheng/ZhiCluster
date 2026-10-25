@@ -57,3 +57,199 @@
 .chat-search-count.is-failed {
   color: var(--color-danger);
 }
+
+.chat-activity-progress {
+  max-width: 100%;
+  min-width: 0;
+}
+.chat-activity-progress > summary {
+  max-width: 100%;
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.chat-activity-progress .progress-call-count {
+  margin-left: 2px;
+  font-weight: 400;
+}
+.chat-retrieval-fallback {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 10px 0 11px 1px;
+  color: var(--color-warning);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.chat-retrieval-fallback > svg {
+  flex: none;
+  margin-top: 4px;
+}
+.chat-progress .chat-activity-list {
+  margin: 13px 0 4px 6px;
+  padding: 1px 0 1px 15px;
+  gap: 13px;
+  max-height: none;
+  overflow: visible;
+  border-left: 1px solid var(--color-border);
+}
+.chat-tool-activity {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  position: relative;
+}
+.chat-tool-activity::before {
+  content: "";
+  position: absolute;
+  left: -19px;
+  top: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  box-shadow: 0 0 0 1px var(--color-border);
+}
+.chat-tool-activity.is-running::before {
+  background: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+.chat-activity-details {
+  min-width: 0;
+}
+.chat-activity-details > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  list-style: none;
+  cursor: pointer;
+  line-height: 1.7;
+}
+.chat-activity-details > summary::-webkit-details-marker {
+  display: none;
+}
+.chat-activity-details > summary > svg {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 4px;
+}
+.chat-activity-title {
+  flex: none;
+  color: var(--color-muted);
+}
+.chat-activity-query {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--color-text);
+}
+.chat-activity-status {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+  color: var(--color-muted);
+  font-size: 10px;
+}
+.chat-activity-details .activity-chevron {
+  opacity: 0.6;
+  transition: transform 0.15s;
+}
+.chat-activity-details[open] .activity-chevron {
+  transform: rotate(180deg);
+}
+.chat-activity-content {
+  margin: 8px 0 2px 20px;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.chat-activity-content p {
+  margin: 0;
+}
+.chat-activity-full-query {
+  color: var(--color-text);
+}
+.chat-activity-content blockquote {
+  margin: 1px 0 0;
+  padding: 4px 0 4px 11px;
+  border-left: 2px solid var(--color-border);
+  color: var(--color-muted);
+  max-height: 9em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+.chat-activity-source {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  padding-left: 20px;
+  line-height: 1.7;
+}
+.chat-activity-source > span {
+  flex: none;
+}
+.chat-activity-document {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  text-align: left;
+  cursor: pointer;
+}
+.chat-activity-document > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.chat-activity-document > small {
+  color: var(--color-muted);
+  flex: none;
+  font-size: 10px;
+}
+.chat-activity-document:focus-visible,
+.chat-activity-details > summary:focus-visible,
+.chat-activity-progress > summary:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+.chat-tool-activity.is-failed .chat-activity-status,
+.chat-tool-activity.is-unavailable .chat-activity-title {
+  color: var(--color-danger);
+}
+@media (max-width: 520px) {
+  .chat-activity-details > summary {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .chat-activity-query {
+    flex: 1 1 100%;
+    order: 3;
+    padding-left: 20px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .chat-activity-details .activity-chevron {
+    margin-left: 0;
+  }
+  .chat-activity-document {
+    flex-wrap: wrap;
+    gap: 2px 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-activity-details .activity-chevron,
+  .chat-activity-progress .progress-chevron {
+    transition: none;
+  }
+}

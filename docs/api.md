@@ -211,9 +211,13 @@ LLM 与 Embedding 各自独立处理 `api_key`：省略、`null` 或空字符串
 
 消息的 `retrieval.execution` 保存 `{stage,label,status,elapsed_ms?,source_count?,...}` 阶段列表，`retrieval.stream_sequence` 是该消息最近持久化事件的水位。实际阶段包括 scope、keyword、可选 embedding、ranking、可选 reranking、context、generation；无命中、未配置能力或失败时不会伪造未执行阶段。`progress` 事件携带 `message_id` 和完整 `steps` 快照，`completed/error` 也携带最终步骤；这些内容不包含模型隐藏推理。
 
-`retrieval_mode=model`只影响本条消息，不修改保存的会话范围或连接配置。原生只读工具为`get_current_scope()`、`list_scope_metadata({kind,kb_id?,parent_id?,query?,offset?,limit?})`和`search_knowledge({query,kb_ids?,folder_ids?,tag_ids?,include_descendants?,tag_match?})`；未开启原生工具时使用JSON规划，支持相同元数据与搜索能力。筛选始终与原会话范围取交集，不能清空或放宽原条件；无效筛选不静默回退扩大搜索。最多4个规划回合、2个搜索轮、3次实际搜索（失败也计数）、3次元数据和9次工具调用；每次规划最多12秒且不重试。同查询同范围去重，不同窄范围可分别搜索。元数据最多30项/4000字符并返回`next_offset`，范围快照最多5000字符。等待及最终生成后复核每个hit的实际来源范围与权限。
+`retrieval_mode=model`只影响本条消息，不修改保存的会话范围或连接配置。原生只读工具为`get_current_scope`、`list_scope_metadata`、`list_documents`、`search_knowledge`、`get_document_outline`、`read_document`。未开启原生工具时使用JSON规划：规范形式为`{"tools":[{"tool":"read_document","arguments":{"document_id":"...","section_ids":["..."]}}]}`，同时兼容已有`searches`和`metadata`形式。工具顺序、参数验证与预算在服务端生效。文档ID必须先从当前范围的搜索或文档列表取得，正文读取继续受实际发现范围约束。
 
-执行步骤中的`search/search_result/search_round_summary`提供`round/scope_key/scope_label/query`，summary另含`queries/source_count/status`，数量为该轮该范围仍有效chunk去重数，后续summary覆盖同一键。前端展开仅显示范围、查询chips和数量，不展示内部阶段、耗时、实现说明。`direct`发送同型第1轮事件但不增加规划调用；观测另含`tool_usage`，不返回隐藏推理或私有hit筛选条件。
+最多6个规划回合、2个搜索轮、3次实际搜索（失败也计数）、3次元数据、4次文档工具、12次总工具调用；每次规划最多30秒，累计规划调用最多90秒且不重试。同查询同范围去重，不同窄范围可分别搜索。范围快照最多5000字符；元数据每页最多30项/4000字符；文档列表及目录每页最多20项，正文读取可按`section_ids`、PDF `page`、`offset/limit`选择，单次最多4个chunk/10000字符。单轮工具反馈最多12000字符，最终答案证据预算仍为24000字符。非法筛选或不可访问文档不会触发扩大范围的回退。
+
+`progress.steps`和消息的`retrieval.execution`增加`stage=tool_activity`，包含`tool_name/call_id/status/round`及可选`scope_label/query/result_count/source_count/document_id/document_name/source/detail/available`。同一call_id原位更新，`source`兼容Citation结构，可复用现有阅读器；`detail`为确定性公开活动摘要。GET、SSE progress/completed/error均重新验证来源，移除私有范围字段，失效来源不返回旧名称或片段。规划模型自由正文不作为回答token输出。
+
+原有`search/search_result/search_round_summary`仍提供`round/scope_key/scope_label/query`，summary另含`queries/source_count/status`，数量为该轮该范围仍有效chunk去重数。前端优先以工具时间线显示新记录，历史记录继续按搜索轮次展示，不重复计数。`direct`同样记录固定搜索活动，但不增加规划调用。`retrieval.tool_usage`包含`model_turns/search_rounds/metadata_calls/document_calls/tool_calls`，不包含隐藏推理。
 
 向量阶段的查询数量使用`query_count:number`，不与summary的`queries:string[]`共用字段。历史消息曾保存`embedding.queries:number`，前端按实际类型兼容读取，数字不作为搜索词；执行容器、步骤及查询数组均做运行时检查，无需清库或改写旧记录。
 

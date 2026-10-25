@@ -200,7 +200,7 @@ def test_indexed_statistics_follow_bound_active_profile_and_complete_chunk_cover
     assert indexed() == 0
 
 
-def test_selected_model_snapshot_and_public_text_interleave_with_real_stream_tools(client, factory, monkeypatch, tmp_path):
+def test_selected_model_snapshot_keeps_planning_private_with_real_tools(client, factory, monkeypatch, tmp_path):
     import app.api.workflows as api
 
     configured = Settings(_env_file=None, llm_base_url="https://controlled.invalid/v1", llm_api_key="fake", llm_model="default",
@@ -227,15 +227,19 @@ def test_selected_model_snapshot_and_public_text_interleave_with_real_stream_too
         nonlocal tool_turns
         payload = json.loads(request.content)
         payloads.append(payload)
-        assert payload["model"] == "selected" and payload["stream"] is True
+        assert payload["model"] == "selected"
         if "tools" in payload:
+            assert not payload.get("stream", False)
             tool_turns += 1
-            deltas = [{"content": "我先查课程政策。" if tool_turns == 1 else "已找到相关资料。", "reasoning_content": "INTERNAL-SECRET"}]
+            tool_message = {"role": "assistant", "content": "我先查课程政策。" if tool_turns == 1 else "已找到相关资料。",
+                "reasoning_content": "INTERNAL-SECRET"}
             if tool_turns == 1:
-                deltas += [{"tool_calls": [{"index": 0, "id": "call-1", "type": "function",
-                    "function": {"name": "search_knowledge", "arguments": '{"query":'}}]},
-                    {"tool_calls": [{"index": 0, "function": {"arguments": '"课程政策"}'}}]}]
+                tool_message["tool_calls"] = [{"id": "call-1", "type": "function",
+                    "function": {"name": "search_knowledge", "arguments": '{"query":"课程政策"}'}}]
+            return httpx.Response(200, json={"choices": [{"message": tool_message,
+                "finish_reason": "tool_calls" if tool_turns == 1 else "stop"}]})
         else:
+            assert payload["stream"] is True
             deltas = [{"content": "名额28人。[S1]", "reasoning": "INTERNAL-SECRET"}]
         events = [{"choices": [{"delta": delta}]} for delta in deltas]
         events.append({"choices": [{"delta": {}, "finish_reason": "tool_calls" if "tools" in payload and tool_turns == 1 else "stop"}]})
@@ -252,9 +256,13 @@ def test_selected_model_snapshot_and_public_text_interleave_with_real_stream_too
     with factory() as db:
         message = db.get(Message, queued.json()["id"])
         assert message.status == "completed"
-        assert message.content == "我先查课程政策。\n\n已找到相关资料。\n\n名额28人。[S1]"
+        assert message.content == "名额28人。[S1]"
         tokens = list(db.scalars(select(ConversationEvent).where(ConversationEvent.conversation_id == chat,
             ConversationEvent.type == "token").order_by(ConversationEvent.sequence)))
         assert "".join(event.data["token"] for event in tokens) == message.content
-        assert "INTERNAL-SECRET" not in str([event.data for event in db.scalars(select(ConversationEvent))])
+        events = str([event.data for event in db.scalars(select(ConversationEvent))])
+        assert "INTERNAL-SECRET" not in events
+        assert "我先查课程政策" not in events and "已找到相关资料" not in events
+        activity = next(step for step in message.retrieval["execution"] if step["stage"] == "tool_activity")
+        assert activity["tool_name"] == "search_knowledge" and activity["status"] == "completed"
     assert tool_turns == 2 and len(payloads) == 3

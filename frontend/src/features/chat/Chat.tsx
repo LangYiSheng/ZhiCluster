@@ -284,7 +284,7 @@ export function Chat({
               </div>
               <div className="message-body">
                 <strong>{m.role === "user" ? "你" : "知簇"}</strong>
-                {m.role === "assistant" && <ChatProgress message={m} />}
+                {m.role === "assistant" && <ChatProgress message={m} onOpenSource={onCitation} />}
                 <MessageContent
                   content={m.content}
                   citations={m.citations}

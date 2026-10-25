@@ -56,18 +56,33 @@ class ExecutionSteps:
     def __init__(self):
         self.steps = []
         self.started = None
+        self.activity_started = {}
 
     def advance(self, stage: str, label: str, **details) -> dict:
-        self.finish()
+        self.finish(preserve_tools=True)
         self.started = time.monotonic()
+        if stage == "tool_activity" and details.get("call_id"):
+            call_id = details["call_id"]
+            existing = next((step for step in self.steps if step["stage"] == stage and step.get("call_id") == call_id), None)
+            if existing is not None:
+                existing.update(label=label, **details)
+                if details.get("status") != "running":
+                    existing["elapsed_ms"] = round((time.monotonic() - self.activity_started[call_id]) * 1000)
+                return existing
+            self.activity_started[call_id] = self.started
         step = {"stage": stage, "label": label, "status": "running", **details}
         self.steps.append(step)
         return step
 
-    def finish(self, status: str = "completed"):
-        if self.steps and self.steps[-1]["status"] == "running":
+    def finish(self, status: str = "completed", *, preserve_tools=False):
+        if self.steps and self.steps[-1]["status"] == "running" and self.steps[-1]["stage"] != "tool_activity":
             self.steps[-1]["status"] = status
             self.steps[-1]["elapsed_ms"] = round((time.monotonic() - self.started) * 1000)
+        if not preserve_tools:
+            for step in self.steps:
+                if step["stage"] == "tool_activity" and step["status"] == "running":
+                    step["status"] = status
+                    step["elapsed_ms"] = round((time.monotonic() - self.activity_started[step["call_id"]]) * 1000)
 
     def snapshot(self) -> list[dict]:
         return [dict(step) for step in self.steps]
