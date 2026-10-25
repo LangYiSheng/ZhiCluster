@@ -6,7 +6,7 @@ export default defineConfig({
   retries: 0,
   timeout: 60000,
   use: {
-    channel: "chromium",
+    channel: process.env.E2E_BROWSER || "chromium",
     baseURL: process.env.E2E_BASE_URL || "http://127.0.0.1:3000",
     viewport: { width: 1440, height: 900 },
     trace: "retain-on-failure",

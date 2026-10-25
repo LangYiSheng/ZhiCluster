@@ -28,6 +28,8 @@ function CreatePlanFields({
     };
   }, []);
   const [goal, setGoal] = useState("");
+  const [mode, setMode] = useState("both");
+  const [cleanup, setCleanup] = useState(true);
   const [page, setPage] = useState(1);
   const [selection, setSelection] = useState<Record<string, string> | null>(
     null,
@@ -41,6 +43,12 @@ function CreatePlanFields({
     enabled: !!kbId,
   });
   const rows = documents.data?.items || [];
+  const documentCount = useQuery({
+    queryKey: ["review", "plan-document-count", kbId],
+    queryFn: () =>
+      api<{ total: number }>(`/knowledge-bases/${kbId}/documents?page_size=1`),
+    enabled: !!kbId,
+  });
   const selected =
     selection ||
     ((documents.data?.total || 0) <= 50
@@ -54,6 +62,8 @@ function CreatePlanFields({
         json("POST", {
           kb_id: kbId,
           document_ids: selectedIds,
+          mode,
+          cleanup_empty_folders: mode !== "tags" && cleanup,
           ...(goal.trim() ? { goal: goal.trim() } : {}),
         }),
       ),
@@ -70,12 +80,45 @@ function CreatePlanFields({
       }}
     >
       <label>
+        整理内容
+        <Select
+          aria-label="整理内容"
+          value={mode}
+          disabled={mutation.isPending}
+          onValueChange={setMode}
+          options={[
+            { value: "tags", label: "只整理标签" },
+            { value: "folders", label: "只整理文件夹" },
+            { value: "both", label: "标签和文件夹" },
+          ]}
+        />
+      </label>
+      {mode !== "tags" && (
+        <label className="checkbox-label">
+          <Checkbox
+            aria-label="清理整理后空文件夹"
+            checked={cleanup}
+            disabled={mutation.isPending}
+            onChange={(event) => setCleanup(event.target.checked)}
+          />
+          清理整理后空文件夹（
+          {selectedIds.length === documentCount.data?.total
+            ? "全库空目录"
+            : "所选文档原目录"}
+          ，可单独取消、可撤销）
+        </label>
+      )}
+      <label>
         整理方向（可选）
         <input
           value={goal}
           disabled={mutation.isPending}
           onChange={(event) => setGoal(event.target.value)}
-          placeholder="按资料主题归类，并补充适合的标签"
+          placeholder={
+            mode === "tags"
+              ? "复用已有标签，补充适合的主题标签"
+              : "把相似资料集中到同一文件夹，优先复用已有目录"
+          }
         />
       </label>
       {documents.isPending ? (
@@ -218,7 +261,7 @@ export function CreatePlan({
     <Dialog
       open
       title="自动整理现有文档"
-      description="生成文件夹、移动位置和标签建议，审阅并批准后才会执行。"
+      description="选择整理内容与文档范围，生成方案，审阅并批准后执行。"
       onOpenChange={(open) => !open && onClose()}
     >
       <label>

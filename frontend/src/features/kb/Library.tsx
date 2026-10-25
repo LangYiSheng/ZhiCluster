@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { BookOpen, FolderPlus, MoreHorizontal, Plus } from "lucide-react";
+import { useEffect, useState } from "react";
+import { FolderPlus, MoreHorizontal, Plus } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, errorText, json } from "../../lib/api";
@@ -7,12 +7,7 @@ import type { KnowledgeBase } from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { Dialog } from "../../components/ui/dialog";
 import { Menu, MenuItem } from "../../components/ui/menu";
-type Edit = {
-  id?: string;
-  name: string;
-  description?: string;
-  version?: number;
-};
+import { KnowledgeBaseEditor, KnowledgeBaseIcon } from "./KnowledgeBaseEditor";
 export function Library({
   knowledgeBases,
   kbId,
@@ -25,38 +20,10 @@ export function Library({
   trash: boolean;
 }) {
   const qc = useQueryClient();
-  const [edit, setEdit] = useState<Edit | null>(null);
-  const current = useRef({ edit, kbId });
-  useEffect(() => {
-    current.current = { edit, kbId };
-  }, [edit, kbId]);
+  const [edit, setEdit] = useState<KnowledgeBase | "new" | null>(null);
+  useEffect(() => setEdit(null), [kbId]);
   const [remove, setRemove] = useState<KnowledgeBase | null>(null);
   const currentKb = knowledgeBases.find((k) => k.id === kbId);
-  const save = useMutation({
-    mutationFn: async (submitted: { edit: Edit; kbId: string }) => {
-      return api<KnowledgeBase>(
-        submitted.edit.id
-          ? `/knowledge-bases/${submitted.edit.id}`
-          : "/knowledge-bases",
-        json(submitted.edit.id ? "PATCH" : "POST", {
-          name: submitted.edit.name,
-          description: submitted.edit.description,
-          version: submitted.edit.version,
-        }),
-      );
-    },
-    onSuccess: (entity, submitted) => {
-      if (
-        current.current.edit === submitted.edit &&
-        current.current.kbId === submitted.kbId
-      )
-        onSelect(entity.id);
-      setEdit((value) => (value === submitted.edit ? null : value));
-      void qc.invalidateQueries();
-      toast.success("已保存");
-    },
-    onError: (e) => toast.error(errorText(e)),
-  });
   const deletion = useMutation({
     mutationFn: (submitted: KnowledgeBase) =>
       api(`/knowledge-bases/${submitted.id}`, json("DELETE")),
@@ -75,7 +42,7 @@ export function Library({
           size="icon"
           variant="ghost"
           aria-label="新建知识库"
-          onClick={() => setEdit({ name: "", description: "" })}
+          onClick={() => setEdit("new")}
         >
           <Plus size={15} />
         </Button>
@@ -89,7 +56,7 @@ export function Library({
               className={`library-item ${kbId === k.id && !trash ? "active" : ""}`}
             >
               <button onClick={() => onSelect(k.id)}>
-                <BookOpen size={17} />
+                <KnowledgeBaseIcon kb={k} />
                 <span>{k.name}</span>
               </button>
               <Menu
@@ -103,18 +70,7 @@ export function Library({
                   </Button>
                 }
               >
-                <MenuItem
-                  onSelect={() =>
-                    setEdit({
-                      id: k.id,
-                      name: k.name,
-                      description: k.description,
-                      version: k.version,
-                    })
-                  }
-                >
-                  修改名称与描述
-                </MenuItem>
+                <MenuItem onSelect={() => setEdit(k)}>编辑知识库</MenuItem>
                 <MenuItem danger onSelect={() => setRemove(k)}>
                   删除知识库
                 </MenuItem>
@@ -122,53 +78,12 @@ export function Library({
             </div>
           ))}
       </div>
-      <Dialog
+      <KnowledgeBaseEditor
         open={!!edit}
-        onOpenChange={(v) => !v && setEdit(null)}
-        title={`${edit?.id ? "编辑" : "新建"}知识库`}
-      >
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (edit) save.mutate({ edit, kbId });
-          }}
-        >
-          <label>
-            名称
-            <input
-              required
-              maxLength={100}
-              autoFocus
-              value={edit?.name || ""}
-              onChange={(e) =>
-                setEdit((v) => (v ? { ...v, name: e.target.value } : null))
-              }
-            />
-          </label>
-          <label>
-            描述
-            <textarea
-              value={edit?.description || ""}
-              onChange={(e) =>
-                setEdit((v) =>
-                  v ? { ...v, description: e.target.value } : null,
-                )
-              }
-            />
-          </label>
-          <div className="dialog-actions">
-            <Button type="button" onClick={() => setEdit(null)}>
-              取消
-            </Button>
-            <Button
-              variant="default"
-              disabled={save.isPending || !edit?.name.trim()}
-            >
-              {save.isPending ? "保存中…" : "保存"}
-            </Button>
-          </div>
-        </form>
-      </Dialog>
+        onOpenChange={(value) => !value && setEdit(null)}
+        knowledgeBase={edit && edit !== "new" ? edit : undefined}
+        onSaved={(entity) => onSelect(entity.id)}
+      />
       <Dialog
         open={!!remove}
         onOpenChange={(v) => !v && setRemove(null)}

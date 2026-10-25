@@ -1,9 +1,11 @@
-import { memo, useId, useState } from "react";
+import { memo, useId, useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Citation } from "../../lib/api";
 import { anchorText } from "../../lib/api";
+import { CitationPreview } from "./CitationPreview";
 
 type MarkdownNode = {
   type: string;
@@ -60,48 +62,47 @@ export const MessageContent = memo(function MessageContent({
   citations?: Citation[];
   onCitation: (citation: Citation) => void;
 }) {
-  const byOrdinal = new Map(
-    citations.map((citation) => [citation.ordinal, citation]),
+  const byOrdinal = useMemo(
+    () => new Map(citations.map((citation) => [citation.ordinal, citation])),
+    [citations],
+  );
+  const components = useMemo<Components>(
+    () => ({
+      a: ({ href, children, title }) => {
+        const marker = /^#source-(\d+)$/.exec(href || "");
+        if (!marker)
+          return (
+            <a href={href} title={title}>
+              {children}
+            </a>
+          );
+        const ordinal = Number(marker[1]);
+        const citation = byOrdinal.get(ordinal);
+        const unavailable = !citation || citation.available === false;
+        return (
+          <CitationPreview
+            className="citation-marker"
+            citation={citation}
+            label={
+              unavailable
+                ? `引用 ${ordinal} 不可用`
+                : `查看来源 ${ordinal}：${citation.document_name || citation.display_name || "原文"}`
+            }
+            onCitation={onCitation}
+          >
+            {ordinal}
+          </CitationPreview>
+        );
+      },
+    }),
+    [byOrdinal, onCitation],
   );
   return (
     <div className="markdown">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, citationMarkers]}
         skipHtml
-        components={{
-          a: ({ href, children, title }) => {
-            const marker = /^#source-(\d+)$/.exec(href || "");
-            if (!marker)
-              return (
-                <a href={href} title={title}>
-                  {children}
-                </a>
-              );
-            const ordinal = Number(marker[1]);
-            const citation = byOrdinal.get(ordinal);
-            const unavailable = !citation || citation.available === false;
-            return (
-              <button
-                type="button"
-                className="citation-marker"
-                disabled={unavailable}
-                aria-label={
-                  unavailable
-                    ? `引用 ${ordinal} 不可用`
-                    : `查看来源 ${ordinal}：${citation.document_name || citation.display_name || "原文"}`
-                }
-                title={
-                  unavailable
-                    ? "来源已删除、不可访问或引用无效"
-                    : `${citation.document_name || citation.display_name || "查看原文"} · ${anchorText(citation)}`
-                }
-                onClick={() => citation && !unavailable && onCitation(citation)}
-              >
-                {ordinal}
-              </button>
-            );
-          },
-        }}
+        components={components}
       >
         {content}
       </ReactMarkdown>
@@ -137,27 +138,29 @@ export const CitationList = memo(function CitationList({
       <ol id={listId}>
         {visibleSources.map((citation) => (
           <li key={`${citation.ordinal}-${citation.chunk_id}`}>
-            <button
-              type="button"
-              disabled={citation.available === false}
-              aria-label={`${citation.available === false ? "来源不可用" : "查看来源"} ${citation.ordinal}：${citation.document_name || citation.display_name || "原文"} · ${anchorText(citation)}`}
-              title={
+            <CitationPreview
+              citation={citation}
+              label={
                 citation.available === false
-                  ? "来源已删除或无权访问"
-                  : citation.document_name || citation.display_name
+                  ? `来源不可用 ${citation.ordinal}`
+                  : `查看来源 ${citation.ordinal}：${citation.document_name || citation.display_name || "原文"} · ${anchorText(citation)}`
               }
-              onClick={() => onCitation(citation)}
+              onCitation={onCitation}
             >
               <span className="source-number">{citation.ordinal}</span>
               <span className="source-title">
-                {citation.document_name || citation.display_name || "查看原文"}
+                {citation.available === false
+                  ? "来源不可用"
+                  : citation.document_name ||
+                    citation.display_name ||
+                    "查看原文"}
               </span>
               <small>
                 {citation.available === false
                   ? "来源不可用"
                   : anchorText(citation)}
               </small>
-            </button>
+            </CitationPreview>
           </li>
         ))}
       </ol>

@@ -20,6 +20,9 @@ export function FolderTree({
   onDrop,
   trash = false,
   active = true,
+  mode = "tree",
+  parentId = null,
+  sort = "name",
 }: {
   folders: Folder[];
   selected: string;
@@ -28,10 +31,32 @@ export function FolderTree({
   onDrop: (event: DragEvent, id: string | null) => void;
   trash?: boolean;
   active?: boolean;
+  mode?: "tree" | "explorer";
+  parentId?: string | null;
+  sort?: string;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const index = useMemo(() => indexFolders(folders, trash), [folders, trash]);
-  const rows = useMemo(() => folderRows(index, collapsed), [index, collapsed]);
+  const rows = useMemo(
+    () =>
+      mode === "explorer"
+        ? [...(index.children.get(parentId) || [])]
+            .sort((a, b) =>
+              sort === "created" || sort === "updated"
+                ? (sort === "updated"
+                    ? b.updated_at || b.created_at || ""
+                    : b.created_at || ""
+                  ).localeCompare(
+                    sort === "updated"
+                      ? a.updated_at || a.created_at || ""
+                      : a.created_at || "",
+                  )
+                : a.name.localeCompare(b.name, "zh-CN"),
+            )
+            .map((folder) => ({ folder, depth: 0 }))
+        : folderRows(index, collapsed),
+    [index, collapsed, mode, parentId, sort],
+  );
   function folderMenu(f: Folder) {
     return (
       <>
@@ -73,41 +98,62 @@ export function FolderTree({
                 e.stopPropagation();
                 onDrop(e, f.id);
               }}
-              className={`folder-row ${selected === f.id ? "selected" : ""}`}
+              className={`folder-row ${mode === "explorer" ? "explorer-folder-row" : ""} ${selected === f.id ? "selected" : ""}`}
               style={{ paddingLeft: depth * 14 + 4 }}
             >
-              <button
-                className="tree-toggle"
-                aria-label={`${closed ? "展开" : "折叠"}${f.name}`}
-                aria-expanded={children ? !closed : undefined}
-                disabled={!children}
-                onClick={() =>
-                  setCollapsed((s) => {
-                    const n = new Set(s);
-                    if (n.has(f.id)) n.delete(f.id);
-                    else n.add(f.id);
-                    return n;
-                  })
-                }
-              >
-                {children ? (
-                  closed ? (
-                    <ChevronRight size={12} />
+              {mode === "tree" && (
+                <button
+                  className="tree-toggle"
+                  aria-label={`${closed ? "展开" : "折叠"}${f.name}`}
+                  aria-expanded={children ? !closed : undefined}
+                  disabled={!children}
+                  onClick={() =>
+                    setCollapsed((s) => {
+                      const n = new Set(s);
+                      if (n.has(f.id)) n.delete(f.id);
+                      else n.add(f.id);
+                      return n;
+                    })
+                  }
+                >
+                  {children ? (
+                    closed ? (
+                      <ChevronRight size={12} />
+                    ) : (
+                      <ChevronDown size={12} />
+                    )
                   ) : (
-                    <ChevronDown size={12} />
-                  )
-                ) : (
-                  <span />
-                )}
-              </button>
+                    <span />
+                  )}
+                </button>
+              )}
               <button
                 className="folder-name"
+                aria-label={f.name}
                 title={`${f.name}（第 ${depth + 1} 层）`}
                 aria-current={selected === f.id ? "location" : undefined}
                 onClick={() => onSelect(f.id)}
               >
-                <FolderIcon size={15} />
-                <span>{f.name}</span>
+                <span
+                  className={
+                    mode === "explorer" ? "explorer-folder-icon" : undefined
+                  }
+                >
+                  <FolderIcon size={mode === "explorer" ? 29 : 15} />
+                </span>
+                {mode === "explorer" ? (
+                  <span className="explorer-folder-info">
+                    <strong>{f.name}</strong>
+                    <small>
+                      文件夹
+                      {f.updated_at || f.created_at
+                        ? ` · ${new Date((f.updated_at || f.created_at)!).toLocaleDateString("zh-CN")}更新`
+                        : ""}
+                    </small>
+                  </span>
+                ) : (
+                  <span>{f.name}</span>
+                )}
               </button>
               <Menu
                 trigger={
@@ -131,22 +177,26 @@ export function FolderTree({
     );
   });
   return (
-    <div className="folder-tree">
-      <div className="section-heading">
-        <span>{trash ? "已删除文件夹" : "文件夹"}</span>
-        {!trash && (
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label="新建文件夹"
-            onClick={() => onAction("create")}
-          >
-            <Plus size={14} />
-          </Button>
-        )}
-      </div>
+    <div
+      className={`folder-tree ${mode === "explorer" ? "explorer-folders" : ""}`}
+    >
+      {mode === "tree" && (
+        <div className="section-heading">
+          <span>{trash ? "已删除文件夹" : "文件夹"}</span>
+          {!trash && (
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="新建文件夹"
+              onClick={() => onAction("create")}
+            >
+              <Plus size={14} />
+            </Button>
+          )}
+        </div>
+      )}
       {treeRows}
-      {!index.visible.length && (
+      {mode === "tree" && !index.visible.length && (
         <p className="tiny muted">
           {trash ? "没有已删除的文件夹" : "按主题建立文件夹，整理你的知识。"}
         </p>

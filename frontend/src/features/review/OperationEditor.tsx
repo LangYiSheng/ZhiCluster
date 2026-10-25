@@ -86,7 +86,7 @@ export function OperationEditor({
     });
   }
   const options = [
-    { value: "", label: "未分类 / 根目录" },
+    { value: "", label: "知识库根目录" },
     ...folders
       .filter((folder) => !folder.deleted_at)
       .map((folder) => ({

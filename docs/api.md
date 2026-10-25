@@ -1,6 +1,6 @@
 # API 说明
 
-本文按实际 FastAPI OpenAPI 路由核对，当前共 **60 个 HTTP 操作**。完整输入及响应模型以运行后的 `http://localhost:8000/openapi.json` 为准；Swagger 位于 `http://localhost:8000/docs`。
+本文按实际 FastAPI OpenAPI 路由整理。完整输入及响应模型以运行后的 `http://localhost:8000/openapi.json` 为准；Swagger 位于 `http://localhost:8000/docs`。
 
 Web 代理将 `/api` 原样转发至 API 服务。业务路由统一使用 `/api` 前缀；OpenAPI 和 Swagger 使用上面的 API 直连地址。
 
@@ -36,6 +36,8 @@ Web 代理将 `/api` 原样转发至 API 服务。业务路由统一使用 `/api
 文件夹同级名称按 Unicode NFKC、大小写和空白归一化检查。标签名称及别名使用同样的归一化策略。跨库文件夹/标签引用被拒绝。
 
 ## 文档与上传
+
+`GET /api/settings/file-formats`返回`{formats:[{extension,label,mime_type,preview,available,reason?}],limits:{...}}`。上传、文件选择和格式筛选共用此注册表；依赖缺失会返回不可用原因。支持的15个扩展名及来源锚点见[文档格式支持](document-formats.md)。文档元数据含`preview_type`；sections/citations的anchors允许字符串和整数，以支持工作表名称与章节路径。
 
 | 方法 | 路径 | 请求 / 行为 |
 | --- | --- | --- |
@@ -205,11 +207,15 @@ LLM 与 Embedding 各自独立处理 `api_key`：省略、`null` 或空字符串
 | POST | `/api/conversations/{conversation_id}/messages` | `{content,retrieval_mode?:"direct"或"model"}`；202；默认 direct，创建 assistant 消息和独立后台任务 |
 | GET | `/api/conversations/{conversation_id}/events` | 实际执行阶段 progress、合批 token、候选/最终 citation、完成/错误 SSE |
 
-同一会话只允许一个 queued/processing 回复；后续提交返回 409。无任何可访问知识库时创建会话返回 `empty_scope`。答案引用仅从检索上下文 `[S1]` 等白名单标记构造；无效来源标记会被替换。PDF 使用页码锚点，MD/TXT 使用行号，DOCX 使用段落，不虚构 DOCX 页码。不可访问来源返回 `available=false`，不会继续返回其 snippet。
+同一会话只允许一个 queued/processing 回复；后续提交返回 409。无任何可访问知识库时创建会话返回 `empty_scope`。答案引用仅从检索上下文 `[S1]` 等白名单标记构造；无效来源标记会被替换。PDF 使用页码锚点，MD/TXT 使用行号，DOCX 使用段落，不虚构 DOCX 页码。历史消息与引用事件都实时补齐 `document_name`、`ext`、`kb_id`、`kb_name`，供悬停预览使用；不会采用旧事件中的文件及知识库名称。不可访问或片段失效的来源返回 `available=false`，以通用文案遮蔽名称和 snippet，格式与知识库字段为 `null`，锚点为空。
 
 消息的 `retrieval.execution` 保存 `{stage,label,status,elapsed_ms?,source_count?,...}` 阶段列表，`retrieval.stream_sequence` 是该消息最近持久化事件的水位。实际阶段包括 scope、keyword、可选 embedding、ranking、可选 reranking、context、generation；无命中、未配置能力或失败时不会伪造未执行阶段。`progress` 事件携带 `message_id` 和完整 `steps` 快照，`completed/error` 也携带最终步骤；这些内容不包含模型隐藏推理。
 
-`retrieval_mode=model` 只影响本条消息，不修改保存的会话范围或连接配置。已声明支持工具的模型使用只读 `search_knowledge({query})`；未声明时使用明确标识的 JSON 检索规划。最多两轮规划和三次实际搜索尝试（失败也计数），规划请求每轮至多12秒、不重试。重复搜索词去重，失败在剩余预算内回退直接检索。模型不能传入范围字段；每次模型和检索等待后复核用户原选范围及权限。执行阶段可含 `query/tool_name/call_id/round`，检索观测保存 `retrieval_strategy` 和 `model_retrieval`，不返回模型隐藏推理。默认 direct 不增加规划调用。
+`retrieval_mode=model`只影响本条消息，不修改保存的会话范围或连接配置。原生只读工具为`get_current_scope()`、`list_scope_metadata({kind,kb_id?,parent_id?,query?,offset?,limit?})`和`search_knowledge({query,kb_ids?,folder_ids?,tag_ids?,include_descendants?,tag_match?})`；未开启原生工具时使用JSON规划，支持相同元数据与搜索能力。筛选始终与原会话范围取交集，不能清空或放宽原条件；无效筛选不静默回退扩大搜索。最多4个规划回合、2个搜索轮、3次实际搜索（失败也计数）、3次元数据和9次工具调用；每次规划最多12秒且不重试。同查询同范围去重，不同窄范围可分别搜索。元数据最多30项/4000字符并返回`next_offset`，范围快照最多5000字符。等待及最终生成后复核每个hit的实际来源范围与权限。
+
+执行步骤中的`search/search_result/search_round_summary`提供`round/scope_key/scope_label/query`，summary另含`queries/source_count/status`，数量为该轮该范围仍有效chunk去重数，后续summary覆盖同一键。前端展开仅显示范围、查询chips和数量，不展示内部阶段、耗时、实现说明。`direct`发送同型第1轮事件但不增加规划调用；观测另含`tool_usage`，不返回隐藏推理或私有hit筛选条件。
+
+向量阶段的查询数量使用`query_count:number`，不与summary的`queries:string[]`共用字段。历史消息曾保存`embedding.queries:number`，前端按实际类型兼容读取，数字不作为搜索词；执行容器、步骤及查询数组均做运行时检查，无需清库或改写旧记录。
 
 生成前 `citation` 可携带 `candidate:true`，此时消息快照也能读到真实候选引用。回答完成时只保留正文实际使用的引用。token 指定对应 `message_id` 与 UTF-16 字符 `offset`，首次片段立即保存，后续约 120 ms 或 256 字符合批；调用方应将片段合入同一消息，避免把快照中的正文再拼一遍。前端以约 60 ms 的节奏更新 Markdown，完成后折叠过程并保留紧凑来源列表；代码和链接内的 `[Sx]` 不转换成引用按钮。
 
@@ -223,14 +229,14 @@ LLM 与 Embedding 各自独立处理 `api_key`：省略、`null` 或空字符串
 | POST | `/api/review/suggestions/{id}` | `{action:apply或reject,document_version,payload?}`；应用使用最终编辑稿，返回审计 run_id 与撤销能力 |
 | POST | `/api/review/suggestions/batch` | `{action,items:[{suggestion_id,document_version,payload?}]}`；至多 100 项；返回每项成功、冲突或错误，响应顺序与输入一致 |
 | POST | `/api/review/suggestions/{id}/refresh` | `{document_version}`；仅 pending 建议；排队仅分类任务，不重做解析、摘要或向量；返回 job_id |
-| POST | `/api/review/plans` | `{kb_id,goal?,document_ids?}`；范围最多 50 份文档；201 返回 run；后台生成有界 JSON 整理方案，已有生成任务时 409 |
+| POST | `/api/review/plans` | `{kb_id,goal?,document_ids?,mode?:tags或folders或both,cleanup_empty_folders?:boolean}`；默认both、清理默认开启，最多50份文档；201返回run；后台生成待审JSON方案，已有生成任务时409 |
 
-建议应用重新检查文档版本及同库目标；批量使用独立 savepoint 并按知识库固定顺序取得锁。已过期建议返回冲突，调用方可让用户重新生成。分类与批量整理沿用下面的计划审批、编辑及撤销接口。新整理任务 kind 为 organize，使用后台模型额度，不占聊天任务通道。
+入库建议仅涉及标签，应用旧folder字段也不会改变当前位置。应用检查文档版本及同库标签；批量使用独立savepoint并按知识库固定顺序取得锁。过期建议返回冲突。整理计划保存服务端所有的`payload.organization={mode,document_ids,cleanup_folder_ids,cleanup_scope}`；生成、编辑、审批均拒绝模式外或超出所选范围的操作，此字段不接受编辑稿覆盖。完整选择可提议清理全库原本及整理后空目录，部分选择只清理原目录树。新任务kind为organize，使用后台额度，仍通过下列接口审批及撤销。
 
 | 方法 | 路径 | 请求 / 行为 |
 | --- | --- | --- |
 | GET | `/api/agent/runs?kb_id=...` | 当前用户最近 50 次整理；省略 kb_id 时跨可编辑知识库 |
-| POST | `/api/agent/runs` | `{kb_id,goal}`；201；仅排队，未配置聊天模型时 503 |
+| POST | `/api/agent/runs` | `{kb_id,goal,mode?,document_ids?,cleanup_empty_folders?}`；显式模式采用同一服务端约束，未指定时兼容通用旧Agent；201，仅排队，未配置聊天模型时503 |
 | GET | `/api/agent/runs/{run_id}` | 运行状态、完整计划、事件及操作审计 |
 | GET | `/api/agent/plans/{plan_id}` | `{id,version,status,payload,result,...}` |
 | PATCH | `/api/agent/plans/{plan_id}` | `{version,operations,summary?}`；保存完整编辑后的操作列表 |
@@ -241,7 +247,7 @@ LLM 与 Embedding 各自独立处理 `api_key`：省略、`null` 或空字符串
 
 计划操作含稳定 `operation_id`、`type`、`target_ids`、`params`、`description`、`dependencies`、`enabled`、`reversible`。支持 `create_folder`、`move_documents`、`update_document_tags`、`rename_document`、`rename_folder`、`trash_documents`、`trash_empty_folders`、`delete_tags`。临时文件夹使用 `ref:<创建操作ID>`，并显式依赖创建操作。编辑可以取消操作及调整目录/标签等参数；操作类型和身份不可替换，删除操作只能保留或取消原规划目标。
 
-`trash_empty_folders` 和 `delete_tags` 的 params 为 `{}`，target_ids 分别为同库目录或标签。空目录在规划、审批及最终执行时必须无有效文档和子目录；不支持同方案先清空非空目录再删除。标签删除移除标签及其文档关联，预览含受影响文档。服务端保存 `base_tag_links` 与关联文档版本，最多500条关联；这些快照不接受客户端编辑。新增关联、数量漂移或版本变化均拒绝执行。两类操作均属高风险，需要额外确认；撤销恢复原目录或原标签ID、颜色、别名和关联，同名冲突或后续人工修改时拒绝覆盖。
+`trash_empty_folders`和`delete_tags`的params为`{}`，target_ids为同库目录或标签。目录可在同一方案中先移动资料、按依赖顺序清理子目录再清理父目录；审批模拟完整顺序，执行当下重新检查，目录及后代有有效或回收站文档、新增子目录时拒绝清理。目录为软删除，撤销先恢复原父子目录，再恢复文档。标签删除预览含受影响文档，服务端保存`base_tag_links`及版本、最多500条关联，快照不能被编辑；新增关联、数量或版本漂移均拒绝执行。两类操作仍须高风险确认，撤销遇同名或后续修改冲突不覆盖。
 
 软删除风险由后端重新计算；必须额外提交 `confirm_high_risk=true`。跨库操作、审批期间版本变化、重复/非法依赖被拒绝。重复批准已完成的同一版本返回持久结果，不会再次修改实体。撤销遇到后续人工修改返回 `undo_conflict`，不覆盖新工作。
 

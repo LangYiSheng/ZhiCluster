@@ -10,11 +10,19 @@ class Input(BaseModel):
 class KBCreate(Input):
     name: str = Field(min_length=1, max_length=160)
     description: str = Field(default="", max_length=4000)
+    icon: str = Field(default="folder", min_length=1, max_length=50)
+    color: str = Field(default="#55a995", pattern=r"^#[0-9a-fA-F]{6}$")
+    embedding_model: str | None = Field(default=None, min_length=1, max_length=512)
+    embedding_dimension: int | None = Field(default=None, ge=1, le=16000)
 
 
 class KBUpdate(Input):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=4000)
+    icon: str | None = Field(default=None, min_length=1, max_length=50)
+    color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    embedding_model: str | None = Field(default=None, min_length=1, max_length=512)
+    embedding_dimension: int | None = Field(default=None, ge=1, le=16000)
     version: int | None = None
 
 
@@ -76,6 +84,7 @@ class Search(Input):
 
 
 class ConversationCreate(Input):
+    kb_id: str | None = None
     title: str = Field(default="新对话", min_length=1, max_length=160)
     scope: dict = Field(default_factory=dict)
 
@@ -87,6 +96,7 @@ class ConversationUpdate(Input):
 class ChatMessage(Input):
     content: str = Field(min_length=1, max_length=16000)
     retrieval_mode: Literal["direct", "model"] = "direct"
+    model: str | None = Field(default=None, min_length=1, max_length=512)
 
 
 class SuggestionAction(Input):

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,6 +15,10 @@ class KnowledgeBaseOut(EntityOut):
     owner_id: str
     name: str
     description: str
+    icon: str
+    color: str
+    embedding_model: str | None
+    embedding_dimension: int | None
     visibility: str
     version: int
     deleted_at: datetime | None
@@ -44,6 +49,7 @@ class DocumentOut(EntityOut):
     display_name: str
     original_filename: str
     mime_type: str
+    preview_type: Literal["pdf", "text"] | None = None
     ext: str
     sha256: str
     size_bytes: int
@@ -76,7 +82,7 @@ class SectionOut(EntityOut):
     order: int
     plain_text: str
     section_summary: str
-    anchors: dict
+    anchors: dict[str, int | str]
 
 
 class JobOut(EntityOut):
@@ -112,11 +118,13 @@ class SearchItem(BaseModel):
     document_id: str
     document_name: str
     kb_id: str
+    kb_name: str | None = None
+    ext: str | None = None
     chunk_id: str
     section_id: str
     snippet: str
     content: str
-    anchors: dict
+    anchors: dict[str, int | str]
     score: float
 
 
@@ -132,6 +140,7 @@ class SearchOut(BaseModel):
 
 class ConversationOut(EntityOut):
     user_id: str
+    kb_id: str | None
     title: str
     scope: dict
     deleted_at: datetime | None

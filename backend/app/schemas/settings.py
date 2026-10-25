@@ -67,6 +67,21 @@ class ProviderPatch(RuntimeInput):
 
 class LlmPatch(ProviderPatch):
     supports_tools: bool | None = None
+    models: list[str] | None = Field(default=None, max_length=100)
+
+    @field_validator("models")
+    @classmethod
+    def valid_models(cls, values):
+        if values is None:
+            return None
+        result = []
+        for value in values:
+            value = value.strip()
+            if not value or len(value) > 512 or any(ord(char) < 32 for char in value):
+                raise ValueError("聊天模型名称不能为空或包含控制字符")
+            if value not in result:
+                result.append(value)
+        return result
 
 
 class EmbeddingPatch(ProviderPatch):

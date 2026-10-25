@@ -1,10 +1,13 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { useState } from "react";
-import type { ComponentProps } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import type { ComponentProps, ReactElement } from "react";
+import { cleanup, render as renderUI, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Chat } from "./Chat";
+const render = (element: ReactElement) =>
+  renderUI(element, { wrapper: MemoryRouter });
 
 function HistoryChat(props: ComponentProps<typeof Chat>) {
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -159,6 +162,7 @@ it("新会话发送失败保留输入，发送成功才清理对应草稿", asyn
     },
   );
   let rejected = true;
+  let createdCount = 0;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (path: string, init?: RequestInit) => {
@@ -169,8 +173,10 @@ it("新会话发送失败保留输入，发送成功才清理对应草稿", asyn
               { status: 503 },
             )
           : new Response(JSON.stringify({ id: "message-1", status: "queued" }));
-      if (init?.method === "POST")
+      if (init?.method === "POST") {
+        createdCount++;
         return new Response(JSON.stringify({ id: "c-new", title: "新会话" }));
+      }
       return new Response("[]");
     }),
   );
@@ -201,6 +207,7 @@ it("新会话发送失败保留输入，发送成功才清理对应草稿", asyn
   expect(screen.getByLabelText("知识库问题")).toHaveValue(
     "网络失败也要保留这句话",
   );
+  expect(localStorage.getItem("conversation:kb-1")).toBe("c-new");
   rejected = false;
   await user.click(screen.getByRole("button", { name: "发送问题" }));
   await vi.waitFor(() =>
@@ -209,6 +216,7 @@ it("新会话发送失败保留输入，发送成功才清理对应草稿", asyn
   expect(
     sessionStorage.getItem("zhicluster:draft:v1:chat:kb-1:new"),
   ).toBeNull();
+  expect(createdCount).toBe(1);
 });
 it("受控响应验证processing禁发、真实引用序号与持久会话范围", async () => {
   localStorage.setItem("conversation:kb-1", "c-1");
@@ -283,9 +291,10 @@ it("受控响应验证processing禁发、真实引用序号与持久会话范围
       />
     </QueryClientProvider>,
   );
-  await screen.findByText("等待任务开始");
+  await screen.findByText("正在查找资料");
   expect(screen.getByText("3", { selector: ".source-number" })).toBeVisible();
-  expect(screen.getByRole("button", { name: /已删除的来源/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "来源不可用 3" })).toBeDisabled();
+  expect(screen.queryByText("已删除的来源")).not.toBeInTheDocument();
   expect(screen.getByText(/问答范围 · 2 个知识库/)).toBeVisible();
   const user = userEvent.setup();
   await user.type(screen.getByLabelText("知识库问题"), "处理中不能重复发送");
@@ -556,11 +565,14 @@ it("范围面板按选择创建多库会话，取消当前库会清掉其文件�
   await user.click(screen.getByLabelText("检索", { exact: true }));
   await user.click(screen.getByRole("button", { name: "完成" }));
   expect(
-    screen.getByTitle(
-      "基于 第二知识库、研究库 · 文件夹：研究目录 · 标签：检索",
-    ),
-  ).toBeInTheDocument();
-  await user.click(screen.getByRole("switch", { name: "主动检索" }));
+    screen.getByRole("button", { name: "调整问答范围" }),
+  ).toHaveTextContent("2 个知识库");
+  expect(
+    document.querySelector(".composer-scope-label"),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "选择模型与思考模式" }));
+  await user.click(screen.getByRole("button", { name: "思考" }));
+  await user.click(screen.getByRole("button", { name: "关闭" }));
   await user.click(screen.getByRole("button", { name: "发送问题" }));
   await vi.waitFor(() => expect(requests).toHaveLength(2));
   expect(requests[0].body.scope).toEqual({
@@ -570,6 +582,7 @@ it("范围面板按选择创建多库会话，取消当前库会清掉其文件�
     include_descendants: false,
   });
   expect(requests[1].body.retrieval_mode).toBe("model");
+  expect(requests[0].body.kb_id).toBe("kb-1");
   expect(requests[0].body.scope).not.toHaveProperty("retrieval_mode");
 });
 

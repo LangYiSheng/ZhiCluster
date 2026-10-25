@@ -19,6 +19,7 @@ from app.db.models import (
     IngestionJob,
     JobEvent,
     KnowledgeBase,
+    Tag,
     User,
     utcnow,
 )
@@ -305,8 +306,8 @@ def test_joint_half_failure_retries_only_missing_stage(ingestion_context, failed
         assert db.scalar(select(ClassificationSuggestion).where(ClassificationSuggestion.document_id == document_id)).payload["new_tag_names"] == ["研究"]
 
 
-@pytest.mark.parametrize("change", ["catalog", "document"])
-def test_joint_classification_snapshot_drift_keeps_valid_summary_only(ingestion_context, change):
+@pytest.mark.parametrize("change", ["catalog", "document", "folder"])
+def test_joint_classification_rechecks_document_and_tag_catalog_only(ingestion_context, change):
     factory, config, document_id, job_id = ingestion_context
 
     class Gateway:
@@ -317,7 +318,9 @@ def test_joint_classification_snapshot_drift_keeps_valid_summary_only(ingestion_
             with factory() as editor:
                 document = editor.get(Document, document_id)
                 if change == "catalog":
-                    editor.add(Folder(kb_id=document.kb_id, name="并发新目录"))
+                    editor.add(Tag(kb_id=document.kb_id, name="并发新标签", normalized_name="并发新标签"))
+                elif change == "folder":
+                    editor.add(Folder(kb_id=document.kb_id, name="目录变化不影响标签建议"))
                 else:
                     document.display_name, document.version = "人工改名.md", document.version + 1
                 editor.commit()
@@ -326,6 +329,11 @@ def test_joint_classification_snapshot_drift_keeps_valid_summary_only(ingestion_
     process_ingestion_job(job_id, factory, config, Gateway())
     with factory() as db:
         document = db.get(Document, document_id)
+        if change == "folder":
+            assert document.summary_status == document.classification_status == "ready"
+            suggestion = db.scalar(select(ClassificationSuggestion).where(ClassificationSuggestion.document_id == document_id))
+            assert suggestion and suggestion.payload["existing_folder_id"] is None and suggestion.payload["proposed_folder_path"] is None
+            return
         assert document.summary_status == "ready" and document.classification_status == "failed"
         assert db.scalar(select(ClassificationSuggestion).where(ClassificationSuggestion.document_id == document_id)) is None
         assert db.get(IngestionJob, job_id).status == "retry_wait"

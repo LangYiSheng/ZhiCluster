@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, MessageSquare, Sparkles } from "lucide-react";
+import { ArrowUp, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { api, errorText, json } from "../../lib/api";
 import type {
   Citation,
+  ChatModelCatalog,
   Conversation,
   Folder,
   KnowledgeBase,
@@ -18,10 +19,10 @@ import { ErrorState, Loading } from "../../components/common";
 import { ConversationHistory } from "./ConversationHistory";
 import { ScopeSelector } from "./ScopeSelector";
 import { ChatProgress } from "./ChatProgress";
+import { ChatModelMenu } from "./ChatModelMenu";
 import { CitationList, MessageContent } from "./MessageContent";
 import { useChatStream } from "./useChatStream";
 import { isMessageBusy } from "./chatEvents";
-import { scopeSummary } from "./scopeSummary";
 import "./chat-ui.css";
 const ignoreHistoryChange = () => {};
 export function Chat({
@@ -59,6 +60,22 @@ export function Chat({
     "direct",
   );
   const [rename, setRename] = useState<Conversation | null>(null);
+  const [preferredModel, setPreferredModel] = useState(
+    () => localStorage.getItem(`zhicluster:chat-model:${kb.id}`) || "",
+  );
+  const catalog = useQuery({
+    queryKey: ["chat-models"],
+    queryFn: () => api<ChatModelCatalog>("/settings/chat-models"),
+    enabled: active,
+  });
+  const availableModels = Array.isArray(catalog.data?.models)
+    ? catalog.data.models
+    : [];
+  const selectedModel = availableModels.includes(preferredModel)
+    ? preferredModel
+    : availableModels.includes(catalog.data?.default_model || "")
+      ? catalog.data!.default_model
+      : availableModels[0] || "";
   useEffect(() => {
     if (!active) {
       setRename(null);
@@ -66,19 +83,38 @@ export function Chat({
     }
   }, [active, onHistoryOpenChange]);
   const conversations = useQuery({
-    queryKey: ["conversations"],
-    queryFn: () => api<Conversation[]>("/conversations"),
+    queryKey: ["conversations", kb.id],
+    queryFn: async () => {
+      const rows = await api<Conversation[]>(
+        `/conversations?kb_id=${encodeURIComponent(kb.id)}`,
+      );
+      return rows.filter(
+        (row) =>
+          (row.kb_id || (row.scope?.kb_ids as string[] | undefined)?.[0]) ===
+          kb.id,
+      );
+    },
   });
+  const ownedConversation = conversations.data?.find(
+    (row) => row.id === conversationId,
+  );
+  const safeConversationId = ownedConversation ? conversationId : "";
+  useEffect(() => {
+    if (conversations.isSuccess && conversationId && !ownedConversation)
+      setConversationId("");
+  }, [conversations.isSuccess, conversationId, ownedConversation]);
   const messages = useQuery({
-    queryKey: ["messages", conversationId],
-    queryFn: () => api<Message[]>(`/conversations/${conversationId}/messages`),
-    enabled: !!conversationId,
+    queryKey: ["messages", safeConversationId],
+    queryFn: () =>
+      api<Message[]>(`/conversations/${safeConversationId}/messages`),
+    enabled: !!safeConversationId,
     refetchInterval: 15000,
   });
-  const displayedMessages = useChatStream(conversationId, messages.data || []);
-  const persistedScope = conversations.data?.find(
-    (c) => c.id === conversationId,
-  )?.scope;
+  const displayedMessages = useChatStream(
+    safeConversationId,
+    messages.data || [],
+  );
+  const persistedScope = ownedConversation?.scope;
   const selectedKbIds = conversationId
     ? (persistedScope?.kb_ids as string[]) || []
     : scopeIds;
@@ -97,18 +133,6 @@ export function Chat({
     folder_ids: scopeFolders,
     include_descendants: includeDescendants,
   };
-  const selectedScopeLabel =
-    conversationId && !persistedScope
-      ? "正在读取对话范围"
-      : scopeSummary({
-          knowledgeBases,
-          folders,
-          tags,
-          kbIds: selectedKbIds,
-          folderIds: selectedFolderIds,
-          tagIds: selectedTagIds,
-          includeDescendants: selectedIncludeDescendants,
-        });
   useEffect(() => {
     localStorage.setItem(`conversation:${kb.id}`, conversationId);
   }, [conversationId, kb.id]);
@@ -116,24 +140,67 @@ export function Chat({
     mutationFn: async () => {
       const submittedText = text;
       let id = conversationId;
+      let submittedDraftKey = draftKey;
+      let createdConversation: Conversation | undefined;
       if (!id) {
         const c = await api<Conversation>(
           "/conversations",
           json("POST", {
             title: submittedText.slice(0, 40) || "新对话",
+            kb_id: kb.id,
             scope: draftScope,
           }),
         );
         id = c.id;
+        createdConversation = {
+          ...c,
+          kb_id: kb.id,
+          scope: c.scope || draftScope,
+        };
+        await qc.cancelQueries({ queryKey: ["conversations", kb.id] });
+        qc.setQueryData<Conversation[]>(
+          ["conversations", kb.id],
+          (rows = []) => [
+            ...rows.filter((row) => row.id !== id),
+            createdConversation!,
+          ],
+        );
+        // Keep a created conversation even if the subsequent message fails or
+        // this knowledge-base view unmounts while that request is pending.
+        submittedDraftKey = `zhicluster:draft:v1:chat:${kb.id}:${id}`;
+        setText(submittedText, submittedDraftKey);
+        clearDraft(draftKey, submittedText);
+        localStorage.setItem(`conversation:${kb.id}`, id);
+        setConversationId(id);
       }
       const message = await api<Message>(
         `/conversations/${id}/messages`,
-        json("POST", { content: submittedText, retrieval_mode: retrievalMode }),
+        json("POST", {
+          content: submittedText,
+          retrieval_mode: retrievalMode,
+          ...(selectedModel ? { model: selectedModel } : {}),
+        }),
       );
-      return { message, conversationId: id, draftKey, submittedText };
+      return {
+        message,
+        conversationId: id,
+        createdConversation,
+        kbId: kb.id,
+        draftKey: submittedDraftKey,
+        submittedText,
+      };
     },
     onSuccess: (result) => {
       clearDraft(result.draftKey, result.submittedText);
+      if (result.createdConversation) {
+        qc.setQueryData<Conversation[]>(
+          ["conversations", result.kbId],
+          (rows = []) => [
+            ...rows.filter((row) => row.id !== result.conversationId),
+            result.createdConversation!,
+          ],
+        );
+      }
       setConversationId(result.conversationId);
       void qc.invalidateQueries({ queryKey: ["messages"] });
       void qc.invalidateQueries({ queryKey: ["conversations"] });
@@ -158,7 +225,12 @@ export function Chat({
     },
     onError: (e) => toast.error(errorText(e)),
   });
-  const busy = send.isPending || displayedMessages.some(isMessageBusy);
+  const busy =
+    send.isPending ||
+    (!!conversationId && conversations.isPending) ||
+    displayedMessages.some(isMessageBusy);
+  const sendBlocked =
+    busy || catalog.isPending || catalog.isFetching || catalog.isError;
   const isEmpty =
     !displayedMessages.length &&
     !messages.isError &&
@@ -260,7 +332,8 @@ export function Chat({
           className="chat-composer"
           onSubmit={(e) => {
             e.preventDefault();
-            if (text.trim() && !busy && selectedKbIds.length) send.mutate();
+            if (text.trim() && !sendBlocked && selectedKbIds.length)
+              send.mutate();
           }}
         >
           <textarea
@@ -276,36 +349,34 @@ export function Chat({
                 !e.nativeEvent.isComposing
               ) {
                 e.preventDefault();
-                if (text.trim() && !busy && selectedKbIds.length) send.mutate();
+                if (text.trim() && !sendBlocked && selectedKbIds.length)
+                  send.mutate();
               }
             }}
           />
           <div className="row spread">
-            <small className="composer-scope-label" title={selectedScopeLabel}>
-              <MessageSquare size={13} />
-              <span>{selectedScopeLabel}</span>
-            </small>
-            <label
-              className="retrieval-mode-control"
-              title="开启后，模型会规划搜索问题，并在需要时补充查找。"
-            >
-              <input
-                type="checkbox"
-                role="switch"
-                aria-label="主动检索"
-                checked={retrievalMode === "model"}
-                disabled={busy}
-                onChange={(event) =>
-                  setRetrievalMode(event.target.checked ? "model" : "direct")
-                }
-              />
-              <span>主动检索</span>
-            </label>
+            <ChatModelMenu
+              models={availableModels}
+              model={selectedModel}
+              mode={retrievalMode}
+              disabled={busy}
+              active={active}
+              loading={catalog.isPending}
+              error={catalog.error}
+              kbId={kb.id}
+              onRetry={() => void catalog.refetch()}
+              onModeChange={setRetrievalMode}
+              onModelChange={(model) => {
+                setPreferredModel(model);
+                localStorage.setItem(`zhicluster:chat-model:${kb.id}`, model);
+              }}
+            />
             <Button
+              className="chat-send"
               variant="default"
               size="icon"
               aria-label="发送问题"
-              disabled={!text.trim() || busy || !selectedKbIds.length}
+              disabled={!text.trim() || sendBlocked || !selectedKbIds.length}
             >
               <ArrowUp size={18} />
             </Button>

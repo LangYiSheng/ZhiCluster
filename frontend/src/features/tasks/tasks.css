@@ -2,9 +2,10 @@
   height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
-  max-width: 1060px;
-  margin: 0 auto;
-  padding: 32px clamp(18px, 4vw, 48px) 48px;
+  width: 100%;
+  min-width: 0;
+  padding: 28px clamp(20px, 4vw, 48px) 48px;
+  background: var(--color-canvas);
 }
 .tasks-heading,
 .tasks-filter-bar,

@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
-  ArrowRight,
   ArrowUpRight,
   Check,
   ChevronLeft,
@@ -16,7 +15,7 @@ import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Dialog } from "../../components/ui/dialog";
 import { errorText, query } from "../../lib/api";
-import { reviewApi, suggestionDestination } from "./api";
+import { reviewApi } from "./api";
 import type {
   ReviewSuggestion,
   SuggestionPayload,
@@ -120,12 +119,6 @@ export function Suggestions({
       ]);
     },
   });
-  function destination(item: ReviewSuggestion) {
-    return (
-      adjustments[item.id]?.destination ||
-      suggestionDestination(item, item.payload)
-    );
-  }
   function tags(item: ReviewSuggestion) {
     return (
       adjustments[item.id]?.tags || [
@@ -314,10 +307,8 @@ export function Suggestions({
                       <strong>{item.document_name}</strong>
                       <span>{item.kb_name}</span>
                     </div>
-                    <p className="review-move-preview">
-                      <span>{item.current_folder_path || "未分类"}</span>
-                      <ArrowRight size={13} />
-                      <strong>{destination(item)}</strong>
+                    <p className="review-note">
+                      位置：{item.current_folder_path || "知识库根目录"}
                     </p>
                     {!!tags(item).length && (
                       <div className="review-inline-tags">
@@ -426,17 +417,12 @@ export function Suggestions({
           !open && !mutation.isPending && setConfirming(null)
         }
         title={`应用 ${confirming?.length || 0} 条分类建议`}
-        description="确认下面的移动位置和标签，再应用到文档。"
+        description="应用标签建议并保留文档当前位置；文件夹整理可另行生成方案。"
       >
         <div className="review-confirm-list">
           {confirming?.map((item) => (
             <div key={item.id}>
               <strong>{item.document_name}</strong>
-              <p>
-                {item.current_folder_path || "未分类"}
-                <ArrowRight size={12} />
-                {destination(item)}
-              </p>
               {!!tags(item).length && (
                 <small>添加标签：{tags(item).join("、")}</small>
               )}

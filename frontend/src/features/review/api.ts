@@ -82,6 +82,12 @@ export type ReviewPlan = {
     risk_level: string;
     base_versions: Record<string, number>;
     base_tag_links?: Record<string, string[]>;
+    organization?: {
+      mode: "tags" | "folders" | "both";
+      document_ids: string[];
+      cleanup_folder_ids: string[];
+      cleanup_scope?: "knowledge_base" | "source_folders";
+    } | null;
   };
   preview?: OperationPreview[];
 };
@@ -147,7 +153,7 @@ export function folderPath(
   id: string | null | undefined,
   folders: Folder[],
 ): string {
-  if (!id) return "未分类";
+  if (!id) return "知识库根目录";
   const parts: string[] = [];
   const seen = new Set<string>();
   let current: string | null = id;
@@ -188,9 +194,9 @@ export function operationDestination(
       operations,
       new Set([...seen, reference.operation_id]),
     );
-  } else path = id ? folderPath(id, folders) : "未分类";
+  } else path = id ? folderPath(id, folders) : "知识库根目录";
   if (op.type === "create_folder")
-    return `${path === "未分类" ? "" : `${path} / `}${String(op.params.name || "未命名文件夹")}`;
+    return `${id ? `${path} / ` : ""}${String(op.params.name || "未命名文件夹")}`;
   return path;
 }
 
@@ -204,7 +210,7 @@ export function suggestionDestination(
   if (folders) return folderPath(payload.existing_folder_id, folders);
   return (
     item.target_folder_path ||
-    (payload.existing_folder_id ? "现有文件夹" : "未分类")
+    (payload.existing_folder_id ? "现有文件夹" : "知识库根目录")
   );
 }
 

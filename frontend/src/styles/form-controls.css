@@ -1,3 +1,44 @@
+.ui-color-picker {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 27px;
+  height: 27px;
+  padding: 3px;
+  margin: 0;
+  border: 3px solid var(--color-canvas);
+  border-radius: 50%;
+  background: conic-gradient(#ed7c73, #edc66a, #8cba72, #69b5b8, #8b8bd1, #d48bb9, #ed7c73);
+  box-shadow: 0 0 0 1px var(--color-border);
+  cursor: pointer;
+}
+.ui-color-picker .ui-color-picker-swatch {
+  display: block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--selected-color);
+  box-shadow: 0 0 0 1.5px var(--color-canvas);
+  pointer-events: none;
+}
+.ui-color-picker input[type="color"] {
+  position: absolute;
+  inset: -3px;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.ui-color-picker[data-selected="true"] {
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+.ui-color-picker:has(input:focus-visible) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 4px;
+}
 input.ui-checkbox[type="checkbox"],
 input.ui-radio[type="radio"] {
   appearance: none;

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -80,6 +81,14 @@ function chatFields() {
   return within(screen.getByRole("region", { name: "聊天模型" }));
 }
 beforeEach(() => {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn(() => ({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })),
+  );
   requests = [];
   server = structuredClone(initial);
   conflict = false;
@@ -123,7 +132,22 @@ beforeEach(() => {
         }
         return new Response(JSON.stringify(server));
       }
-      if (path.endsWith("/settings/model-status"))
+      if (path.includes("/settings/statistics"))
+        return new Response(
+          JSON.stringify({
+            knowledge_bases: path.includes("kb_id=") ? 1 : 2,
+            documents: 12,
+            folders: 3,
+            tags: 5,
+            conversations: 4,
+            messages: 20,
+            storage_bytes: 1048576,
+            chunks: 42,
+            indexed_documents: 10,
+            failed_jobs: 1,
+          }),
+        );
+      if (path.includes("/settings/model-status"))
         return new Response(
           JSON.stringify({
             embedding: { configured: true },
@@ -134,7 +158,12 @@ beforeEach(() => {
         return new Response(
           JSON.stringify([
             { id: "kb-1", name: "研究笔记" },
-            { id: "kb-2", name: "另一知识库" },
+            {
+              id: "kb-2",
+              name: "另一知识库",
+              embedding_model: "vector-library",
+              embedding_dimension: 768,
+            },
           ]),
         );
       if (path.endsWith("/settings/test-models")) {
@@ -192,6 +221,7 @@ describe("网页设置草稿", () => {
     expect(
       chatFields().getByRole("combobox", { name: "模型名称" }),
     ).toHaveTextContent("chat-catalog");
+    await user.click(screen.getByRole("tab", { name: "嵌入模型" }));
     expect(
       within(screen.getByRole("region", { name: "向量模型" })).getByRole(
         "combobox",
@@ -207,6 +237,7 @@ describe("网页设置草稿", () => {
       0,
     );
     await user.click(screen.getByRole("button", { name: "模型连接" }));
+    await user.click(screen.getByRole("tab", { name: "聊天模型" }));
     expect(
       chatFields().getByRole("combobox", { name: "模型名称" }),
     ).toHaveTextContent("chat-catalog");
@@ -354,6 +385,7 @@ describe("网页设置草稿", () => {
     await user.click(screen.getByRole("button", { name: "测试聊天连接" }));
     expect(screen.getByRole("button", { name: "正在测试…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "测试工具调用" })).toBeEnabled();
+    await user.click(screen.getByRole("tab", { name: "嵌入模型" }));
     expect(screen.getByRole("region", { name: "向量模型" })).toBeVisible();
     expect(screen.getByRole("button", { name: "测试向量连接" })).toBeEnabled();
     await act(async () =>
@@ -364,6 +396,7 @@ describe("网页设置草稿", () => {
       ),
     );
 
+    await user.click(screen.getByRole("tab", { name: "聊天模型" }));
     expect(await screen.findByText("聊天测试完成")).toBeVisible();
   });
   it("跨字段校验失败时定位到错误字段，并阻止保存", async () => {
@@ -378,9 +411,10 @@ describe("网页设置草稿", () => {
     expect(screen.getByLabelText("切块重叠（Token）")).toHaveFocus();
     expect(requests.filter((item) => item.method === "PUT")).toHaveLength(0);
   });
-  it("同屏模型卡片独立编辑，校验能展开对应高级选项", async () => {
+  it("模型子页独立编辑，校验切换到对应子页并展开高级选项", async () => {
     const { user } = setup();
     await models(user);
+    await user.click(screen.getByRole("tab", { name: "嵌入模型" }));
     const embedding = within(screen.getByRole("region", { name: "向量模型" }));
     await user.click(embedding.getByText("高级连接选项"));
     await user.clear(embedding.getByLabelText("请求超时（秒）"));
@@ -391,6 +425,7 @@ describe("网页设置草稿", () => {
     const timeout = await screen.findByDisplayValue("700");
     expect(timeout).toHaveFocus();
     expect(timeout.closest("details")).toHaveAttribute("open");
+    await user.click(screen.getByRole("tab", { name: "聊天模型" }));
     expect(chatFields().getByLabelText("模型名称")).toHaveValue("chat-old");
     expect(requests.filter((item) => item.method === "PUT")).toHaveLength(0);
   });
@@ -412,9 +447,7 @@ describe("网页设置草稿", () => {
     await act(async () => {
       await router.navigate("/chat");
     });
-    await act(async () => {
-      await user.click(screen.getByRole("button", { name: "放弃修改并离开" }));
-    });
+    await user.click(screen.getByRole("button", { name: "放弃修改并离开" }));
     expect(await screen.findByText("已返回知识对话")).toBeVisible();
     expect(JSON.stringify(localStorage)).not.toContain("leave-draft-secret");
     expect(requests.filter((item) => item.method === "PUT")).toHaveLength(0);
@@ -429,7 +462,13 @@ describe("网页设置草稿", () => {
       screen.getByRole("button", { name: "重建所选知识库向量索引" }),
     );
     expect(screen.getByRole("dialog")).toHaveTextContent("另一知识库");
+    expect(screen.getByRole("dialog")).toHaveTextContent("vector-library");
     expect(screen.getByRole("dialog")).toHaveTextContent("模型费用");
+    expect(
+      requests.some((item) =>
+        item.path.endsWith("/settings/model-status?kb_id=kb-2"),
+      ),
+    ).toBe(true);
     expect(
       requests.some((item) => item.path.endsWith("rebuild-embeddings")),
     ).toBe(false);
@@ -491,5 +530,114 @@ describe("网页设置草稿", () => {
     expect(useUI.getState().theme).toBe("dark");
     expect(requests.filter((item) => item.method === "PUT")).toHaveLength(0);
     expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
+  });
+  it("六套配色和页面/阅读预览只修改草稿，保存后才应用外观", async () => {
+    const { user } = setup();
+    await screen.findByRole("heading", { name: "外观与布局" });
+    expect(screen.getAllByRole("radio")).toHaveLength(6);
+    await user.click(screen.getByRole("radio", { name: /海盐蓝/ }));
+    const preview = screen.getByRole("region", { name: "外观效果预览" });
+    expect(preview.querySelector(".zc-theme-preview")).toHaveAttribute(
+      "data-palette",
+      "ocean",
+    );
+    expect(within(preview).getByText("让知识产生连接")).toBeVisible();
+    const displayTab = screen.getByRole("tab", { name: "显示与配色" });
+    expect(screen.getAllByRole("tablist")).toHaveLength(1);
+    displayTab.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "文字与阅读" })).toHaveFocus();
+    expect(screen.getByRole("tabpanel", { name: "文字与阅读" })).toBeVisible();
+    expect(
+      screen.queryByRole("combobox", { name: "显示模式" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(preview).getByText("把零散的灵感，连成自己的知识"),
+    ).toBeVisible();
+    await user.click(screen.getByRole("combobox", { name: "字体搭配" }));
+    await user.click(screen.getByRole("option", { name: "清晰黑体" }));
+    fireEvent.change(screen.getByRole("slider", { name: "阅读字号" }), {
+      target: { value: "1.15" },
+    });
+    await user.click(screen.getByRole("tab", { name: "显示与配色" }));
+    expect(screen.getByRole("radio", { name: /海盐蓝/ })).toBeChecked();
+    expect(within(preview).getByText("让知识产生连接")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "模型连接" }));
+    await user.click(screen.getByRole("button", { name: "外观与布局" }));
+    await user.click(screen.getByRole("tab", { name: "文字与阅读" }));
+    expect(
+      screen.getByRole("combobox", { name: "字体搭配" }),
+    ).toHaveTextContent("清晰黑体");
+    expect(screen.getByRole("slider", { name: "阅读字号" })).toHaveValue(
+      "1.15",
+    );
+    expect(useUI.getState().palette).toBe("ink");
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+    await screen.findByText(/设置已保存/);
+    expect(useUI.getState().palette).toBe("ocean");
+    expect(useUI.getState().fontPairing).toBe("sans");
+    expect(useUI.getState().readingScale).toBe(1.15);
+    expect(requests.filter((request) => request.method === "PUT")).toHaveLength(
+      0,
+    );
+  });
+  it("可从目录启用多个聊天模型，再添加自定义模型并修改默认模型", async () => {
+    const { user } = setup("/settings?section=models");
+    await screen.findByRole("heading", { name: "模型连接" });
+    await user.click(
+      await screen.findByRole("checkbox", { name: "chat-catalog" }),
+    );
+    await user.type(screen.getByLabelText("添加自定义模型"), "chat-custom");
+    await user.click(screen.getByRole("button", { name: "添加" }));
+    await user.click(
+      screen.getByRole("button", { name: "设为默认模型 chat-custom" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "移除聊天模型 chat-custom" }),
+    ).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", { name: "移除聊天模型 chat-old" }),
+    );
+    await user.click(screen.getByRole("button", { name: "保存修改" }));
+    await screen.findByText(/设置已保存/);
+    const body = requests.find((request) => request.method === "PUT")!.body;
+    expect(body.llm).toMatchObject({
+      model: "chat-custom",
+      models: ["chat-custom", "chat-catalog"],
+    });
+    expect(body.llm).not.toHaveProperty("api_key");
+  });
+  it("统计按所属知识库读取，可切换全部知识库并刷新", async () => {
+    const { user } = setup("/settings?section=statistics");
+    await screen.findByRole("heading", { name: "用量与统计" });
+    expect(await screen.findByText("1.0 MB")).toBeVisible();
+    expect(
+      requests.some((request) =>
+        request.path.endsWith("/settings/statistics?kb_id=kb-1"),
+      ),
+    ).toBe(true);
+    await user.click(screen.getByRole("combobox", { name: "统计范围" }));
+    await user.click(screen.getByRole("option", { name: "全部知识库" }));
+    await waitFor(() =>
+      expect(
+        requests.some((request) =>
+          request.path.endsWith("/settings/statistics"),
+        ),
+      ).toBe(true),
+    );
+    const count = requests.filter((request) =>
+      request.path.endsWith("/settings/statistics"),
+    ).length;
+    await user.click(screen.getByRole("button", { name: "刷新统计" }));
+    await waitFor(() =>
+      expect(
+        requests.filter((request) =>
+          request.path.endsWith("/settings/statistics"),
+        ).length,
+      ).toBe(count + 1),
+    );
+    expect(requests.filter((request) => request.method === "PUT")).toHaveLength(
+      0,
+    );
   });
 });

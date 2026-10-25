@@ -16,6 +16,7 @@ import { Suggestions } from "./Suggestions";
 import { PlanEditor } from "./PlanEditor";
 import { CreatePlan } from "./CreatePlan";
 import { Review } from "./Review";
+import { folderPath, operationDestination } from "./api";
 
 const clients: QueryClient[] = [];
 function mount(view: ReactElement) {
@@ -30,6 +31,34 @@ function mount(view: ReactElement) {
   );
 }
 const kb = { id: "kb-1", name: "研究库", version: 1, description: "" };
+
+it("知识库根目录用null表示，实际同名文件夹仍保留为子目录的父路径", () => {
+  expect(folderPath(null, [])).toBe("知识库根目录");
+  const create: Operation = {
+    operation_id: "create",
+    type: "create_folder",
+    target_ids: [],
+    params: { name: "研究" },
+    description: "新建研究",
+    dependencies: [],
+    enabled: true,
+  };
+  expect(operationDestination(create, [], [create])).toBe("研究");
+  const namedRoot = {
+    id: "real-folder",
+    kb_id: kb.id,
+    name: "知识库根目录",
+    parent_id: null,
+    version: 1,
+  };
+  const nested = {
+    ...create,
+    params: { ...create.params, parent_id: namedRoot.id },
+  };
+  expect(operationDestination(nested, [namedRoot], [nested])).toBe(
+    "知识库根目录 / 研究",
+  );
+});
 const first: ReviewSuggestion = {
   id: "s-1",
   suggestion_id: "s-1",
@@ -43,7 +72,7 @@ const first: ReviewSuggestion = {
   conflict: false,
   can_edit: true,
   document_available: true,
-  current_folder_path: "未分类",
+  current_folder_path: "知识库根目录",
   target_folder_path: "研究 / 方法",
   existing_tag_names: ["研究"],
   payload: {
@@ -159,7 +188,7 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
-it("分类建议先预览移动位置，批量应用按旧版本提交并逐项显示成功与冲突", async () => {
+it("入库只应用标签并保留位置，批量按旧版本提交并逐项显示成功与冲突", async () => {
   const requests: { path: string; body: Record<string, unknown> }[] = [];
   vi.stubGlobal(
     "fetch",
@@ -192,7 +221,8 @@ it("分类建议先预览移动位置，批量应用按旧版本提交并逐项�
   await user.click(screen.getByRole("checkbox", { name: "选择本页建议" }));
   await user.click(screen.getByRole("button", { name: "应用所选" }));
   const dialog = screen.getByRole("dialog", { name: "应用 2 条分类建议" });
-  expect(within(dialog).getAllByText(/研究 \/ 方法/)).toHaveLength(2);
+  expect(within(dialog).getByText(/保留文档当前位置/)).toBeVisible();
+  expect(within(dialog).queryByText(/研究 \/ 方法/)).not.toBeInTheDocument();
   expect(requests).toHaveLength(0);
   await user.click(within(dialog).getByRole("button", { name: "确认应用" }));
   const results = await screen.findByRole("region", { name: "逐项处理结果" });
@@ -535,9 +565,111 @@ it("自动整理只创建后台待审任务，不自动批准或修改文档", a
   expect(requests).toEqual([
     {
       path: "/api/review/plans",
-      body: { kb_id: kb.id, document_ids: ["doc-1"] },
+      body: {
+        kb_id: kb.id,
+        document_ids: ["doc-1"],
+        mode: "both",
+        cleanup_empty_folders: true,
+      },
     },
   ]);
+});
+
+it.each([
+  ["只整理标签", "tags", false],
+  ["只整理文件夹", "folders", true],
+  ["标签和文件夹", "both", true],
+])(
+  "选择%s发送受限模式，标签模式不提供目录清理",
+  async (label, mode, cleanup) => {
+    const writes: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_: string, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          writes.push(JSON.parse(String(init.body)));
+          return response({ id: "queued", kb_id: kb.id, status: "queued" });
+        }
+        return response({
+          items: [{ id: "doc-1", display_name: "已选资料.txt" }],
+          total: 1,
+        });
+      }),
+    );
+    mount(
+      <CreatePlan
+        knowledgeBases={[kb]}
+        initialKbId={kb.id}
+        onClose={vi.fn()}
+        onCreated={vi.fn()}
+      />,
+    );
+    await screen.findByText("整理范围 · 已选 1 / 1 份文档");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("combobox", { name: "整理内容" }));
+    await user.click(screen.getByRole("option", { name: label }));
+    const cleanupOption = screen.queryByRole("checkbox", {
+      name: "清理整理后空文件夹",
+    });
+    if (cleanup) expect(cleanupOption).toBeChecked();
+    else expect(cleanupOption).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "生成待审方案" }));
+    await waitFor(() =>
+      expect(writes).toEqual([
+        {
+          kb_id: kb.id,
+          document_ids: ["doc-1"],
+          mode,
+          cleanup_empty_folders: cleanup,
+        },
+      ]),
+    );
+  },
+);
+
+it("旧入库建议只编辑标签，保存时清除旧文件夹目标", async () => {
+  const writes: Record<string, unknown>[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        writes.push(JSON.parse(String(init.body)));
+        return response({
+          items: [{ suggestion_id: first.id, status: "applied" }],
+          succeeded: 1,
+          failed: 0,
+        });
+      }
+      return response(
+        path.endsWith("/tags")
+          ? [{ id: "tag-1", name: "研究", aliases: [], version: 1 }]
+          : page([first]),
+      );
+    }),
+  );
+  mount(<Suggestions kbId={kb.id} onShowPlan={vi.fn()} />);
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", {
+      name: `调整建议：${first.document_name}`,
+    }),
+  );
+  const editor = await screen.findByRole("dialog", { name: "调整标签建议" });
+  await within(editor).findByLabelText("新增标签");
+  expect(within(editor).queryByRole("combobox")).not.toBeInTheDocument();
+  expect(within(editor).queryByText("新建文件夹路径")).not.toBeInTheDocument();
+  await user.type(within(editor).getByLabelText("新增标签"), "方法");
+  await user.click(within(editor).getByRole("button", { name: "保留调整" }));
+  await user.click(screen.getByRole("checkbox", { name: "选择本页建议" }));
+  await user.click(screen.getByRole("button", { name: "应用所选" }));
+  await user.click(screen.getByRole("button", { name: "确认应用" }));
+  await waitFor(() => expect(writes).toHaveLength(1));
+  const item = (writes[0].items as { payload: Record<string, unknown> }[])[0];
+  expect(item.payload).toMatchObject({
+    existing_folder_id: null,
+    proposed_folder_path: null,
+    new_tag_names: ["方法"],
+  });
 });
 
 it("知识库筛选进入统一建议请求，切换范围清理旧选择", async () => {

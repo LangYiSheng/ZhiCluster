@@ -74,7 +74,7 @@ export function FolderPicker({
         aria-label="目标文件夹"
         value={value}
         onValueChange={onValueChange}
-        options={[{ value: "", label: "根目录 / 未分类" }, ...choices.options]}
+        options={[{ value: "", label: "知识库根目录" }, ...choices.options]}
       />
       {choices.count > MAX_VISIBLE && (
         <p className="tiny muted">
@@ -84,7 +84,7 @@ export function FolderPicker({
       )}
       {!!search && !choices.count && (
         <p className="tiny muted" role="status">
-          没有匹配的目录，可调整名称或选择根目录。
+          没有匹配的目录，可调整名称或选择知识库根目录。
         </p>
       )}
     </div>

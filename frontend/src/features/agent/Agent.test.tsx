@@ -91,6 +91,33 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("Agent整批审批前端（明确使用受控测试响应）", () => {
+  it("移动到知识库根目录仍提交folder_id=null", async () => {
+    setup([
+      {
+        ...operations[0],
+        type: "move_documents",
+        description: "返回知识库根目录",
+        params: { folder_id: "old-folder" },
+      },
+    ]);
+    const user = userEvent.setup();
+    const destination = await screen.findByRole("combobox", {
+      name: "目标文件夹",
+    });
+    await user.click(destination);
+    await user.click(screen.getByRole("option", { name: "知识库根目录" }));
+    expect(destination).toHaveTextContent("知识库根目录");
+    await user.click(
+      screen.getByRole("button", { name: "批准整个计划并执行" }),
+    );
+    await waitFor(() =>
+      expect(requests.some((item) => item.method === "PATCH")).toBe(true),
+    );
+    const saved = requests.find((item) => item.method === "PATCH")!;
+    expect(
+      (saved.body.operations as Operation[])[0].params.folder_id,
+    ).toBeNull();
+  });
   it("先保存用户编辑后的参数，再批准保存版本", async () => {
     setup();
     const user = userEvent.setup();

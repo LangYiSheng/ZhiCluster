@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from sqlalchemy import select
 
 from app.ai.gateway import AIUnavailable, ProviderError
-from app.db.models import ClassificationSuggestion, Folder, Tag
+from app.db.models import ClassificationSuggestion, Tag
 from app.ingestion.enrichment import EnrichmentOutcome, classify_document, enrich_sections, summarize_sections
 
 
@@ -18,12 +18,11 @@ class CatalogSnapshot:
 
 
 def catalog_snapshot(db, kb_id: str) -> CatalogSnapshot:
-    folders = list(db.scalars(select(Folder).where(Folder.kb_id == kb_id, Folder.deleted_at.is_(None)).order_by(Folder.id).execution_options(populate_existing=True)))
     tags = list(db.scalars(select(Tag).where(Tag.kb_id == kb_id).order_by(Tag.id).execution_options(populate_existing=True)))
     return CatalogSnapshot(
-        [{"id": folder.id, "name": folder.name, "parent_id": folder.parent_id} for folder in folders],
+        [],
         [{"id": tag.id, "name": tag.name, "aliases": list(tag.aliases)} for tag in tags],
-        (tuple((folder.id, folder.version) for folder in folders), tuple((tag.id, tag.version) for tag in tags)),
+        (tuple((tag.id, tag.version) for tag in tags),),
     )
 
 
@@ -107,7 +106,7 @@ def process_enrichment(db, document, sections, gateway, settings, check_active, 
                 if current is None:
                     current = ClassificationSuggestion(document_id=document.id, kb_id=document.kb_id, document_version=base_version)
                     db.add(current)
-                current.payload = outcome.classification.model_dump()
+                current.payload = {**outcome.classification.model_dump(), "existing_folder_id": None, "proposed_folder_path": None}
                 current.document_version, current.model, current.status = base_version, settings.llm_model, "pending"
                 document.classification_status = "ready"
         if "classification" in outcome.errors:

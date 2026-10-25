@@ -58,7 +58,7 @@ it("按跨层路径搜索并排除自身子树，根目录始终可选", async (
     folder("y", "不应出现", "x"),
   ];
   const changed = vi.fn();
-  render(
+  const mounted = render(
     <FolderPicker
       folders={folders}
       excludedRoot="x"
@@ -75,14 +75,25 @@ it("按跨层路径搜索并排除自身子树，根目录始终可选", async (
   expect(screen.getAllByRole("option")).toHaveLength(2);
   await user.click(screen.getByRole("option", { name: "部门 / 项目 / 预算" }));
   expect(changed).toHaveBeenCalledWith("c");
+  mounted.rerender(
+    <FolderPicker
+      folders={folders}
+      excludedRoot="x"
+      value="c"
+      onValueChange={changed}
+    />,
+  );
   await user.clear(screen.getByRole("textbox", { name: "搜索目标文件夹" }));
   await user.type(
     screen.getByRole("textbox", { name: "搜索目标文件夹" }),
     "不应出现",
   );
   await user.click(screen.getByRole("combobox", { name: "目标文件夹" }));
-  expect(screen.getAllByRole("option")).toHaveLength(1);
-  expect(screen.getByRole("option", { name: "根目录 / 未分类" })).toBeVisible();
+  expect(screen.getAllByRole("option")).toHaveLength(2);
+  const root = screen.getByRole("option", { name: "知识库根目录" });
+  expect(root).toBeVisible();
+  await user.click(root);
+  expect(changed).toHaveBeenLastCalledWith("");
 });
 
 it("在目录搜索框按Enter不会隐式提交外层移动表单", async () => {

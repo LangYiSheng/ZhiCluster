@@ -81,5 +81,5 @@ export function useSessionDraft(key: string) {
       return { ...previous, [targetKey]: "" };
     });
   }
-  return [value, (next: string) => write(next), clear] as const;
+  return [value, write, clear] as const;
 }

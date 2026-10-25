@@ -184,7 +184,7 @@ it("旧知识库保存成功不会把用户从新选中的库切回", async () =
   const mounted = render(view(kb.id));
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "知识库甲菜单" }));
-  await user.click(screen.getByRole("menuitem", { name: "修改名称与描述" }));
+  await user.click(screen.getByRole("menuitem", { name: "编辑知识库" }));
   await user.click(screen.getByRole("button", { name: "保存" }));
   await user.click(screen.getByRole("button", { name: "取消" }));
   await user.click(screen.getByRole("button", { name: "知识库乙" }));

@@ -12,6 +12,9 @@ import { Checkbox } from "../../components/ui/checkbox";
 import { Radio } from "../../components/ui/radio";
 import { Select } from "../../components/ui/select";
 import { ModelPicker } from "./ModelPicker";
+import { AppearancePreview } from "./AppearancePreview";
+import { ChatModels } from "./ChatModels";
+import { SettingsTabs } from "./SettingsTabs";
 
 const fieldId = (group: string, key: string) => `setting-${group}-${key}`;
 
@@ -21,7 +24,7 @@ type FormProps = {
   change: (
     group: keyof RuntimeDraft,
     key: string,
-    value: string | number | boolean,
+    value: string | number | boolean | string[],
   ) => void;
 };
 
@@ -122,114 +125,139 @@ function NumberField({
 export function AppearanceForm({
   appearance,
   onChange,
+  activeTab,
+  onTabChange,
 }: {
   appearance: Appearance;
   onChange: (appearance: Appearance) => void;
+  activeTab: "display" | "reading";
+  onTabChange: (tab: "display" | "reading") => void;
 }) {
+  const tabsId = useId();
   return (
-    <div className="zc-settings-sections">
-      <SettingsSection title="显示与配色">
-        <Field id="appearance-theme" label="显示模式">
-          <Select
-            id="appearance-theme"
-            value={appearance.theme}
-            onValueChange={(value) =>
-              onChange({
-                ...appearance,
-                theme: value as Appearance["theme"],
-              })
-            }
-            options={[
-              { value: "light", label: "浅色" },
-              { value: "dark", label: "深色" },
-              { value: "system", label: "跟随系统" },
-            ]}
-          />
-        </Field>
-        <fieldset className="zc-choice-field">
-          <legend>配色</legend>
-          <div className="zc-palette-choices">
-            {PALETTES.map((item) => (
-              <label
-                className={`zc-palette-choice ${appearance.palette === item.id ? "is-selected" : ""}`}
-                key={item.id}
-              >
-                <Radio
-                  name="palette"
-                  value={item.id}
-                  checked={appearance.palette === item.id}
-                  onChange={() => onChange({ ...appearance, palette: item.id })}
-                />
-                <span
-                  className={`zc-palette-swatch ${item.id}`}
-                  aria-hidden="true"
-                >
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                <strong>{item.name}</strong>
-                <small>{item.id === "ink" ? "米白与暖黑" : "自然与清爽"}</small>
-              </label>
-            ))}
-          </div>
-        </fieldset>
-      </SettingsSection>
-      <SettingsSection title="文字与阅读">
-        <div className="zc-settings-grid">
-          <Field id="appearance-font" label="字体搭配">
-            <Select
-              id="appearance-font"
-              value={appearance.fontPairing}
-              onValueChange={(value) =>
-                onChange({
-                  ...appearance,
-                  fontPairing: value as Appearance["fontPairing"],
-                })
-              }
-              options={FONT_PAIRINGS.map((item) => ({
-                value: item.id,
-                label: item.name,
-              }))}
-            />
-          </Field>
-          <Field
-            id="appearance-scale"
-            label="阅读字号"
-            help="应用于文档与对话正文。"
-          >
-            <div className="zc-scale-control">
-              <input
-                id="appearance-scale"
-                type="range"
-                min="0.9"
-                max="1.2"
-                step="0.05"
-                value={appearance.readingScale}
-                onChange={(event) =>
-                  onChange({
-                    ...appearance,
-                    readingScale: Number(event.target.value),
-                  })
-                }
-              />
-              <output htmlFor="appearance-scale">
-                {Math.round(appearance.readingScale * 100)}%
-              </output>
-            </div>
-          </Field>
-        </div>
+    <div className="zc-appearance-settings">
+      <SettingsTabs
+        label="外观设置"
+        value={activeTab}
+        onChange={onTabChange}
+        idPrefix={tabsId}
+        panelId={() => `${tabsId}-panel`}
+        options={[
+          { value: "display", label: "显示与配色" },
+          { value: "reading", label: "文字与阅读" },
+        ]}
+      />
+      <div className="zc-appearance-layout">
         <div
-          className={`zc-appearance-preview zc-preview-${appearance.palette} zc-preview-${appearance.theme}`}
-          data-font={appearance.fontPairing}
-          style={{ fontSize: `${16 * appearance.readingScale}px` }}
-          aria-label="外观效果预览"
+          className="zc-settings-sections"
+          role="tabpanel"
+          id={`${tabsId}-panel`}
+          aria-labelledby={`${tabsId}-${activeTab}`}
         >
-          <span>阅读预览</span>
-          <h3>我的知识笔记</h3>
-          <p>在这里查看文档与对话正文的字体、配色和字号效果。</p>
+          {activeTab === "display" ? (
+            <SettingsSection title="显示与配色">
+              <Field id="appearance-theme" label="显示模式">
+                <Select
+                  id="appearance-theme"
+                  value={appearance.theme}
+                  onValueChange={(value) =>
+                    onChange({
+                      ...appearance,
+                      theme: value as Appearance["theme"],
+                    })
+                  }
+                  options={[
+                    { value: "light", label: "浅色" },
+                    { value: "dark", label: "深色" },
+                    { value: "system", label: "跟随系统" },
+                  ]}
+                />
+              </Field>
+              <fieldset className="zc-choice-field">
+                <legend>配色</legend>
+                <div className="zc-palette-choices">
+                  {PALETTES.map((item) => (
+                    <label
+                      className={`zc-palette-choice ${appearance.palette === item.id ? "is-selected" : ""}`}
+                      key={item.id}
+                    >
+                      <Radio
+                        name="palette"
+                        value={item.id}
+                        checked={appearance.palette === item.id}
+                        onChange={() =>
+                          onChange({ ...appearance, palette: item.id })
+                        }
+                      />
+                      <span
+                        className="zc-palette-swatch"
+                        aria-hidden="true"
+                        style={{ background: item.background }}
+                      >
+                        <i style={{ background: item.accent }} />
+                        <i style={{ background: item.accent, opacity: 0.5 }} />
+                        <i style={{ background: item.accent, opacity: 0.2 }} />
+                      </span>
+                      <strong>{item.name}</strong>
+                      <small>{item.note}</small>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            </SettingsSection>
+          ) : (
+            <SettingsSection title="文字与阅读">
+              <div className="zc-settings-grid">
+                <Field id="appearance-font" label="字体搭配">
+                  <Select
+                    id="appearance-font"
+                    value={appearance.fontPairing}
+                    onValueChange={(value) =>
+                      onChange({
+                        ...appearance,
+                        fontPairing: value as Appearance["fontPairing"],
+                      })
+                    }
+                    options={FONT_PAIRINGS.map((item) => ({
+                      value: item.id,
+                      label: item.name,
+                    }))}
+                  />
+                </Field>
+                <Field
+                  id="appearance-scale"
+                  label="阅读字号"
+                  help="应用于文档与对话正文。"
+                >
+                  <div className="zc-scale-control">
+                    <input
+                      id="appearance-scale"
+                      type="range"
+                      min="0.9"
+                      max="1.2"
+                      step="0.05"
+                      value={appearance.readingScale}
+                      onChange={(event) =>
+                        onChange({
+                          ...appearance,
+                          readingScale: Number(event.target.value),
+                        })
+                      }
+                    />
+                    <output htmlFor="appearance-scale">
+                      {Math.round(appearance.readingScale * 100)}%
+                    </output>
+                  </div>
+                </Field>
+              </div>
+            </SettingsSection>
+          )}
         </div>
-      </SettingsSection>
+        <AppearancePreview
+          appearance={appearance}
+          view={activeTab === "display" ? "page" : "reading"}
+        />
+      </div>
     </div>
   );
 }
@@ -243,16 +271,31 @@ export function ConnectionForm({
   probeButton,
   manualModels,
   onManualModelChange,
+  activeScope,
+  onScopeChange,
 }: FormProps & {
   loaded: RuntimeConfig;
   embeddingChanged: boolean;
   probeButton: (scope: ProbeScope, label: string) => ReactNode;
   manualModels: Record<ModelScope, boolean>;
   onManualModelChange: (scope: ModelScope, manual: boolean) => void;
+  activeScope: ModelScope;
+  onScopeChange: (scope: ModelScope) => void;
 }) {
   const props = { draft, errors, change };
   return (
     <div className="zc-settings-sections">
+      <SettingsTabs
+        label="模型连接类别"
+        value={activeScope}
+        onChange={onScopeChange}
+        idPrefix="model-tab"
+        panelId={(scope) => `model-panel-${scope}`}
+        options={[
+          { value: "llm", label: "聊天模型" },
+          { value: "embedding", label: "嵌入模型" },
+        ]}
+      />
       <p className="zc-field-help">
         使用兼容 OpenAI 的接口，系统会自动追加 /chat/completions 或
         /embeddings。
@@ -261,145 +304,180 @@ export function ConnectionForm({
         const connection = draft[group];
         const configured = loaded[group].api_key_configured;
         return (
-          <SettingsSection
+          <div
             key={group}
-            title={group === "llm" ? "聊天模型" : "向量模型"}
-            description={
-              group === "llm"
-                ? "用于知识问答与内容摘要。"
-                : "用于文档向量化与语义检索。"
-            }
+            role="tabpanel"
+            id={`model-panel-${group}`}
+            aria-labelledby={`model-tab-${group}`}
+            hidden={activeScope !== group}
           >
-            <div className="zc-settings-grid">
-              <Field
-                id={fieldId(group, "base_url")}
-                label="服务地址"
-                help="填写接口前缀，例如 https://api.example.com/v1。"
-                error={errors[fieldId(group, "base_url")]}
-              >
-                <input
-                  id={fieldId(group, "base_url")}
-                  type="url"
-                  maxLength={2048}
-                  value={connection.base_url}
-                  autoComplete="url"
-                  placeholder="https://api.example.com/v1"
-                  spellCheck={false}
-                  aria-invalid={!!errors[fieldId(group, "base_url")]}
-                  aria-describedby={`${fieldId(group, "base_url")}-help${errors[fieldId(group, "base_url")] ? ` ${fieldId(group, "base_url")}-error` : ""}`}
-                  onChange={(event) =>
-                    change(group, "base_url", event.target.value)
-                  }
-                />
-              </Field>
-              <Field
-                id={fieldId(group, "api_key")}
-                label="API 密钥"
-                help={
-                  configured
-                    ? "已配置。留空保留原密钥，填写新值后替换。"
-                    : "无认证的本地服务可填写占位值，如 local。"
-                }
-              >
-                <input
-                  id={fieldId(group, "api_key")}
-                  type="password"
-                  maxLength={4096}
-                  value={connection.api_key || ""}
-                  autoComplete="new-password"
-                  spellCheck={false}
-                  placeholder={configured ? "保留已保存的密钥" : "填写服务密钥"}
-                  disabled={connection.clear_api_key}
-                  aria-describedby={`${fieldId(group, "api_key")}-help`}
-                  onChange={(event) =>
-                    change(group, "api_key", event.target.value)
-                  }
-                />
-                {configured && (
-                  <label className="zc-checkbox">
-                    <Checkbox
-                      checked={!!connection.clear_api_key}
-                      onChange={(event) => {
-                        change(group, "clear_api_key", event.target.checked);
-                        if (event.target.checked) change(group, "api_key", "");
-                      }}
-                    />
-                    保存时清除现有密钥
-                  </label>
-                )}
-              </Field>
-              <ModelPicker
-                scope={group}
-                connection={connection}
-                saved={loaded[group]}
-                revision={loaded.revision}
-                manual={manualModels[group]}
-                onManualChange={(value) => onManualModelChange(group, value)}
-                onChange={(value) => change(group, "model", value)}
-              />
-              {group === "embedding" && (
-                <NumberField
-                  {...props}
-                  group="embedding"
-                  field="dimension"
-                  label="向量维度"
-                  help="与服务输出一致，范围 1–16000。更改后需重建索引。"
-                />
-              )}
-            </div>
-            <details className="zc-settings-advanced">
-              <summary>高级连接选项</summary>
+            <SettingsSection
+              title={group === "llm" ? "聊天模型" : "向量模型"}
+              description={
+                group === "llm"
+                  ? "用于知识问答与内容摘要。"
+                  : "配置共用连接与默认嵌入模型；每个知识库可在「编辑知识库」中绑定一个嵌入模型。"
+              }
+            >
               <div className="zc-settings-grid">
-                <NumberField
-                  {...props}
-                  group={group}
-                  field="timeout_seconds"
-                  label="请求超时（秒）"
-                  help="单次请求的最长等待时间，范围 1–600 秒。"
+                <Field
+                  id={fieldId(group, "base_url")}
+                  label="服务地址"
+                  help="填写接口前缀，例如 https://api.example.com/v1。"
+                  error={errors[fieldId(group, "base_url")]}
+                >
+                  <input
+                    id={fieldId(group, "base_url")}
+                    type="url"
+                    maxLength={2048}
+                    value={connection.base_url}
+                    autoComplete="url"
+                    placeholder="https://api.example.com/v1"
+                    spellCheck={false}
+                    aria-invalid={!!errors[fieldId(group, "base_url")]}
+                    aria-describedby={`${fieldId(group, "base_url")}-help${errors[fieldId(group, "base_url")] ? ` ${fieldId(group, "base_url")}-error` : ""}`}
+                    onChange={(event) =>
+                      change(group, "base_url", event.target.value)
+                    }
+                  />
+                </Field>
+                <Field
+                  id={fieldId(group, "api_key")}
+                  label="API 密钥"
+                  help={
+                    configured
+                      ? "已配置。留空保留原密钥，填写新值后替换。"
+                      : "无认证的本地服务可填写占位值，如 local。"
+                  }
+                >
+                  <input
+                    id={fieldId(group, "api_key")}
+                    type="password"
+                    maxLength={4096}
+                    value={connection.api_key || ""}
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    placeholder={
+                      configured ? "保留已保存的密钥" : "填写服务密钥"
+                    }
+                    disabled={connection.clear_api_key}
+                    aria-describedby={`${fieldId(group, "api_key")}-help`}
+                    onChange={(event) =>
+                      change(group, "api_key", event.target.value)
+                    }
+                  />
+                  {configured && (
+                    <label className="zc-checkbox">
+                      <Checkbox
+                        checked={!!connection.clear_api_key}
+                        onChange={(event) => {
+                          change(group, "clear_api_key", event.target.checked);
+                          if (event.target.checked)
+                            change(group, "api_key", "");
+                        }}
+                      />
+                      保存时清除现有密钥
+                    </label>
+                  )}
+                </Field>
+                <ModelPicker
+                  scope={group}
+                  connection={connection}
+                  saved={loaded[group]}
+                  revision={loaded.revision}
+                  manual={manualModels[group]}
+                  onManualChange={(value) => onManualModelChange(group, value)}
+                  onChange={(value) => change(group, "model", value)}
+                  enabledModels={
+                    group === "llm"
+                      ? [
+                          ...new Set(
+                            [
+                              draft.llm.model,
+                              ...(draft.llm.models || []),
+                            ].filter(Boolean),
+                          ),
+                        ]
+                      : undefined
+                  }
+                  onEnabledModelsChange={
+                    group === "llm"
+                      ? (values) => change("llm", "models", values)
+                      : undefined
+                  }
                 />
-                <NumberField
-                  {...props}
-                  group={group}
-                  field="max_retries"
-                  label="失败重试次数"
-                  help="网络错误后的重试上限，范围 0–4 次。"
-                />
+                {group === "embedding" && (
+                  <NumberField
+                    {...props}
+                    group="embedding"
+                    field="dimension"
+                    label="向量维度"
+                    help="与服务输出一致，范围 1–16000。更改后需重建索引。"
+                  />
+                )}
               </div>
               {group === "llm" && (
-                <Field
-                  id="setting-llm-supports_tools"
-                  label="工具调用"
-                  help="服务是否支持兼容的工具调用，可单独测试。"
-                >
-                  <label className="zc-checkbox">
-                    <Checkbox
-                      id="setting-llm-supports_tools"
-                      checked={draft.llm.supports_tools}
-                      onChange={(event) =>
-                        change("llm", "supports_tools", event.target.checked)
-                      }
-                    />
-                    服务支持工具调用
-                  </label>
-                </Field>
+                <ChatModels
+                  models={draft.llm.models || []}
+                  defaultModel={draft.llm.model}
+                  onChange={(values) => change("llm", "models", values)}
+                  onDefaultChange={(value) => change("llm", "model", value)}
+                />
               )}
-            </details>
-            {embeddingChanged && group === "embedding" && (
-              <p className="zc-settings-warning">
-                保存后需重建已有索引，新文档会使用新配置。
+              <details className="zc-settings-advanced">
+                <summary>高级连接选项</summary>
+                <div className="zc-settings-grid">
+                  <NumberField
+                    {...props}
+                    group={group}
+                    field="timeout_seconds"
+                    label="请求超时（秒）"
+                    help="单次请求的最长等待时间，范围 1–600 秒。"
+                  />
+                  <NumberField
+                    {...props}
+                    group={group}
+                    field="max_retries"
+                    label="失败重试次数"
+                    help="网络错误后的重试上限，范围 0–4 次。"
+                  />
+                </div>
+                {group === "llm" && (
+                  <Field
+                    id="setting-llm-supports_tools"
+                    label="工具调用"
+                    help="服务是否支持兼容的工具调用，可单独测试。"
+                  >
+                    <label className="zc-checkbox">
+                      <Checkbox
+                        id="setting-llm-supports_tools"
+                        checked={draft.llm.supports_tools}
+                        onChange={(event) =>
+                          change("llm", "supports_tools", event.target.checked)
+                        }
+                      />
+                      服务支持工具调用
+                    </label>
+                  </Field>
+                )}
+              </details>
+              {embeddingChanged && group === "embedding" && (
+                <p className="zc-settings-warning">
+                  修改服务地址后，所有知识库需重建索引；仅修改默认模型或维度时，使用默认配置的知识库需重建。
+                </p>
+              )}
+              <div className="zc-probe-actions">
+                {probeButton(
+                  group,
+                  group === "llm" ? "测试聊天连接" : "测试向量连接",
+                )}
+                {group === "llm" && probeButton("tool_calling", "测试工具调用")}
+              </div>
+              <p className="zc-settings-note">
+                测试使用当前草稿，可能产生少量费用；不会保存设置。
               </p>
-            )}
-            <div className="zc-probe-actions">
-              {probeButton(
-                group,
-                group === "llm" ? "测试聊天连接" : "测试向量连接",
-              )}
-              {group === "llm" && probeButton("tool_calling", "测试工具调用")}
-            </div>
-            <p className="zc-settings-note">
-              测试使用当前草稿，可能产生少量费用；不会保存设置。
-            </p>
-          </SettingsSection>
+            </SettingsSection>
+          </div>
         );
       })}
     </div>

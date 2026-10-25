@@ -121,7 +121,7 @@ it("拖放上传及重复副本始终保存到落点目录", async () => {
   expect(targets).toEqual([folder.id, folder.id]);
 });
 
-it.each(["下一页", "未分类", "文件类型筛选", "处理状态筛选"])(
+it.each(["下一页", "知识库根目录", "文件类型筛选", "处理状态筛选"])(
   "切换%s清除原视图的勾选",
   async (control) => {
     vi.stubGlobal(
@@ -141,7 +141,7 @@ it.each(["下一页", "未分类", "文件类型筛选", "处理状态筛选"])(
       <QueryClientProvider client={client()}>
         <DocumentsPane
           kb={kb}
-          folders={[]}
+          folders={control === "知识库根目录" ? [folder] : []}
           tags={[]}
           trash={false}
           onOpen={vi.fn()}
@@ -150,6 +150,18 @@ it.each(["下一页", "未分类", "文件类型筛选", "处理状态筛选"])(
       </QueryClientProvider>,
     );
     await screen.findByText(doc.display_name);
+    if (control === "知识库根目录") {
+      await userEvent.click(screen.getByRole("button", { name: folder.name }));
+      await screen.findByText(doc.display_name);
+      expect(screen.getByRole("button", { name: folder.name })).toHaveAttribute(
+        "aria-current",
+        "location",
+      );
+    }
+    if (control.endsWith("筛选"))
+      await userEvent.click(
+        screen.getByRole("button", { name: "搜索知识库资料" }),
+      );
     await userEvent.click(
       screen.getByRole("checkbox", { name: `选择 ${doc.display_name}` }),
     );
@@ -162,6 +174,14 @@ it.each(["下一页", "未分类", "文件类型筛选", "处理状态筛选"])(
         }),
       );
     } else await userEvent.click(screen.getByRole("button", { name: control }));
+    if (control === "知识库根目录") {
+      expect(
+        screen.getByRole("button", { name: "知识库根目录" }),
+      ).toHaveAttribute("aria-current", "location");
+      expect(
+        screen.getByRole("button", { name: folder.name }),
+      ).not.toHaveAttribute("aria-current");
+    }
     expect(screen.queryByText("已选 1 项")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "批量操作" }),
@@ -325,7 +345,7 @@ it("其他知识库的目录拖到根目录时不修改源目录", async () => {
     </QueryClientProvider>,
   );
   await screen.findByText(doc.display_name);
-  fireEvent.drop(document.querySelector(".folder-root-drop")!, {
+  fireEvent.drop(screen.getByRole("region", { name: `${kb.name}文档管理` }), {
     dataTransfer: {
       files: [],
       getData: (type: string) =>
@@ -379,13 +399,14 @@ it("轮询后消失的文档不再进入勾选与批量操作", async () => {
   expect(screen.queryByText("已选 1 项")).not.toBeInTheDocument();
 });
 
-it("当前文件夹被删除后自动回到全部文档", async () => {
+it("当前文件夹被删除后自动回到知识库根目录", async () => {
   let removed = false;
   const fetch = vi.fn(async (path: string) => {
     if (path.includes("/documents")) {
       if (
         removed &&
-        new URL(path, "http://localhost").searchParams.get("folder_id")
+        new URL(path, "http://localhost").searchParams.get("folder_id") ===
+          folder.id
       )
         return new Response(
           JSON.stringify({
@@ -427,12 +448,12 @@ it("当前文件夹被删除后自动回到全部文档", async () => {
       fetch.mock.calls
         .filter(([path]) => path.includes("/documents"))
         .at(-1)?.[0],
-    ).not.toContain("folder_id="),
+    ).toContain("folder_id=root"),
   );
   await waitFor(() =>
     expect(
-      document.querySelector(".document-navigation .selected"),
-    ).toHaveTextContent("全部文档"),
+      screen.getByRole("button", { name: "知识库根目录" }),
+    ).toHaveTextContent("知识库根目录"),
   );
 });
 
@@ -473,10 +494,10 @@ it("上传请求未完成时不并发覆盖确认，隐藏再打开也不重开�
     files: [new File(["原文"], "慢上传.txt", { type: "text/plain" })],
     getData: () => "",
   };
-  fireEvent.drop(document.querySelector(".folder-root-drop")!, {
+  fireEvent.drop(screen.getByRole("region", { name: `${kb.name}文档管理` }), {
     dataTransfer: transfer,
   });
-  fireEvent.drop(document.querySelector(".folder-root-drop")!, {
+  fireEvent.drop(screen.getByRole("region", { name: `${kb.name}文档管理` }), {
     dataTransfer: transfer,
   });
   await waitFor(() =>
@@ -512,11 +533,14 @@ it("换页缓存过期时等待新响应，旧空页不会把用户踢回首页"
   });
   vi.stubGlobal("fetch", fetch);
   const qc = client();
-  qc.setQueryData(["documents", kb.id, "", "", false, "date", "", "", 2], {
-    items: [],
-    total: 0,
-    page_size: 50,
-  });
+  qc.setQueryData(
+    ["documents", kb.id, "root", "", false, "updated", "", "", 2, false, ""],
+    {
+      items: [],
+      total: 0,
+      page_size: 50,
+    },
+  );
   render(
     <QueryClientProvider client={qc}>
       <DocumentsPane
@@ -573,6 +597,7 @@ it("文档显示标签，标签筛选进入查询并在知识库切换时清除"
   const user = userEvent.setup();
   await screen.findByText(doc.display_name);
   expect(document.querySelector(".document-tags")).toHaveTextContent(tag.name);
+  await user.click(screen.getByRole("button", { name: "搜索知识库资料" }));
   await user.click(screen.getByRole("combobox", { name: "标签筛选" }));
   await user.click(screen.getByRole("option", { name: tag.name }));
   await waitFor(() =>
@@ -582,6 +607,7 @@ it("文档显示标签，标签筛选进入查询并在知识库切换时清除"
     ),
   );
   mounted.rerender(view("kb-2"));
+  await user.click(screen.getByRole("button", { name: "搜索知识库资料" }));
   expect(screen.getByLabelText("标签筛选")).toHaveTextContent("全部标签");
   await waitFor(() => {
     const path = fetch.mock.calls
@@ -624,6 +650,7 @@ it("关闭资料区清除标签和文档弹层，重新打开保留筛选且不�
   const mounted = render(view(true));
   const user = userEvent.setup();
   await screen.findByText(doc.display_name);
+  await user.click(screen.getByRole("button", { name: "搜索知识库资料" }));
   await user.click(screen.getByRole("combobox", { name: "标签筛选" }));
   await user.click(screen.getByRole("option", { name: tag.name }));
   await user.click(screen.getByRole("button", { name: "管理标签" }));
@@ -640,7 +667,8 @@ it("关闭资料区清除标签和文档弹层，重新打开保留筛选且不�
   expect(screen.getByLabelText("名称")).toHaveValue("");
   mounted.rerender(view(false));
   mounted.rerender(view(true));
-  await user.click(screen.getByRole("button", { name: "新建文件夹" }));
+  await user.click(screen.getByRole("button", { name: "添加文件" }));
+  await user.click(screen.getByRole("menuitem", { name: "新建文件夹" }));
   expect(screen.getByRole("dialog")).toHaveAccessibleName("新建文件夹");
   mounted.rerender(view(false));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

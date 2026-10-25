@@ -73,7 +73,6 @@ def list_suggestions(db, actor, *, kb_id=None, document_id=None, status="pending
                            .offset((page - 1) * page_size).limit(page_size)))
     folders = list(db.scalars(select(Folder).where(Folder.kb_id.in_(allowed), Folder.deleted_at.is_(None))))
     paths = folder_paths(folders)
-    folder_kbs = {folder.id: folder.kb_id for folder in folders}
     tags = {tag.id: tag for tag in db.scalars(select(Tag).where(Tag.kb_id.in_(allowed)))}
     editable = set(db.scalars(select(KnowledgeBaseMember.kb_id).where(
         KnowledgeBaseMember.user_id == actor.id, KnowledgeBaseMember.kb_id.in_(allowed),
@@ -86,17 +85,13 @@ def list_suggestions(db, actor, *, kb_id=None, document_id=None, status="pending
     ).where(IngestionJob.kind == "ingest", IngestionJob.payload["review_suggestion_id"].as_string().in_([row[0].id for row in rows])).subquery()
     refresh_jobs = {row.document_id: row for row in db.execute(select(refresh_rows).where(refresh_rows.c.position == 1))}
     for item, doc, kb in rows:
-        payload = item.payload
-        destination = payload.get("existing_folder_id")
-        target = paths.get(destination, "已删除或不可访问的文件夹") if destination else payload.get("proposed_folder_path") or paths[None]
-        if destination and folder_kbs.get(destination) != kb.id:
-            target = "已删除或不可访问的文件夹"
+        payload = {**item.payload, "existing_folder_id": None, "proposed_folder_path": None}
         items.append({
-            **library.snapshot(item), "suggestion_id": item.id, "document_name": doc.display_name,
+            **library.snapshot(item), "payload": payload, "suggestion_id": item.id, "document_name": doc.display_name,
             "kb_name": kb.name, "current_version": doc.version,
             "conflict": item.document_version != doc.version, "document_available": True,
             "can_edit": kb.id in editable, "current_folder_path": paths.get(doc.folder_id, "已删除或不可访问的文件夹"),
-            "target_folder_path": target,
+            "target_folder_path": paths.get(doc.folder_id, "已删除或不可访问的文件夹"),
             "existing_tag_names": [tags[tag_id].name for tag_id in payload.get("existing_tag_ids", [])
                                    if tag_id in tags and tags[tag_id].kb_id == kb.id],
             "refresh_job_id": refresh_jobs[doc.id].id if doc.id in refresh_jobs else None,
@@ -109,33 +104,8 @@ def list_suggestions(db, actor, *, kb_id=None, document_id=None, status="pending
 
 def classification_draft(db, doc, payload):
     operations = []
-    folder_id = payload.get("existing_folder_id")
-    library.validate_folder(db, doc.kb_id, folder_id)
-    if not folder_id and payload.get("proposed_folder_path"):
-        parent, dependency = None, None
-        for part in payload["proposed_folder_path"].split("/"):
-            name = part.strip()
-            if not name:
-                continue
-            name = library.valid_name(name)
-            existing = None if dependency else next((folder for folder in db.scalars(select(Folder).where(
-                Folder.kb_id == doc.kb_id, Folder.parent_id == parent, Folder.deleted_at.is_(None),
-            )) if library.normalized_name(folder.name) == library.normalized_name(name)), None)
-            if existing:
-                parent = existing.id
-            else:
-                operation_id = f"folder-{len(operations) + 1}"
-                operations.append({"type": "create_folder", "operation_id": operation_id,
-                    "description": f"新建文件夹“{name}”", "params": {"name": name, "parent_id": parent},
-                    "dependencies": [dependency] if dependency else []})
-                parent, dependency = f"ref:{operation_id}", operation_id
-        folder_id = parent
-    else:
-        dependency = None
-    if folder_id != doc.folder_id:
-        operations.append({"type": "move_documents", "operation_id": "move", "target_ids": [doc.id],
-         "description": f"应用“{doc.display_name}”的文件夹建议", "params": {"folder_id": folder_id},
-         "dependencies": [dependency] if dependency else []})
+    # All ingestion suggestions, including legacy folder-bearing payloads,
+    # apply tags only. Moving belongs to a separately reviewed organization plan.
     chosen = set(payload.get("existing_tag_ids", []))
     if len(list(db.scalars(select(Tag.id).where(Tag.id.in_(chosen), Tag.kb_id == doc.kb_id)))) != len(chosen):
         raise AppError("invalid_tags", "建议引用的标签不存在或属于其他知识库", 409)
@@ -171,6 +141,7 @@ def decide_suggestion(db, actor, suggestion_id, decision):
     library.version_check(doc, item.document_version)
     try:
         payload = ClassificationResult.model_validate(decision.payload if decision.payload is not None else item.payload).model_dump()
+        payload.update(existing_folder_id=None, proposed_folder_path=None)
         draft = classification_draft(db, doc, payload)
     except (ValidationError, ValueError) as error:
         raise AppError("invalid_suggestion", "分类建议格式无效，请修改建议后重试", 422) from error

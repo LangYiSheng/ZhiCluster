@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_api_key: SecretStr = SecretStr("")
     llm_model: str = ""
+    llm_models: list[str] = []
     llm_timeout_seconds: float = 120
     llm_max_retries: int = 2
     llm_supports_tools: bool = False

@@ -7,7 +7,7 @@ export type ConnectionConfig = {
 };
 export type RuntimeConfig = {
   revision: number;
-  llm: ConnectionConfig & { supports_tools: boolean };
+  llm: ConnectionConfig & { supports_tools: boolean; models?: string[] };
   embedding: ConnectionConfig & { dimension: number; batch_size: number };
   processing: {
     chunk_size_tokens: number;
@@ -23,7 +23,7 @@ export type ConnectionDraft = Omit<ConnectionConfig, "api_key_configured"> & {
   clear_api_key?: boolean;
 };
 export type RuntimeDraft = {
-  llm: ConnectionDraft & { supports_tools: boolean };
+  llm: ConnectionDraft & { supports_tools: boolean; models?: string[] };
   embedding: ConnectionDraft & { dimension: number; batch_size: number };
   processing: RuntimeConfig["processing"];
 };
@@ -55,7 +55,14 @@ export function configDraft(config: RuntimeConfig): RuntimeDraft {
   const { api_key_configured: embeddingKey, ...embedding } = config.embedding;
   void llmKey;
   void embeddingKey;
-  return { llm, embedding, processing: { ...config.processing } };
+  return {
+    llm: {
+      ...llm,
+      models: [...new Set([llm.model, ...(llm.models || [])].filter(Boolean))],
+    },
+    embedding,
+    processing: { ...config.processing },
+  };
 }
 export const rangeRules = {
   timeout_seconds: [1, 600],

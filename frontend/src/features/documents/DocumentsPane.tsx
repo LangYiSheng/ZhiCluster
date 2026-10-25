@@ -1,17 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Archive,
   ArrowDownAZ,
+  ArrowLeft,
+  ArrowRight,
+  ChevronRight,
+  FolderPlus,
+  Search,
+  Upload,
+  X,
   Check,
   FileText,
   FolderOpen,
   ListFilter,
   MoreHorizontal,
   Plus,
-  RefreshCw,
   Trash2,
   UploadCloud,
 } from "lucide-react";
@@ -37,6 +42,13 @@ import type { FolderAction } from "./FolderTree";
 import { TagManager } from "./TagManager";
 import { folderPathLabel } from "./folderNavigation";
 import { FolderPicker } from "./FolderPicker";
+import {
+  KnowledgeBaseEditor,
+  KnowledgeBaseIcon,
+} from "../kb/KnowledgeBaseEditor";
+import { collectDroppedFiles, uploadDocuments } from "./uploadDocuments";
+import { useDocumentFormats } from "../../lib/documentFormats";
+import type { UploadItem } from "./uploadDocuments";
 type FormState = {
   kind: "folder" | "rename" | "move" | "tags" | "delete";
   name: string;
@@ -48,9 +60,8 @@ type FormState = {
   tag_mode?: string;
   action?: FolderAction;
 };
-type UploadItem = { document?: Document; status: string; message?: string };
 type UploadRequest = {
-  files: File[];
+  files: File[] | Promise<File[]>;
   policy?: string;
   targetFolderId?: string | null;
 };
@@ -63,7 +74,6 @@ export function DocumentsPane({
   layout = "compact",
   onOpen,
   selectedId,
-  onUnclassified,
 }: {
   kb: KnowledgeBase;
   folders: Folder[];
@@ -73,15 +83,30 @@ export function DocumentsPane({
   layout?: "compact" | "page";
   onOpen: (doc: Document, reader?: boolean) => void;
   selectedId: string;
-  onUnclassified?: () => void;
 }) {
   const qc = useQueryClient();
+  const formatCatalog = useDocumentFormats(active);
   const input = useRef<HTMLInputElement>(null);
+  const directoryInput = useRef<HTMLInputElement>(null);
+  const [editKnowledgeBase, setEditKnowledgeBase] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [navigation, setNavigation] = useState({ entries: ["root"], index: 0 });
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setSearchTerm(searchText.trim()),
+      250,
+    );
+    return () => window.clearTimeout(timer);
+  }, [searchText]);
   const activeRef = useRef(active);
   const uploadInFlight = useRef(false);
   const uploadGeneration = useRef(0);
-  const [folderId, setFolderId] = useState("");
-  const [sort, setSort] = useState("date");
+  const currentKbId = useRef(kb.id);
+  currentKbId.current = kb.id;
+  const [folderId, setFolderId] = useState(trash ? "" : "root");
+  const [sort, setSort] = useState("updated");
   const [ext, setExt] = useState("");
   const [status, setStatus] = useState("");
   const [tagFilter, setTagFilter] = useState({ kbId: kb.id, id: "" });
@@ -101,6 +126,7 @@ export function DocumentsPane({
     activeRef.current = active;
     if (!active) {
       uploadGeneration.current += 1;
+      setEditKnowledgeBase(false);
       setManageTags(false);
       setForm(null);
       setDuplicateFiles([]);
@@ -118,10 +144,12 @@ export function DocumentsPane({
       ext,
       status,
       page,
+      searchOpen,
+      searchTerm,
     ],
     queryFn: () =>
       api<{ items: Document[]; total: number; page_size: number }>(
-        `/knowledge-bases/${kb.id}/documents${query({ folder_id: folderId || undefined, include_descendants: true, tag_ids: tagId, trash, sort, ext, status, page, page_size: 50 })}`,
+        `/knowledge-bases/${kb.id}/documents${query({ folder_id: searchOpen ? undefined : folderId || undefined, include_descendants: trash, tag_ids: searchOpen ? tagId : "", trash, sort, ext: searchOpen ? ext : "", status: searchOpen ? status : "", q: searchOpen ? searchTerm : "", page, page_size: 50 })}`,
       ),
     enabled: active,
     refetchInterval: (q) =>
@@ -162,6 +190,57 @@ export function DocumentsPane({
   );
   const activeFolder = folders.find((f) => f.id === folderId);
   const total = documents.data?.total || 0;
+  const childFolders = folders.filter(
+    (folder) =>
+      !folder.deleted_at &&
+      folder.parent_id === (folderId === "root" ? null : folderId),
+  );
+  function navigateFolder(id: string, record = true) {
+    setFolderId(id);
+    setSearchOpen(false);
+    setSearchText("");
+    setSearchTerm("");
+    setPage(1);
+    setSelected(new Set());
+    if (record)
+      setNavigation((value) => ({
+        entries: [...value.entries.slice(0, value.index + 1), id],
+        index: value.index + 1,
+      }));
+  }
+  function navigateHistory(offset: number) {
+    const index = navigation.index + offset;
+    const id = navigation.entries[index];
+    if (id === undefined) return;
+    setNavigation((value) => ({ ...value, index }));
+    navigateFolder(id, false);
+  }
+  const foldersById = useMemo(
+    () => new Map(folders.map((folder) => [folder.id, folder])),
+    [folders],
+  );
+  const breadcrumbs: Folder[] = [];
+  const seenAncestors = new Set<string>();
+  let ancestor = activeFolder;
+  while (ancestor && !seenAncestors.has(ancestor.id)) {
+    seenAncestors.add(ancestor.id);
+    breadcrumbs.unshift(ancestor);
+    ancestor = ancestor.parent_id
+      ? foldersById.get(ancestor.parent_id)
+      : undefined;
+  }
+  useEffect(() => {
+    setFolderId(trash ? "" : "root");
+    setNavigation({ entries: ["root"], index: 0 });
+    setSearchOpen(false);
+    setSearchText("");
+    setSearchTerm("");
+    setPage(1);
+    setSelected(new Set());
+    setForm(null);
+    setEditKnowledgeBase(false);
+    uploadGeneration.current += 1;
+  }, [kb.id, trash]);
   useEffect(() => {
     if (!active || documents.isFetching) return;
     if (
@@ -170,12 +249,12 @@ export function DocumentsPane({
       folderId &&
       folderId !== "root"
     ) {
-      setFolderId("");
+      navigateFolder("root");
       setPage(1);
       setSelected(new Set());
       setForm(null);
       void qc.invalidateQueries({ queryKey: ["folders", kb.id] });
-      toast.info("原文件夹已不可用，已返回全部文档");
+      toast.info("原文件夹已不可用，已返回知识库根目录");
     }
   }, [active, documents.error, documents.isFetching, folderId, kb.id, qc]);
   useEffect(() => {
@@ -231,27 +310,40 @@ export function DocumentsPane({
   });
   const upload = useMutation({
     mutationFn: async ({
-      files,
+      files: pendingFiles,
       policy = "skip",
       targetFolderId = folderId && folderId !== "root" ? folderId : null,
     }: UploadRequest) => {
       const generation = uploadGeneration.current;
-      const data = new FormData();
-      files.forEach((f) => data.append("files", f));
-      if (targetFolderId) data.append("folder_id", targetFolderId);
-      data.append("duplicate_policy", policy);
+      const submittedKbId = kb.id;
+      const files = await pendingFiles;
+      if (!files.length)
+        throw new Error("没有读取到文件；空文件夹不会上传，请重新选择资料。");
       return {
-        result: await api<{ items: UploadItem[] }>(
-          `/knowledge-bases/${kb.id}/uploads`,
-          { method: "POST", body: data },
-        ),
+        result: await uploadDocuments({
+          kbId: submittedKbId,
+          files,
+          policy,
+          targetFolderId,
+          limits: formatCatalog.limits,
+          onProgress: (items) => {
+            if (currentKbId.current === submittedKbId) setUploadItems(items);
+          },
+        }),
         files,
         targetFolderId,
         generation,
+        submittedKbId,
       };
     },
-    onSuccess: ({ result, files, targetFolderId, generation }) => {
-      setUploadItems(result.items);
+    onSuccess: ({
+      result,
+      files,
+      targetFolderId,
+      generation,
+      submittedKbId,
+    }) => {
+      if (currentKbId.current === submittedKbId) setUploadItems(result.items);
       const duplicates = result.items
         .flatMap((r, i) => (r.status === "duplicate" ? [files[i]] : []))
         .filter((f): f is File => !!f);
@@ -265,6 +357,11 @@ export function DocumentsPane({
       }
       const count = result.items.filter((r) => r.status === "queued").length;
       if (count) toast.success(`${count} 个文件已上传，后台正在处理`);
+      const failures = result.items.filter(
+        (item) => item.status === "error",
+      ).length;
+      if (failures)
+        toast.warning(`${failures} 个文件上传失败，可在上传结果中查看原因`);
       refresh();
     },
     onError: (e) => toast.error(errorText(e)),
@@ -329,11 +426,22 @@ export function DocumentsPane({
         method: "PATCH",
         body: { parent_id: target, version: f.version },
       });
-    } else if (e.dataTransfer.files.length)
+    } else if (
+      e.dataTransfer.files.length ||
+      Array.from(e.dataTransfer.items || []).some(
+        (item) => item.kind === "file",
+      )
+    ) {
+      if (uploadInFlight.current) {
+        toast.info("上一批文件仍在上传，请稍后再添加");
+        return;
+      }
+      // Capture entry handles while the drop event still has access to them.
       startUpload({
-        files: Array.from(e.dataTransfer.files),
+        files: collectDroppedFiles(e.dataTransfer),
         targetFolderId: target,
       });
+    }
   }
   function submit() {
     if (!form) return;
@@ -473,221 +581,380 @@ export function DocumentsPane({
       }}
       onDrop={(e) => drop(e, folderId && folderId !== "root" ? folderId : null)}
     >
-      <div className="document-heading-bar">
+      <div className="document-heading-bar explorer-heading">
         <header className="pane-header">
-          {layout === "page" && (
-            <span className="document-library-icon" aria-hidden="true">
-              {trash ? <Trash2 size={27} /> : <FolderOpen size={29} />}
+          {trash ? (
+            <span className="document-library-icon">
+              <Trash2 size={30} />
             </span>
+          ) : (
+            <KnowledgeBaseIcon kb={kb} size="large" />
           )}
           <div className="document-library-heading">
-            <span className="eyebrow">{trash ? kb.name : "我的知识库"}</span>
             <h2>{trash ? "回收站" : kb.name}</h2>
-            {layout === "page" && !trash && kb.description && (
-              <p className="document-library-description">{kb.description}</p>
-            )}
+            <p className="document-library-description">
+              {trash ? kb.name : kb.description || "个人知识库"}
+            </p>
           </div>
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label="刷新文件"
-            onClick={() => void documents.refetch()}
+          <Menu
+            trigger={
+              <Button size="icon" variant="ghost" aria-label="知识库操作">
+                <MoreHorizontal size={18} />
+              </Button>
+            }
           >
-            <RefreshCw size={16} />
-          </Button>
+            {!trash && (
+              <MenuItem onSelect={() => setEditKnowledgeBase(true)}>
+                编辑知识库
+              </MenuItem>
+            )}
+            <MenuItem onSelect={() => void documents.refetch()}>
+              刷新文件
+            </MenuItem>
+            {!trash && (
+              <MenuItem onSelect={() => setManageTags(true)}>管理标签</MenuItem>
+            )}
+          </Menu>
         </header>
         {!trash && (
-          <div className="upload-wrap">
-            <Button
-              variant="default"
-              className="upload-button"
-              onClick={() => input.current?.click()}
-              disabled={upload.isPending}
-            >
-              <Plus size={17} />
-              {upload.isPending ? "上传中…" : "添加知识"}
-            </Button>
+          <>
             <input
               ref={input}
               hidden
               type="file"
               aria-label="上传文档"
-              accept=".pdf,.docx,.md,.txt"
+              accept={formatCatalog.accept}
               multiple
-              onChange={(e) => {
-                if (e.target.files?.length)
-                  startUpload({ files: Array.from(e.target.files) });
-                e.target.value = "";
+              onChange={(event) => {
+                if (event.target.files?.length)
+                  startUpload({ files: Array.from(event.target.files) });
+                event.target.value = "";
               }}
             />
-            <p className="tiny muted">PDF、DOCX、Markdown、TXT · 可拖拽上传</p>
-          </div>
+            <input
+              ref={directoryInput}
+              hidden
+              type="file"
+              aria-label="上传本地文件夹"
+              multiple
+              {...{ webkitdirectory: "", directory: "" }}
+              onChange={(event) => {
+                if (event.target.files?.length)
+                  startUpload({ files: Array.from(event.target.files) });
+                event.target.value = "";
+              }}
+            />
+          </>
         )}
       </div>
+      {!trash && formatCatalog.unavailable.length > 0 && (
+        <details className="notice warning tiny" aria-label="文件格式可用性">
+          <summary>
+            部分格式暂不可用：
+            {formatCatalog.unavailable
+              .map((format) => format.extension.toUpperCase())
+              .join("、")}
+          </summary>
+          {formatCatalog.unavailable.map((format) => (
+            <p key={format.extension}>
+              {format.extension.toUpperCase()} ·{" "}
+              {format.reason || "当前服务暂不提供此格式解析"}
+            </p>
+          ))}
+        </details>
+      )}
       <div className="document-browser-body">
-        <aside
-          className="document-folder-panel"
-          aria-label={trash ? "已删除文件夹" : "文档文件夹"}
-        >
-          <div className="document-navigation">
-            <button
-              className={!folderId ? "selected" : ""}
-              onClick={() => {
-                setFolderId("");
-                setPage(1);
-                setSelected(new Set());
-              }}
-            >
-              <FileText size={15} />
-              全部文档 <span>{!folderId ? total : ""}</span>
-            </button>
-            {!trash && (
+        {trash && (
+          <aside
+            className="document-folder-panel"
+            aria-label={trash ? "已删除文件夹" : "文档文件夹"}
+          >
+            <div className="document-navigation">
               <button
-                className={folderId === "root" ? "selected" : ""}
+                className={!folderId ? "selected" : ""}
                 onClick={() => {
-                  setFolderId("root");
+                  setFolderId("");
                   setPage(1);
                   setSelected(new Set());
-                  onUnclassified?.();
                 }}
               >
-                <Archive size={15} />
-                未分类
+                <FileText size={15} />
+                全部文档 <span>{!folderId ? total : ""}</span>
               </button>
-            )}
-          </div>
-          <div
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.stopPropagation();
-              drop(e, null);
-            }}
-            className="folder-root-drop"
-          >
-            <FolderTree
-              active={active}
-              folders={folders}
-              selected={folderId}
-              onSelect={(id) => {
-                setFolderId(id);
-                setPage(1);
-                setSelected(new Set());
+            </div>
+            <div
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.stopPropagation();
+                drop(e, null);
               }}
-              onAction={openFolderForm}
-              onDrop={drop}
-              trash={trash}
-            />
-          </div>
-          {trash && !!deletedKbs.data?.some((k) => k.deleted_at) && (
-            <details className="deleted-kbs">
-              <summary>
-                已删除知识库 ·{" "}
-                {deletedKbs.data.filter((k) => k.deleted_at).length}
-              </summary>
-              <div className="deleted-kb-list">
-                {deletedKbs.data
-                  .filter((k) => k.deleted_at)
-                  .map((k) => (
-                    <div className="row spread" key={k.id}>
-                      <span>{k.name}</span>
-                      <Button
-                        size="sm"
-                        onClick={() =>
-                          action.mutate({
-                            path: `/knowledge-bases/${k.id}/restore`,
-                          })
-                        }
-                      >
-                        恢复
-                      </Button>
-                    </div>
-                  ))}
-              </div>
-            </details>
-          )}
-        </aside>
-        <div className="document-files-panel">
-          <div className="document-list-heading">
-            <span>
-              {activeFolder?.name ||
-                (folderId === "root" ? "未分类" : "全部文档")}
-              <small>{total} 项</small>
-            </span>
-            <Menu
-              trigger={
-                <Button size="icon" variant="ghost" aria-label="排序文件">
-                  <ArrowDownAZ size={15} />
-                </Button>
-              }
+              className="folder-root-drop"
             >
-              {[
-                ["date", "按日期"],
-                ["name", "按名称"],
-                ["type", "按类型"],
-              ].map(([key, label]) => (
-                <MenuItem
-                  key={key}
-                  onSelect={() => {
-                    setSort(key);
+              <FolderTree
+                active={active}
+                folders={folders}
+                selected={folderId}
+                onSelect={(id) => {
+                  setFolderId(id);
+                  setPage(1);
+                  setSelected(new Set());
+                }}
+                onAction={openFolderForm}
+                onDrop={drop}
+                trash={trash}
+              />
+            </div>
+            {trash && !!deletedKbs.data?.some((k) => k.deleted_at) && (
+              <details className="deleted-kbs">
+                <summary>
+                  已删除知识库 ·{" "}
+                  {deletedKbs.data.filter((k) => k.deleted_at).length}
+                </summary>
+                <div className="deleted-kb-list">
+                  {deletedKbs.data
+                    .filter((k) => k.deleted_at)
+                    .map((k) => (
+                      <div className="row spread" key={k.id}>
+                        <span>{k.name}</span>
+                        <Button
+                          size="sm"
+                          onClick={() =>
+                            action.mutate({
+                              path: `/knowledge-bases/${k.id}/restore`,
+                            })
+                          }
+                        >
+                          恢复
+                        </Button>
+                      </div>
+                    ))}
+                </div>
+              </details>
+            )}
+          </aside>
+        )}
+        <div className="document-files-panel">
+          <div className="document-list-heading explorer-toolbar">
+            <span>
+              {searchOpen ? "搜索资料" : "内容"}
+              <small>
+                {total + (!searchOpen && !trash ? childFolders.length : 0)} 项
+              </small>
+            </span>
+            <div className="row gap">
+              {!trash && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label="搜索知识库资料"
+                  title="搜索资料"
+                  onClick={() => {
+                    setSearchOpen(true);
                     setPage(1);
                     setSelected(new Set());
                   }}
                 >
-                  {sort === key && <Check size={13} />} {label}
-                </MenuItem>
-              ))}
-            </Menu>
+                  <Search size={16} />
+                </Button>
+              )}
+              <Menu
+                trigger={
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label="排序文件"
+                    title="排序"
+                  >
+                    <ArrowDownAZ size={16} />
+                  </Button>
+                }
+              >
+                {[
+                  ["updated", "更新时间"],
+                  ["created", "创建时间"],
+                  ["size", "大小"],
+                  ["type", "类型"],
+                  ["name", "名称"],
+                ].map(([key, label]) => (
+                  <MenuItem
+                    key={key}
+                    onSelect={() => {
+                      setSort(key);
+                      setPage(1);
+                      setSelected(new Set());
+                    }}
+                  >
+                    <span>{label}</span>
+                    {sort === key && <Check size={14} />}
+                  </MenuItem>
+                ))}
+              </Menu>
+              {!trash && (
+                <Menu
+                  trigger={
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label="添加文件"
+                      title="添加文件"
+                      disabled={upload.isPending}
+                    >
+                      <Plus size={18} />
+                    </Button>
+                  }
+                >
+                  <MenuItem onSelect={() => input.current?.click()}>
+                    <Upload size={16} />
+                    本地文件
+                  </MenuItem>
+                  <MenuItem onSelect={() => directoryInput.current?.click()}>
+                    <FolderOpen size={16} />
+                    本地文件夹
+                  </MenuItem>
+                  <MenuItem
+                    onSelect={() => openFolderForm("create", activeFolder)}
+                  >
+                    <FolderPlus size={16} />
+                    新建文件夹
+                  </MenuItem>
+                </Menu>
+              )}
+            </div>
           </div>
-          <div className="file-filters">
-            <ListFilter size={13} />
-            <Select
-              aria-label="文件类型筛选"
-              value={ext}
-              size="sm"
-              onValueChange={(value) => {
-                setExt(value);
-                setPage(1);
-                setSelected(new Set());
-              }}
-              options={[
-                { value: "", label: "全部类型" },
-                ...["pdf", "docx", "md", "txt"].map((value) => ({
-                  value,
-                  label: value.toUpperCase(),
-                })),
-              ]}
-            />
-            <Select
-              aria-label="处理状态筛选"
-              value={status}
-              size="sm"
-              onValueChange={(value) => {
-                setStatus(value);
-                setPage(1);
-                setSelected(new Set());
-              }}
-              options={[
-                { value: "", label: "全部状态" },
-                { value: "ready", label: "已处理" },
-                { value: "queued", label: "未处理" },
-                { value: "failed", label: "处理失败" },
-              ]}
-            />
-            <Select
-              aria-label="标签筛选"
-              value={tagId}
-              size="sm"
-              onValueChange={(value) => {
-                setTagFilter({ kbId: kb.id, id: value });
-                setPage(1);
-                setSelected(new Set());
-              }}
-              options={[
-                { value: "", label: "全部标签" },
-                ...tags.map((tag) => ({ value: tag.id, label: tag.name })),
-              ]}
-            />
-            {!trash && (
+          {!trash && (
+            <div className="explorer-navigation">
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={searchOpen ? "退出搜索" : "后退"}
+                disabled={!searchOpen && navigation.index === 0}
+                onClick={() =>
+                  searchOpen
+                    ? (setSearchOpen(false), setPage(1), setSelected(new Set()))
+                    : navigateHistory(-1)
+                }
+              >
+                <ArrowLeft size={15} />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label="前进"
+                disabled={
+                  searchOpen ||
+                  navigation.index >= navigation.entries.length - 1
+                }
+                onClick={() => navigateHistory(1)}
+              >
+                <ArrowRight size={15} />
+              </Button>
+              {searchOpen ? (
+                <div className="explorer-search-input">
+                  <Search size={15} />
+                  <input
+                    autoFocus
+                    aria-label="在知识库中搜索"
+                    placeholder="在知识库中搜索"
+                    value={searchText}
+                    onChange={(event) => {
+                      setSearchText(event.target.value);
+                      setPage(1);
+                      setSelected(new Set());
+                    }}
+                  />
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label="清除搜索"
+                    onClick={() => {
+                      setSearchText("");
+                      setSearchTerm("");
+                    }}
+                  >
+                    <X size={13} />
+                  </Button>
+                </div>
+              ) : (
+                <nav className="explorer-breadcrumbs" aria-label="文件夹路径">
+                  <button
+                    onClick={() => navigateFolder("root")}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => {
+                      event.stopPropagation();
+                      drop(event, null);
+                    }}
+                    aria-label="知识库根目录"
+                    aria-current={folderId === "root" ? "location" : undefined}
+                  >
+                    知识库根目录
+                  </button>
+                  {breadcrumbs.map((folder) => (
+                    <span key={folder.id}>
+                      <ChevronRight size={12} />
+                      <button
+                        aria-current={
+                          folder.id === folderId ? "location" : undefined
+                        }
+                        onClick={() => navigateFolder(folder.id)}
+                      >
+                        {folder.name}
+                      </button>
+                    </span>
+                  ))}
+                </nav>
+              )}
+            </div>
+          )}
+          {searchOpen && (
+            <div className="file-filters explorer-search-filters">
+              <ListFilter size={13} />
+              <Select
+                aria-label="文件类型筛选"
+                value={ext}
+                size="sm"
+                onValueChange={(value) => {
+                  setExt(value);
+                  setPage(1);
+                  setSelected(new Set());
+                }}
+                options={[
+                  { value: "", label: "全部类型" },
+                  ...formatCatalog.formats.map((format) => ({
+                    value: format.extension,
+                    label: format.extension.toUpperCase(),
+                  })),
+                ]}
+              />
+              <Select
+                aria-label="处理状态筛选"
+                value={status}
+                size="sm"
+                onValueChange={(value) => {
+                  setStatus(value);
+                  setPage(1);
+                  setSelected(new Set());
+                }}
+                options={[
+                  { value: "", label: "全部状态" },
+                  { value: "ready", label: "已处理" },
+                  { value: "queued", label: "未处理" },
+                  { value: "failed", label: "处理失败" },
+                ]}
+              />
+              <Select
+                aria-label="标签筛选"
+                value={tagId}
+                size="sm"
+                onValueChange={(value) => {
+                  setTagFilter({ kbId: kb.id, id: value });
+                  setPage(1);
+                  setSelected(new Set());
+                }}
+                options={[
+                  { value: "", label: "全部标签" },
+                  ...tags.map((tag) => ({ value: tag.id, label: tag.name })),
+                ]}
+              />
               <Button
                 size="sm"
                 variant="ghost"
@@ -695,8 +962,8 @@ export function DocumentsPane({
               >
                 管理标签
               </Button>
-            )}
-          </div>
+            </div>
+          )}
           <div className="selection-bar">
             <label className="checkbox-label">
               <Checkbox
@@ -783,14 +1050,21 @@ export function DocumentsPane({
                 )}
               </Menu>
             )}
-            {layout === "page" && !selected.size && (
-              <span className="document-columns" aria-hidden="true">
-                <span>添加日期 · 大小</span>
-                <span>处理状态</span>
-              </span>
-            )}
           </div>
           <div className="document-list">
+            {!trash && !searchOpen && (
+              <FolderTree
+                mode="explorer"
+                parentId={folderId === "root" ? null : folderId}
+                sort={sort}
+                active={active}
+                folders={folders}
+                selected={folderId}
+                onSelect={navigateFolder}
+                onAction={openFolderForm}
+                onDrop={drop}
+              />
+            )}
             {documents.isPending ? (
               <Loading />
             ) : documents.isError ? (
@@ -798,14 +1072,25 @@ export function DocumentsPane({
                 error={documents.error}
                 retry={() => void documents.refetch()}
               />
-            ) : !rows.length ? (
-              <Empty title={trash ? "回收站很干净" : "这里还没有文档"}>
+            ) : !rows.length &&
+              (searchOpen || trash || !childFolders.length) ? (
+              <Empty
+                title={
+                  trash
+                    ? "回收站很干净"
+                    : searchOpen
+                      ? "暂无匹配内容"
+                      : "这个文件夹还是空的"
+                }
+              >
                 <p>
                   {trash
                     ? "删除的文档可以在这里恢复。"
-                    : "上传一份文档，让知识在这里生长。"}
+                    : searchOpen
+                      ? "换个关键词，或调整上方的筛选条件。"
+                      : "添加文件或文件夹，开始整理你的知识。"}
                 </p>
-                {!trash && (
+                {!trash && !searchOpen && (
                   <Button size="sm" onClick={() => input.current?.click()}>
                     <UploadCloud size={14} />
                     上传文件
@@ -960,7 +1245,8 @@ export function DocumentsPane({
               <div className="upload-results-content">
                 {uploadItems.map((r, i) => (
                   <p key={i} className={r.status === "error" ? "danger" : ""}>
-                    {r.document?.display_name || `文件 ${i + 1}`} ·{" "}
+                    {r.document?.display_name || r.filename || `文件 ${i + 1}`}{" "}
+                    ·{" "}
                     {r.message ||
                       { queued: "已排队", duplicate: "文件已存在，已跳过" }[
                         r.status
@@ -981,6 +1267,11 @@ export function DocumentsPane({
           )}
         </div>
       </div>
+      <KnowledgeBaseEditor
+        open={editKnowledgeBase}
+        onOpenChange={setEditKnowledgeBase}
+        knowledgeBase={kb}
+      />
       <Dialog
         open={!!form}
         onOpenChange={(v) => !v && setForm(null)}
@@ -1127,7 +1418,7 @@ export function DocumentsPane({
           保存位置：
           {duplicateTarget
             ? folderPathLabel(folders, duplicateTarget) || "原上传文件夹"
-            : "根目录 / 未分类"}
+            : "知识库根目录"}
         </p>
         <ul>
           {duplicateFiles.map((file, index) => (

@@ -22,6 +22,102 @@ const previousScroll = Object.getOwnPropertyDescriptor(
   "scrollIntoView",
 );
 
+it("跨组工作表引用在渲染目标组后定位，不命中另一张表的相同行号", async () => {
+  const located: string[] = [];
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    writable: true,
+    value: vi.fn(function (this: HTMLElement) {
+      located.push(this.dataset.sectionId || "");
+    }),
+  });
+  vi.stubGlobal("CSS", { escape: (value: string) => value });
+  const doc: Document = {
+    id: "workbook",
+    kb_id: "kb",
+    folder_id: null,
+    display_name: "预算.xlsx",
+    original_filename: "预算.xlsx",
+    ext: "xlsx",
+    size_bytes: 100,
+    version: 1,
+    parse_status: "ready",
+    index_status: "ready",
+    summary_status: "not_configured",
+    classification_status: "not_configured",
+    created_at: "",
+  };
+  const sections: Section[] = [
+    ...Array.from({ length: 80 }, (_, index) => ({
+      id: `sheet-one-${index}`,
+      heading: "收入",
+      plain_text: `收入记录 ${index}`,
+      anchors: {
+        sheet_index: 1,
+        sheet_name: "收入",
+        row_start: index * 20 + 1,
+        row_end: (index + 1) * 20,
+      },
+    })),
+    {
+      id: "sheet-two-target",
+      heading: "成本",
+      plain_text: "第二张表正文",
+      anchors: {
+        sheet_index: 2,
+        sheet_name: "成本",
+        row_start: 1,
+        row_end: 20,
+      },
+    },
+  ];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async (path: string) =>
+        new Response(
+          JSON.stringify(
+            path.endsWith("/content")
+              ? { text: "", sections }
+              : path.includes("/ingestion/jobs")
+                ? []
+                : doc,
+          ),
+        ),
+    ),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <Reader
+        documentId={doc.id}
+        reader
+        onReader={vi.fn()}
+        folders={[]}
+        tags={[]}
+        citation={{
+          document_id: doc.id,
+          chunk_id: "target",
+          snippet: "目标表格引用",
+          anchors: { sheet_index: 2, sheet_name: "成本", row_start: 7 },
+        }}
+      />
+    </QueryClientProvider>,
+  );
+  await screen.findByText("第二张表正文");
+  await vi.waitFor(() => expect(located).toContain("sheet-two-target"));
+  expect(located.some((id) => id.startsWith("sheet-one"))).toBe(false);
+  expect(document.querySelectorAll(".text-section")).toHaveLength(1);
+  const details = screen.getByText("成本").closest("details")!;
+  await userEvent.click(screen.getByText("成本"));
+  expect(details).not.toHaveAttribute("open");
+  await userEvent.click(screen.getByRole("button", { name: "定位" }));
+  await vi.waitFor(() => expect(details).toHaveAttribute("open"));
+  client.clear();
+});
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -227,6 +323,9 @@ it("摘要优先，属性和历史默认折叠，错误及重试统一指向任�
     }),
   ).toHaveAttribute("href", "/tasks?kb=kb-1&document=doc-summary");
   const user = userEvent.setup();
+  await user.click(screen.getByText("文档属性"));
+  expect(screen.getByText("知识库根目录")).toBeVisible();
+  await user.click(screen.getByText("文档属性"));
   await user.click(screen.getByRole("button", { name: "文档操作" }));
   await user.click(screen.getByRole("menuitem", { name: "阅读正文" }));
   expect(onReader).toHaveBeenCalledWith(true);

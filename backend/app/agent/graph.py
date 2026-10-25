@@ -115,8 +115,8 @@ def database_graph(db, saver, planner=None, guard=None, on_pending=None, setting
     if planner is None:
         settings = settings or get_runtime_settings(db, get_settings())
 
-        def planner(*args):
-            return plan_with_model(*args, settings=settings)
+        def planner(*args, **kwargs):
+            return plan_with_model(*args, settings=settings, **kwargs)
     guard = guard or (lambda: None)
 
     def plan_callback(run_id):
@@ -131,6 +131,15 @@ def database_graph(db, saver, planner=None, guard=None, on_pending=None, setting
             db.commit()
             return existing.id
         observed = {}
+        policy, source, source_versions = None, None, {}
+        job = db.scalar(select(IngestionJob).where(IngestionJob.kind == "agent",
+            IngestionJob.payload["run_id"].as_string() == run.id).order_by(IngestionJob.created_at.desc()).limit(1))
+        if job and job.payload.get("mode"):
+            from app.agent.organization import source_snapshot
+            from app.agent.organization_policy import policy_from_source
+
+            source, source_versions = source_snapshot(db, actor, run.kb_id, job.payload.get("document_ids"))
+            policy = policy_from_source(job.payload["mode"], source, job.payload.get("cleanup_empty_folders", True))
         # Do not hold the job lease row lock across a model/network call.
         db.commit()
 
@@ -139,9 +148,14 @@ def database_graph(db, saver, planner=None, guard=None, on_pending=None, setting
             emit_event(db, run.id, event_type, data)
             db.commit()
 
-        draft = planner(db, actor, run.kb_id, run.goal, emit, observed)
+        draft = planner(db, actor, run.kb_id, run.goal, emit, observed,
+            **({"organization_mode": policy.mode, "document_ids": policy.document_ids} if policy else {}))
+        if policy:
+            from app.agent.organization_policy import append_cleanup
+
+            draft = append_cleanup(draft, source, policy)
         guard()
-        plan = persist_plan(db, actor, run, draft, observed)
+        plan = persist_plan(db, actor, run, draft, {**observed, **source_versions}, organization=policy)
         if on_pending:
             on_pending(plan)
         db.commit()

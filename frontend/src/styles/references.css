@@ -89,6 +89,20 @@
 .reference-pane.has-tabs .reference-close {
   top: 7px;
 }
+.reference-pane.is-library:not(.has-tabs) .reference-close {
+  top: 24px;
+}
+.reference-pane.is-library:not(.has-tabs) .explorer-heading .pane-header {
+  padding-right: 0;
+}
+@media (max-width: 700px) {
+  .reference-pane.is-library:not(.has-tabs) .reference-close {
+    top: 19px;
+  }
+  .reference-pane.is-library:not(.has-tabs) .explorer-heading .pane-header {
+    padding-right: 15px;
+  }
+}
 .reference-tabs {
   display: flex;
   flex-shrink: 0;

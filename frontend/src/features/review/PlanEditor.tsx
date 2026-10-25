@@ -171,6 +171,23 @@ export function PlanEditor({ run }: { run: ReviewRun }) {
     <div className="review-plan-editor">
       <div className="review-plan-summary">
         <strong>{plan.payload.summary}</strong>
+        {plan.payload.organization && (
+          <p>
+            {
+              {
+                tags: "只整理标签",
+                folders: "只整理文件夹",
+                both: "标签和文件夹",
+              }[plan.payload.organization.mode]
+            }
+            {plan.payload.operations.some(
+              (op) => op.type === "trash_empty_folders",
+            ) &&
+              (plan.payload.organization.cleanup_scope === "knowledge_base"
+                ? " · 清理全库空目录，执行时重新检查，移入回收站后可撤销。"
+                : " · 清理所选文档原目录，执行时重新检查，移入回收站后可撤销。")}
+          </p>
+        )}
         <p>
           {planStatus[run.status] || run.status} · 已选 {selected.length} 项操作
           · 涉及 {new Set(selected.flatMap((op) => op.target_ids)).size}{" "}
@@ -324,7 +341,7 @@ export function PlanEditor({ run }: { run: ReviewRun }) {
                     {target.name}
                     {op.type === "move_documents" && (
                       <>
-                        <span>{target.folder_path || "未分类"}</span>
+                        <span>{target.folder_path || "知识库根目录"}</span>
                         <ArrowRight size={12} />
                         <b>{operationDestination(op, folders, operations)}</b>
                       </>

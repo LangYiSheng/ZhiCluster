@@ -204,7 +204,7 @@ export function Agent({
       >
         <textarea
           aria-label="智能整理目标"
-          placeholder="例如：整理未分类的论文，按研究方向建立文件夹，并建议标签。"
+          placeholder="例如：整理知识库根目录中的论文，按研究方向建立文件夹，并建议标签。"
           value={goal}
           disabled={create.isPending}
           onChange={(e) => setGoal(e.target.value)}
@@ -344,7 +344,7 @@ export function Agent({
                               })
                             }
                             options={[
-                              { value: "", label: "根目录 / 未分类" },
+                              { value: "", label: "知识库根目录" },
                               ...folders
                                 .filter((f) => !f.deleted_at)
                                 .map((f) => ({ value: f.id, label: f.name })),
@@ -447,7 +447,7 @@ export function Agent({
                               })
                             }
                             options={[
-                              { value: "", label: "根目录" },
+                              { value: "", label: "知识库根目录" },
                               ...folders
                                 .filter((f) => !f.deleted_at)
                                 .map((f) => ({ value: f.id, label: f.name })),

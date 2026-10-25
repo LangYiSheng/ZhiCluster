@@ -29,7 +29,7 @@ class ParsedChunk:
     chunk_index: int
     content: str
     token_count: int
-    anchor: dict[str, int]
+    anchor: dict[str, int | str]
     source_start: int
     source_end: int
 

@@ -37,7 +37,7 @@ export function Review({
       <header className="review-heading">
         <div>
           <h1>整理审阅</h1>
-          <p>统一审阅入库建议和整理方案，确认后再应用。</p>
+          <p>审阅入库标签建议，或按所选范围整理标签与文件夹。</p>
         </div>
         <Button
           variant="default"

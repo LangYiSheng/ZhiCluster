@@ -91,7 +91,7 @@ def get_runtime_settings(db, base: Settings | None = None):
 def public_configuration(settings, revision: int):
     result = {"revision": revision}
     for prefix in ("llm", "embedding"):
-        fields = (*PROVIDER_FIELDS, "supports_tools") if prefix == "llm" else (*PROVIDER_FIELDS, "dimension", "batch_size")
+        fields = (*PROVIDER_FIELDS, "supports_tools", "models") if prefix == "llm" else (*PROVIDER_FIELDS, "dimension", "batch_size")
         result[prefix] = {field: getattr(settings, f"{prefix}_{field}") for field in fields}
         result[prefix]["api_key_configured"] = bool(getattr(settings, f"{prefix}_api_key").get_secret_value())
     result["processing"] = {field: getattr(settings, field) for field in PROCESSING_FIELDS}
@@ -121,6 +121,7 @@ def apply_draft(settings, draft: ConfigurationDraft | None):
     if draft.processing:
         updates.update(draft.processing.model_dump(exclude_none=True))
     result = settings.model_copy(update=updates, deep=True)
+    result.llm_models = list(dict.fromkeys(filter(None, [result.llm_model, *result.llm_models])))
     if result.chunk_overlap_tokens >= result.chunk_size_tokens:
         raise AppError("invalid_configuration", "分块重叠 Token 数必须小于分块大小", 422)
     return result

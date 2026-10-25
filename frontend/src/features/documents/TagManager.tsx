@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Tags, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/button";
 import { Dialog } from "../../components/ui/dialog";
+import { ColorPicker } from "../../components/ui/color-picker";
 import { api, errorText, json } from "../../lib/api";
 import type { Tag } from "../../lib/api";
 
@@ -74,6 +75,7 @@ export function TagManager({
   }
   return (
     <Dialog
+      className="tag-manager-dialog"
       open={open}
       onOpenChange={changeOpen}
       title={
@@ -91,6 +93,7 @@ export function TagManager({
     >
       {draft ? (
         <form
+          className="tag-editor"
           onSubmit={(event) => {
             event.preventDefault();
             if (draft.name.trim() && !busy) save.mutate(draft);
@@ -109,19 +112,22 @@ export function TagManager({
                 }
               />
             </label>
-            <label>
-              颜色
-              <input
-                type="color"
+            <div className="tag-editor-color">
+              <span>颜色</span>
+              <ColorPicker
+                label="颜色"
                 value={draft.color}
-                onChange={(event) =>
-                  setDraft({ ...draft, color: event.target.value })
-                }
+                onChange={(color) => setDraft({ ...draft, color })}
               />
-            </label>
+              <span className="tag-editor-preview">
+                <span className="tag-dot" style={{ background: draft.color }} />
+                {draft.name.trim() || "标签预览"}
+              </span>
+            </div>
             <label>
               别名（英文逗号分隔）
               <input
+                placeholder="例如：人工智能, AI"
                 value={draft.aliases}
                 onChange={(event) =>
                   setDraft({ ...draft, aliases: event.target.value })
@@ -157,18 +163,21 @@ export function TagManager({
         </div>
       ) : (
         <>
-          <div className="tag-manager-toolbar">
-            <span className="muted">{tags.length} 个标签</span>
-            <Button
-              size="sm"
-              onClick={() =>
-                setDraft({ name: "", color: "#6366f1", aliases: "" })
-              }
-            >
-              <Plus size={14} />
-              新建标签
-            </Button>
-          </div>
+          {!!tags.length && (
+            <div className="tag-manager-toolbar">
+              <span className="muted">{tags.length} 个标签</span>
+              <Button
+                size="sm"
+                variant="default"
+                onClick={() =>
+                  setDraft({ name: "", color: "#6366f1", aliases: "" })
+                }
+              >
+                <Plus size={14} />
+                新建标签
+              </Button>
+            </div>
+          )}
           <div className="tag-manager-list">
             {tags.map((tag) => (
               <div className="tag-manager-row" key={tag.id}>
@@ -206,11 +215,23 @@ export function TagManager({
               </div>
             ))}
             {!tags.length && (
-              <p className="tag-manager-empty muted">还没有标签</p>
+              <div className="tag-manager-empty">
+                <span className="tag-manager-empty-icon" aria-hidden="true">
+                  <Tags size={24} strokeWidth={1.5} />
+                </span>
+                <strong>还没有标签</strong>
+                <p>为资料添加标签，让分类和查找更方便。</p>
+                <Button
+                  variant="default"
+                  onClick={() =>
+                    setDraft({ name: "", color: "#6366f1", aliases: "" })
+                  }
+                >
+                  <Plus size={15} />
+                  新建标签
+                </Button>
+              </div>
             )}
-          </div>
-          <div className="dialog-actions">
-            <Button onClick={() => changeOpen(false)}>完成</Button>
           </div>
         </>
       )}

@@ -50,7 +50,7 @@ it("无文件夹选项保留空字符串，表单提交使用原始值并继承 
           value={value}
           onValueChange={setValue}
           options={[
-            { value: "", label: "未分类" },
+            { value: "", label: "知识库根目录" },
             { value: "folder", label: "研究" },
           ]}
         />
@@ -70,10 +70,10 @@ it("无文件夹选项保留空字符串，表单提交使用原始值并继承 
   const form = screen.getByRole("form") as HTMLFormElement;
   expect(new FormData(form).get("folder")).toBe("folder");
   await user.click(screen.getByRole("combobox", { name: "目标文件夹" }));
-  await user.click(screen.getByRole("option", { name: "未分类" }));
+  await user.click(screen.getByRole("option", { name: "知识库根目录" }));
   expect(
     screen.getByRole("combobox", { name: "目标文件夹" }),
-  ).toHaveTextContent("未分类");
+  ).toHaveTextContent("知识库根目录");
   expect(new FormData(form).get("folder")).toBe("");
   const disabled = screen.getByRole("combobox", { name: "锁定的选择" });
   expect(disabled).toBeDisabled();

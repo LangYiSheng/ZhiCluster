@@ -65,6 +65,10 @@ class KnowledgeBase(Entity, Base):
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(160))
     description: Mapped[str] = mapped_column(Text, default="")
+    icon: Mapped[str] = mapped_column(String(50), default="folder")
+    color: Mapped[str] = mapped_column(String(7), default="#55a995")
+    embedding_model: Mapped[str | None] = mapped_column(String(512))
+    embedding_dimension: Mapped[int | None] = mapped_column(Integer)
     visibility: Mapped[str] = mapped_column(String(20), default="private")
     version: Mapped[int] = mapped_column(default=1)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -160,7 +164,7 @@ class DocumentChunk(Entity, Base):
 class EmbeddingProfile(Entity, Base):
     __tablename__ = "embedding_profiles"
     fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
-    model_name: Mapped[str] = mapped_column(String(200))
+    model_name: Mapped[str] = mapped_column(String(512))
     dimension: Mapped[int] = mapped_column()
     status: Mapped[str] = mapped_column(default="active")
 
@@ -206,7 +210,7 @@ class ClassificationSuggestion(Entity, Base):
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(default="pending")
     document_version: Mapped[int] = mapped_column()
-    model: Mapped[str] = mapped_column(String(200), default="")
+    model: Mapped[str] = mapped_column(String(512), default="")
 
 
 class IngestionJob(Entity, Base):
@@ -236,6 +240,7 @@ class JobEvent(Entity, Base):
 class Conversation(Entity, Base):
     __tablename__ = "conversations"
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    kb_id: Mapped[str | None] = mapped_column(String(36), index=True)
     title: Mapped[str] = mapped_column(String(160), default="新对话")
     scope: Mapped[dict] = mapped_column(JSON, default=dict)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

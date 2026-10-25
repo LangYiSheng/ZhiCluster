@@ -44,10 +44,20 @@ def create_run(body: RunRequest, db: Session = Depends(get_db, scope="function")
     assert_can_edit_kb(db, actor, body.kb_id)
     if not get_runtime_settings(db, get_settings()).llm_configured:
         raise AppError("model_not_configured", "智能整理需要配置聊天模型服务；请前往设置检查连接和 Tool Calling", 503)
+    scope = []
+    mode = body.mode or ("both" if body.document_ids else None)
+    if mode:
+        from app.agent.organization import source_snapshot
+
+        source, _ = source_snapshot(db, actor, body.kb_id, body.document_ids)
+        scope = [doc["id"] for doc in source["documents"]]
+        if not scope:
+            raise AppError("empty_scope", "此知识库没有可整理的文档", 400)
     run = AgentRun(kb_id=body.kb_id, actor_id=actor.id, thread_id=new_id(), goal=body.goal)
     db.add(run)
     db.flush()
-    db.add(IngestionJob(kb_id=body.kb_id, document_id=None, kind="agent", payload={"run_id": run.id}))
+    db.add(IngestionJob(kb_id=body.kb_id, document_id=None, kind="agent", payload={"run_id": run.id,
+        "mode": mode, "document_ids": scope, "cleanup_empty_folders": body.cleanup_empty_folders and mode != "tags"}))
     return snapshot(run)
 
 

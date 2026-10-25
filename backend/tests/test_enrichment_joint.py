@@ -53,6 +53,10 @@ def test_joint_classification_validates_catalog_ids_and_normalized_aliases():
     assert result.classification.existing_tag_ids == ["tag"]
     assert result.classification.new_tag_names == ["申请"]
     result = enrich_sections([SimpleNamespace(plain_text="资料", section_summary="")], "资料", [], tags, Gateway(payload), settings())
+    assert result.summary and result.classification and not result.errors
+    assert result.classification.existing_folder_id is None
+    payload["classification"]["existing_tag_ids"] = ["foreign-tag"]
+    result = enrich_sections([SimpleNamespace(plain_text="资料", section_summary="")], "资料", [], tags, Gateway(payload), settings())
     assert result.summary and "classification" in result.errors
 
 

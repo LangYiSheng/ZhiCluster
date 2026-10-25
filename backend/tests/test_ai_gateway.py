@@ -133,5 +133,12 @@ def test_classification_reuses_normalized_aliases_and_rejects_foreign_ids():
     assert result.existing_tag_ids == ["tag-1"]
     assert result.new_tag_names == ["检索增强"]
     assert result.proposed_folder_path is None
+    legacy = classify_document("论文", "摘要", [], [], FakeGateway())
+    assert legacy.existing_folder_id is None and legacy.proposed_folder_path is None
+
+    class InvalidTagGateway:
+        def chat(self, *args, **kwargs):
+            return json.dumps({"existing_tag_ids": ["foreign-tag"], "reason": "非法跨库标签"})
+
     with pytest.raises(ProviderError, match="跨知识库"):
-        classify_document("论文", "摘要", [], [], FakeGateway())
+        classify_document("论文", "摘要", [], [], InvalidTagGateway())

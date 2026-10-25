@@ -27,6 +27,25 @@
 .dialog-wide {
   width: 620px;
 }
+.tag-manager-dialog {
+  width: 460px;
+  padding: 26px;
+}
+.tag-manager-dialog .dialog-title {
+  margin-bottom: 18px;
+}
+.tag-manager-dialog .tag-editor-fields > label {
+  gap: 8px;
+  margin: 0 0 18px;
+}
+.tag-manager-dialog .tag-editor-fields > label:last-child {
+  margin-bottom: 0;
+}
+.tag-manager-dialog .tag-editor .dialog-actions {
+  padding-top: 18px;
+  margin-top: 22px;
+  border-top: 1px solid var(--color-border);
+}
 .dialog-title {
   font-family: var(--font-ui);
   font-size: 16px;

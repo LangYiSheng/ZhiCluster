@@ -18,10 +18,13 @@ from app.db.models import (
     Document,
     DocumentChunk,
     EmbeddingProfile,
+    Folder,
     IngestionJob,
     JobEvent,
+    KnowledgeBase,
     Message,
     MessageCitation,
+    Tag,
     utcnow,
 )
 from app.db.session import get_db
@@ -30,6 +33,8 @@ from app.schemas.requests import ChatMessage, ConversationCreate, ConversationUp
 from app.schemas.responses import ConversationOut, JobOut, JobPage, SearchOut
 from app.schemas.settings import ConfigurationDraft, ConfigurationSave, ModelListRequest, ModelTestRequest
 from app.services.chat import emit_chat
+from app.services.citations import visible_citation
+from app.services.knowledge_settings import chat_models, settings_for_knowledge_base
 from app.services.library import get_document, snapshot
 from app.services.permissions import accessible_kb_ids, assert_can_edit_kb, assert_can_read_kb, get_actor
 from app.services.runtime_config import (
@@ -55,16 +60,61 @@ def ready(db: Session = Depends(get_db, scope="function")):
 
 
 @router.get("/settings/model-status")
-def model_status(db: Session = Depends(get_db, scope="function")):
+def model_status(kb_id: str | None = None, db: Session = Depends(get_db, scope="function")):
     settings = get_runtime_settings(db, get_settings())
+    if kb_id:
+        settings = settings_for_knowledge_base(settings, assert_can_read_kb(db, get_actor(db), kb_id))
     gateway = ModelGateway(settings)
     profile = db.scalar(select(EmbeddingProfile).where(EmbeddingProfile.fingerprint == gateway.profile_fingerprint))
     missing_vectors = True if not profile else exists(select(DocumentChunk.id).where(
         DocumentChunk.document_id == Document.id,
         ~exists(select(ChunkEmbedding.chunk_id).where(ChunkEmbedding.chunk_id == DocumentChunk.id, ChunkEmbedding.profile_id == profile.id)),
     ))
-    pending = db.scalar(select(Document.id).where(Document.kb_id.in_(accessible_kb_ids(db, get_actor(db))), Document.deleted_at.is_(None), or_(Document.index_status != "ready", missing_vectors)).limit(1))
+    status_kb_ids = [kb_id] if kb_id else accessible_kb_ids(db, get_actor(db))
+    pending = db.scalar(select(Document.id).where(Document.kb_id.in_(status_kb_ids), Document.deleted_at.is_(None), or_(Document.index_status != "ready", missing_vectors)).limit(1))
     return {"llm": {"configured": settings.llm_configured, "model": settings.llm_model}, "embedding": {"configured": settings.embedding_configured, "model": settings.embedding_model, "dimension": settings.embedding_dimension, "needs_rebuild": bool(settings.embedding_configured and (not profile or pending))}, "tool_calling": {"supported": settings.llm_supports_tools, "message": "请在设置中测试工具调用能力并保存配置"}, "configuration": "在网页设置中保存后，新请求和下一个后台任务自动使用新配置"}
+
+
+@router.get("/settings/chat-models")
+def available_chat_models(db: Session = Depends(get_db, scope="function")):
+    get_actor(db)
+    settings = get_runtime_settings(db, get_settings())
+    return {"models": chat_models(settings), "default_model": settings.llm_model, "supports_tools": settings.llm_supports_tools}
+
+
+@router.get("/settings/statistics")
+def statistics(kb_id: str | None = None, db: Session = Depends(get_db, scope="function")):
+    actor = get_actor(db)
+    ids = [assert_can_read_kb(db, actor, kb_id).id] if kb_id else accessible_kb_ids(db, actor)
+    docs = select(Document.id).where(Document.kb_id.in_(ids), Document.deleted_at.is_(None))
+    chats = select(Conversation.id).where(Conversation.user_id == actor.id, Conversation.kb_id.in_(ids), Conversation.deleted_at.is_(None))
+
+    def count(model, *conditions):
+        return db.scalar(select(func.count()).select_from(model).where(*conditions)) or 0
+
+    settings = get_runtime_settings(db, get_settings())
+    profile_groups = {}
+    for kb in db.scalars(select(KnowledgeBase).where(KnowledgeBase.id.in_(ids))):
+        fingerprint = ModelGateway(settings_for_knowledge_base(settings, kb)).profile_fingerprint
+        profile_groups.setdefault(fingerprint, []).append(kb.id)
+    indexed_documents = 0
+    for profile in db.scalars(select(EmbeddingProfile).where(EmbeddingProfile.fingerprint.in_(profile_groups),
+            EmbeddingProfile.status == "active")):
+        has_chunks = exists(select(DocumentChunk.id).where(DocumentChunk.document_id == Document.id))
+        missing_vectors = exists(select(DocumentChunk.id).where(DocumentChunk.document_id == Document.id,
+            ~exists(select(ChunkEmbedding.id).where(ChunkEmbedding.chunk_id == DocumentChunk.id,
+                ChunkEmbedding.profile_id == profile.id))))
+        indexed_documents += count(Document, Document.id.in_(docs),
+            Document.kb_id.in_(profile_groups[profile.fingerprint]), Document.index_status == "ready", has_chunks, ~missing_vectors)
+
+    return {"knowledge_bases": len(ids), "documents": count(Document, Document.id.in_(docs)),
+        "folders": count(Folder, Folder.kb_id.in_(ids), Folder.deleted_at.is_(None)),
+        "tags": count(Tag, Tag.kb_id.in_(ids)), "conversations": count(Conversation, Conversation.id.in_(chats)),
+        "messages": count(Message, Message.conversation_id.in_(chats)),
+        "storage_bytes": db.scalar(select(func.coalesce(func.sum(Document.size_bytes), 0)).where(Document.id.in_(docs))) or 0,
+        "chunks": count(DocumentChunk, DocumentChunk.document_id.in_(docs)),
+        "indexed_documents": indexed_documents,
+        "failed_jobs": db.scalar(select(func.count()).select_from(_job_scope(db, actor, kb_id).where(IngestionJob.status == "failed").subquery())) or 0}
 
 
 @router.get("/settings/config")
@@ -324,14 +374,21 @@ def checked_conversation(db, conversation_id):
         raise AppError("not_found", "对话不存在", 404)
     if not conversation.scope.get("kb_ids"):
         raise AppError("empty_scope", "请先创建或选择一个可访问的知识库", 400)
+    if conversation.kb_id:
+        assert_can_read_kb(db, actor, conversation.kb_id)
     for kb_id in conversation.scope.get("kb_ids", []):
         assert_can_read_kb(db, actor, kb_id)
     return conversation
 
 
 @router.get("/conversations", response_model=list[ConversationOut])
-def conversations(db: Session = Depends(get_db, scope="function")):
-    return list(db.scalars(select(Conversation).where(Conversation.user_id == get_actor(db).id, Conversation.deleted_at.is_(None)).order_by(Conversation.updated_at.desc())))
+def conversations(kb_id: str | None = None, db: Session = Depends(get_db, scope="function")):
+    actor = get_actor(db)
+    stmt = select(Conversation).where(Conversation.user_id == actor.id, Conversation.deleted_at.is_(None))
+    if kb_id:
+        assert_can_read_kb(db, actor, kb_id)
+        stmt = stmt.where(Conversation.kb_id == kb_id)
+    return list(db.scalars(stmt.order_by(Conversation.updated_at.desc())))
 
 
 @router.post("/conversations", status_code=201, response_model=ConversationOut)
@@ -339,13 +396,15 @@ def create_conversation(body: ConversationCreate, db: Session = Depends(get_db, 
     actor = get_actor(db)
     scope = Search.model_validate({**body.scope, "query": "scope validation"}).model_dump(exclude={"query", "mode", "limit", "offset"})
     if not scope["kb_ids"]:
-        scope["kb_ids"] = accessible_kb_ids(db, actor)
+        scope["kb_ids"] = [body.kb_id] if body.kb_id else accessible_kb_ids(db, actor)
     if not scope["kb_ids"]:
         raise AppError("empty_scope", "请先创建或恢复一个知识库后再开始对话", 400)
     for kb_id in scope["kb_ids"]:
         assert_can_read_kb(db, actor, kb_id)
     scoped_query(db, actor, scope)
-    conversation = Conversation(user_id=actor.id, title=body.title, scope=scope)
+    owning_kb_id = body.kb_id or scope["kb_ids"][0]
+    assert_can_read_kb(db, actor, owning_kb_id)
+    conversation = Conversation(user_id=actor.id, kb_id=owning_kb_id, title=body.title, scope=scope)
     db.add(conversation)
     db.flush()
     return conversation
@@ -372,19 +431,13 @@ def delete_conversation(conversation_id: str, db: Session = Depends(get_db, scop
 
 @router.get("/conversations/{conversation_id}/messages")
 def messages(conversation_id: str, db: Session = Depends(get_db, scope="function")):
-    checked_conversation(db, conversation_id)
+    conversation = checked_conversation(db, conversation_id)
     result = []
     for message in db.scalars(select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at, Message.id)):
         item = snapshot(message)
         citations = []
         for citation in db.scalars(select(MessageCitation).where(MessageCitation.message_id == message.id).order_by(MessageCitation.ordinal)):
-            data = snapshot(citation)
-            try:
-                doc = get_document(db, get_actor(db), citation.document_id)
-                data["document_name"], data["available"] = doc.display_name, True
-            except AppError:
-                data["snippet"], data["document_name"], data["available"] = "来源已删除或不可访问", "来源不可用", False
-            citations.append(data)
+            citations.append(visible_citation(db, get_actor(db), snapshot(citation), kb_ids=conversation.scope["kb_ids"]))
         item["citations"] = citations
         result.append(item)
     return result
@@ -393,6 +446,10 @@ def messages(conversation_id: str, db: Session = Depends(get_db, scope="function
 @router.post("/conversations/{conversation_id}/messages", status_code=202)
 def send_message(conversation_id: str, body: ChatMessage, db: Session = Depends(get_db, scope="function")):
     item = checked_conversation(db, conversation_id)
+    settings = get_runtime_settings(db, get_settings())
+    selected_model = body.model or settings.llm_model
+    if body.model and selected_model not in chat_models(settings):
+        raise AppError("invalid_chat_model", "请选择已配置的聊天模型", 422)
     db.refresh(item, with_for_update=True)
     active = db.scalar(select(Message).where(Message.conversation_id == item.id, Message.status.in_(["queued", "processing"])))
     if active:
@@ -410,11 +467,11 @@ def send_message(conversation_id: str, body: ChatMessage, db: Session = Depends(
     message = Message(conversation_id=item.id, role="assistant", status="queued", created_at=created_at + timedelta(microseconds=1))
     db.add(message)
     db.flush()
-    job = IngestionJob(kb_id=item.scope["kb_ids"][0], kind="chat", payload={"conversation_id": item.id, "message_id": message.id,
-        "retrieval_mode": body.retrieval_mode})
+    job = IngestionJob(kb_id=item.kb_id or item.scope["kb_ids"][0], kind="chat", payload={"conversation_id": item.id, "message_id": message.id,
+        "retrieval_mode": body.retrieval_mode, "model": selected_model})
     db.add(job)
     sequence = emit_chat(db, item.id, "status", {"message_id": message.id, "message": "已排队，等待检索资料"})
-    message.retrieval = {"stream_sequence": sequence, "retrieval_mode": body.retrieval_mode}
+    message.retrieval = {"stream_sequence": sequence, "retrieval_mode": body.retrieval_mode, "model": selected_model}
     return message
 
 
@@ -424,13 +481,9 @@ def conversation_events(conversation_id: str, after: int = Query(0, ge=0), last_
     cursor = int(last_event_id) if last_event_id and last_event_id.isdigit() else after
     def visible_event(session, item):
         data = dict(item.data)
-        if item.type == "citation" and data.get("document_id"):
-            try:
-                doc = get_document(session, get_actor(session), data["document_id"])
-                data["document_name"] = doc.display_name
-                data["available"] = True
-            except AppError:
-                data["snippet"], data["document_name"], data["available"] = "来源已删除或不可访问", "来源不可用", False
+        if item.type == "citation":
+            conversation = checked_conversation(session, conversation_id)
+            data = visible_citation(session, get_actor(session), data, kb_ids=conversation.scope["kb_ids"])
         return data
 
     return event_stream(ConversationEvent, ConversationEvent.conversation_id, conversation_id, cursor, terminal=lambda session: not session.scalar(select(Message.id).where(Message.conversation_id == conversation_id, Message.status.in_(["queued", "processing"]))), session_factory=sessionmaker(db.get_bind(), expire_on_commit=False), authorize=lambda session: checked_conversation(session, conversation_id), transform=visible_event)

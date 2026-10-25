@@ -2,31 +2,42 @@ import { useEffect, useRef, useState } from "react";
 import { Search, ArrowUpRight } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api, anchorText } from "../../lib/api";
-import type { Citation, SearchResponse } from "../../lib/api";
+import type { Citation, SearchResponse, Tag } from "../../lib/api";
 import { Dialog } from "../../components/ui/dialog";
+import { Select } from "../../components/ui/select";
 import { Empty, ErrorState, Loading } from "../../components/common";
 import { retrievalNotice } from "./retrievalNotice";
+import { useDocumentFormats } from "../../lib/documentFormats";
 export function SearchDialog({
   open,
   onOpenChange,
   kbId,
   onOpen,
+  tags = [],
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   kbId: string;
   onOpen: (c: Citation) => void;
+  tags?: Tag[];
 }) {
+  const formatCatalog = useDocumentFormats(open);
   const [text, setText] = useState("");
   const [debounced, setDebounced] = useState("");
   const [selected, setSelected] = useState(0);
+  const [ext, setExt] = useState("");
+  const [tagFilter, setTagFilter] = useState({ kbId, id: "" });
+  const tagId =
+    tagFilter.kbId === kbId && tags.some((tag) => tag.id === tagFilter.id)
+      ? tagFilter.id
+      : "";
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const id = setTimeout(() => setDebounced(text), 250);
     return () => clearTimeout(id);
   }, [text]);
   const result = useQuery({
-    queryKey: ["search", kbId, debounced],
+    queryKey: ["search", kbId, debounced, ext, tagId],
     queryFn: () =>
       api<SearchResponse>("/search", {
         method: "POST",
@@ -36,6 +47,8 @@ export function SearchDialog({
           kb_ids: [kbId],
           mode: "hybrid",
           limit: 25,
+          ...(ext ? { exts: [ext] } : {}),
+          ...(tagId ? { tag_ids: [tagId] } : {}),
         }),
       }),
     enabled: open && !!kbId && !!debounced.trim(),
@@ -95,6 +108,39 @@ export function SearchDialog({
           }}
         />
         <kbd>ESC</kbd>
+      </div>
+      <div className="file-filters search-dialog-filters">
+        <Select
+          aria-label="搜索文件类型"
+          value={ext}
+          size="sm"
+          onValueChange={(value) => {
+            setExt(value);
+            setSelected(0);
+          }}
+          options={[
+            { value: "", label: "全部类型" },
+            ...formatCatalog.formats.map((format) => ({
+              value: format.extension,
+              label: format.extension.toUpperCase(),
+            })),
+          ]}
+        />
+        {!!tags.length && (
+          <Select
+            aria-label="搜索标签"
+            value={tagId}
+            size="sm"
+            onValueChange={(value) => {
+              setTagFilter({ kbId, id: value });
+              setSelected(0);
+            }}
+            options={[
+              { value: "", label: "全部标签" },
+              ...tags.map((tag) => ({ value: tag.id, label: tag.name })),
+            ]}
+          />
+        )}
       </div>
       {notice && <p className="search-mode muted">{notice}</p>}
       <div className="search-results" role="listbox" aria-label="搜索结果">

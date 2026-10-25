@@ -1,5 +1,5 @@
 export type ThemeMode = "light" | "dark" | "system";
-export type PaletteId = "ink" | "sage";
+export type PaletteId = "ink" | "sage" | "ocean" | "violet" | "rose" | "sand";
 export type FontPairing = "mixed" | "sans";
 
 export type Appearance = {
@@ -31,6 +31,34 @@ export const PALETTES = [
     background: "#f3f5f2",
     accent: "#3f6b50",
   },
+  {
+    id: "ocean",
+    name: "海盐蓝",
+    note: "清透蓝灰，专注而轻盈",
+    background: "#eff4f8",
+    accent: "#356784",
+  },
+  {
+    id: "violet",
+    name: "暮山紫",
+    note: "雾紫与纸白，安静柔和",
+    background: "#f3f0f7",
+    accent: "#735b92",
+  },
+  {
+    id: "rose",
+    name: "蔷薇粉",
+    note: "浅玫瑰色，温柔明亮",
+    background: "#f8f0f1",
+    accent: "#895264",
+  },
+  {
+    id: "sand",
+    name: "麦穗金",
+    note: "暖沙与琥珀，适合长时间阅读",
+    background: "#f7f3eb",
+    accent: "#7e5e2b",
+  },
 ] as const;
 
 export const FONT_PAIRINGS = [
@@ -43,7 +71,9 @@ export function normalizeAppearance(value: Partial<Appearance>): Appearance {
     theme: ["light", "dark", "system"].includes(value.theme || "")
       ? (value.theme as ThemeMode)
       : DEFAULT_APPEARANCE.theme,
-    palette: value.palette === "sage" ? "sage" : "ink",
+    palette: PALETTES.some((palette) => palette.id === value.palette)
+      ? (value.palette as PaletteId)
+      : DEFAULT_APPEARANCE.palette,
     fontPairing: value.fontPairing === "sans" ? "sans" : "mixed",
     readingScale:
       typeof value.readingScale === "number" &&

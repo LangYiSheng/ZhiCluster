@@ -20,7 +20,7 @@ trash_documents。新文件夹供后续操作使用时，folder_id 使用 ref:<o
 只输出结构化计划，不输出隐藏思考。描述和摘要用简体中文。"""
 
 
-def plan_with_model(db, actor, kb_id, goal, emit, observed_versions, model=None, settings=None) -> PlanDraft:
+def plan_with_model(db, actor, kb_id, goal, emit, observed_versions, model=None, settings=None, *, organization_mode=None, document_ids=None) -> PlanDraft:
     settings = settings or get_runtime_settings(db, get_settings())
     if model is None:
         if not settings.llm_configured:
@@ -33,8 +33,13 @@ def plan_with_model(db, actor, kb_id, goal, emit, observed_versions, model=None,
             max_retries=settings.llm_max_retries,
         )
     emit("status", {"message": "正在查阅知识库并生成整理计划"})
-    tools = planning_tools(db, actor, kb_id, emit, observed_versions, settings=settings)
-    agent = create_agent(model=model, tools=tools, system_prompt=SYSTEM_PROMPT,
+    tools = planning_tools(db, actor, kb_id, emit, observed_versions, settings=settings, document_ids=document_ids)
+    instructions = SYSTEM_PROMPT
+    if organization_mode:
+        from app.agent.organization import MODE_INSTRUCTIONS
+
+        instructions += MODE_INSTRUCTIONS[organization_mode] + "空目录清理由服务计算，禁止自行提出清理所选文档原位置之外的目录。"
+    agent = create_agent(model=model, tools=tools, system_prompt=instructions,
                          response_format=ToolStrategy(PlanDraft, handle_errors=False))
     try:
         result = agent.invoke({"messages": [{"role": "user", "content": goal}]},

@@ -254,13 +254,18 @@ def snapshot(entity):
 
 
 def document_snapshot(db, doc):
+    from app.ingestion.format_registry import get_format
+
     data = snapshot(doc)
+    data["preview_type"] = get_format(doc.ext).preview
     data["tag_ids"] = list(db.scalars(select(DocumentTag.tag_id).where(DocumentTag.document_id == doc.id)))
     return data
 
 
 def document_snapshots(db, documents):
     """Load tags for a bounded document page without one query per document."""
+    from app.ingestion.format_registry import get_format
+
     documents = list(documents)
     if not documents:
         return []
@@ -268,7 +273,7 @@ def document_snapshots(db, documents):
     for document_id, tag_id in db.execute(select(DocumentTag.document_id, DocumentTag.tag_id).where(
         DocumentTag.document_id.in_([doc.id for doc in documents])).order_by(DocumentTag.tag_id)):
         tags[document_id].append(tag_id)
-    return [{**snapshot(doc), "tag_ids": tags[doc.id]} for doc in documents]
+    return [{**snapshot(doc), "preview_type": get_format(doc.ext).preview, "tag_ids": tags[doc.id]} for doc in documents]
 
 
 def audit(db, actor, kb_id, action, entity_id, before, after, **kwargs):

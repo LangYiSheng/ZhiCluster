@@ -145,7 +145,7 @@
   font-size: var(--text-caption);
   color: var(--muted);
 }
-.chat-composer .button {
+.chat-composer .chat-send {
   border-radius: var(--radius-control);
   min-width: 34px;
   min-height: 34px;
@@ -539,20 +539,26 @@ label.scope-descendants {
   background: var(--panel);
 }
 .conversation-history {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  gap: 16px;
+  padding: 6px;
 }
-.history-popover {
+.popover-content.history-popover {
   width: min(340px, calc(100vw - 24px));
-  padding: 12px;
+  padding: 0;
+  background: var(--color-canvas);
 }
 .history-popover .popover-heading {
-  margin-bottom: 8px;
-  margin-left: 6px;
+  margin: 0;
+  padding: 11px 12px 11px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+.history-popover .empty-state {
+  padding: 28px 18px;
+  height: auto;
 }
 .history-list {
   display: grid;

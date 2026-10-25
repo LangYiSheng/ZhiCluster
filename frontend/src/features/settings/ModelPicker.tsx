@@ -9,6 +9,7 @@ import type {
 } from "../../lib/settings";
 import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";
+import { Checkbox } from "../../components/ui/checkbox";
 
 type CatalogState = {
   identity: object;
@@ -40,6 +41,8 @@ export function ModelPicker({
   manual,
   onManualChange,
   onChange,
+  enabledModels,
+  onEnabledModelsChange,
 }: {
   scope: ModelScope;
   connection: ConnectionDraft;
@@ -48,6 +51,8 @@ export function ModelPicker({
   manual: boolean;
   onManualChange: (manual: boolean) => void;
   onChange: (value: string) => void;
+  enabledModels?: string[];
+  onEnabledModelsChange?: (models: string[]) => void;
 }) {
   const baseUrl = connection.base_url.trim();
   const apiKey = connection.api_key || "";
@@ -217,6 +222,33 @@ export function ModelPicker({
       <p id={`${id}-help`} className="zc-field-help" role="status">
         {notice}
       </p>
+      {scope === "llm" && !!models.length && onEnabledModelsChange && (
+        <fieldset className="zc-catalog-models">
+          <legend>从服务目录启用聊天模型</legend>
+          <div>
+            {models.map((model) => (
+              <label className="zc-checkbox" key={model.id}>
+                <Checkbox
+                  checked={enabledModels?.includes(model.id) || false}
+                  disabled={
+                    model.id === connection.model ||
+                    ((enabledModels?.length || 0) >= 100 &&
+                      !enabledModels?.includes(model.id))
+                  }
+                  onChange={(event) =>
+                    onEnabledModelsChange(
+                      event.target.checked
+                        ? [...new Set([...(enabledModels || []), model.id])]
+                        : (enabledModels || []).filter((id) => id !== model.id),
+                    )
+                  }
+                />
+                <span>{model.id}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
     </div>
   );
 }

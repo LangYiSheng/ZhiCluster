@@ -54,6 +54,7 @@ export function Dialog({
   description,
   children,
   wide = false,
+  className = "",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -61,13 +62,14 @@ export function Dialog({
   description?: string;
   children: ReactNode;
   wide?: boolean;
+  className?: string;
 }) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="dialog-overlay" />
         <FocusReturnContent
-          className={`dialog-content ${wide ? "dialog-wide" : ""}`}
+          className={`dialog-content ${wide ? "dialog-wide" : ""} ${className}`}
           aria-describedby={description ? "dialog-description" : undefined}
         >
           <DialogPrimitive.Title className="dialog-title">

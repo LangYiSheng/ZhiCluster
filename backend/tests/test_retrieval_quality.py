@@ -201,6 +201,9 @@ def test_vector_failure_preserves_keyword_evidence_and_progress(factory, monkeyp
         assert "测试向量服务暂不可用" in found["notice"]
         assert found["items"][0]["document_id"] == target.id
         assert [stage for stage, _ in stages] == ["keyword", "embedding", "ranking"]
+        embedding_details = next(details for stage, details in stages if stage == "embedding")
+        assert embedding_details == {"query_count": 1, "knowledge_bases": 1}
+        assert "queries" not in embedding_details  # Reserved for search-round string arrays.
 
 
 def test_scope_folder_tags_and_current_embedding_profile_are_preserved(client, factory, monkeypatch):

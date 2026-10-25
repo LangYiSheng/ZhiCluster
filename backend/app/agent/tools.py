@@ -12,7 +12,7 @@ from app.db.models import Document, DocumentSection, DocumentTag, Folder, Knowle
 from app.services.permissions import accessible_kb_ids, assert_can_read_kb
 
 
-def planning_tools(db: Session, actor, kb_id: str, emit: Callable, observed_versions: dict[str, int], settings=None):
+def planning_tools(db: Session, actor, kb_id: str, emit: Callable, observed_versions: dict[str, int], settings=None, document_ids=None):
     lock = threading.RLock()
 
     def check_scope():
@@ -60,6 +60,8 @@ def planning_tools(db: Session, actor, kb_id: str, emit: Callable, observed_vers
             check_scope()
             offset, limit = max(0, offset), min(100, max(1, limit))
             query = select(Document).where(Document.kb_id == kb_id, Document.deleted_at.is_(None))
+            if document_ids is not None:
+                query = query.where(Document.id.in_(document_ids))
             if unclassified_only:
                 query = query.where(Document.folder_id.is_(None))
             documents = list(db.scalars(query.order_by(Document.id).offset(offset).limit(limit + 1)))
@@ -82,7 +84,8 @@ def planning_tools(db: Session, actor, kb_id: str, emit: Callable, observed_vers
         with lock:
             check_scope()
             document = db.get(Document, document_id)
-            if not document or document.kb_id != kb_id or document.deleted_at:
+            if (not document or document.kb_id != kb_id or document.deleted_at
+                    or (document_ids is not None and document.id not in document_ids)):
                 raise AppError("not_found", "当前知识范围中不存在此文档", 404)
             remember("document", document)
             sections = list(db.scalars(select(DocumentSection).where(DocumentSection.document_id == document.id,
@@ -97,7 +100,8 @@ def planning_tools(db: Session, actor, kb_id: str, emit: Callable, observed_vers
             check_scope()
             from app.retrieval.search import search_knowledge as search
 
-            return search(db, actor, {"query": query, "kb_ids": [kb_id], "limit": min(20, max(1, limit))}, settings=settings)
+            return search(db, actor, {"query": query, "kb_ids": [kb_id], "limit": min(20, max(1, limit)),
+                **({"document_ids": document_ids} if document_ids is not None else {})}, settings=settings)
 
     return [StructuredTool.from_function(fn) for fn in (
         list_knowledge_bases, list_folders, list_tags, list_documents, get_document,

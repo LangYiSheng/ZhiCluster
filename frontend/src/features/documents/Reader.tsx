@@ -11,6 +11,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, query } from "../../lib/api";
+import { anchorNumber, matchesSourceAnchor } from "../../lib/sourceAnchors";
 import type {
   Citation,
   Document,
@@ -86,31 +87,34 @@ export function Reader({
   useEffect(() => {
     setPage(
       citation?.page_start ||
-        citation?.anchors?.page_start ||
-        citation?.anchors?.page ||
+        anchorNumber(citation?.anchors, "page_start") ||
+        anchorNumber(citation?.anchors, "page") ||
         1,
     );
   }, [citation]);
   useEffect(() => {
     if (!active || !citation || !content.data || !body.current) return;
-    const a = citation.anchors || {};
+    const a = citation.anchors ||
+      citation.anchor || {
+        ...(citation.page_start ? { page_start: citation.page_start } : {}),
+        ...(citation.paragraph_start
+          ? { paragraph_start: citation.paragraph_start }
+          : {}),
+        ...(citation.line_start ? { line_start: citation.line_start } : {}),
+      };
     const sections = content.data.sections;
     const target = sections.find((s) => {
       const sa = s.anchors || {};
-      return a.line_start
-        ? sa.line_start <= a.line_start &&
-            (sa.line_end || sa.line_start) >= a.line_start
-        : a.paragraph_start
-          ? sa.paragraph_start <= a.paragraph_start &&
-            (sa.paragraph_end || sa.paragraph_start) >= a.paragraph_start
-          : a.page_start
-            ? sa.page_start === a.page_start
-            : false;
+      return matchesSourceAnchor(sa, a);
     });
     if (target) {
       const element = body.current.querySelector(
         `[data-section-id="${CSS.escape(target.id)}"]`,
       );
+      const folded = element?.querySelector<HTMLDetailsElement>(
+        "details.structured-text-section",
+      );
+      if (folded) folded.open = true;
       element?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [active, citation, content.data, reader, locate]);
@@ -271,8 +275,10 @@ export function Reader({
                 <div>
                   <span>文件夹</span>
                   <strong>
-                    {folders.find((f) => f.id === d.folder_id)?.name ||
-                      "未分类"}
+                    {d.folder_id
+                      ? folders.find((f) => f.id === d.folder_id)?.name ||
+                        "文件夹已不可用"
+                      : "知识库根目录"}
                   </strong>
                 </div>
                 <div>
@@ -320,8 +326,8 @@ export function Reader({
             onLocate={() => {
               setPage(
                 citation?.page_start ||
-                  citation?.anchors?.page_start ||
-                  citation?.anchors?.page ||
+                  anchorNumber(citation?.anchors, "page_start") ||
+                  anchorNumber(citation?.anchors, "page") ||
                   1,
               );
               setLocate((value) => value + 1);

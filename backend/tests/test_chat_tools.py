@@ -134,8 +134,6 @@ def test_message_request_defaults_direct_and_rejects_unknown_mode(client, factor
 
 
 @pytest.mark.parametrize("response", [
-    '{"searches":[{"query":"真实查询","kb_ids":["foreign-kb"]}]}',
-    '{"searches":[{"query":"真实查询","document_ids":[]}]}',
     '{"searches":[{"query":"   "}]}',
     '{"searches":[' + ','.join('{"query":"测试"}' for _ in range(4)) + ']}',
     '{"searches":[]}',

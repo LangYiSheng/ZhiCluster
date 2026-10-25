@@ -48,7 +48,7 @@ it("正文中的来源标记使用真实序号，可点击，代码与链接内�
   expect(screen.getAllByRole("button")).toHaveLength(3);
 });
 
-it("来源列表只显示实际引用的条目，处理完成自动收起并能回看真实阶段", async () => {
+it("来源只显示实际引用，查阅过程默认压缩一行且完成后能展开回看", async () => {
   render(
     <CitationList
       content="回答[S5]"
@@ -70,7 +70,10 @@ it("来源列表只显示实际引用的条目，处理完成自动收起并能�
     },
   };
   const mounted = render(<ChatProgress message={message} />);
-  expect(document.querySelector("details")).toHaveAttribute("open");
+  expect(document.querySelector("details")).not.toHaveAttribute("open");
+  expect(
+    within(document.querySelector("summary")!).getByText("正在查找资料"),
+  ).toBeVisible();
   mounted.rerender(
     <ChatProgress
       message={{
@@ -91,8 +94,10 @@ it("来源列表只显示实际引用的条目，处理完成自动收起并能�
   );
   expect(document.querySelector("details")).not.toHaveAttribute("open");
   await userEvent.click(screen.getByText("已完成资料查阅"));
-  expect(screen.getByText("关键词检索")).toBeVisible();
-  expect(screen.getByText("42 ms")).toBeVisible();
+  expect(screen.getByText("在当前知识范围中查找相关资料")).toBeVisible();
+  expect(screen.getByText("已完成检索")).toBeVisible();
+  expect(screen.queryByText("关键词检索")).not.toBeInTheDocument();
+  expect(screen.queryByText("42 ms")).not.toBeInTheDocument();
 });
 
 it("来源默认单行预览，展开后显示全部真实引用且失效来源无法打开", async () => {
@@ -130,7 +135,7 @@ it("来源默认单行预览，展开后显示全部真实引用且失效来源�
   );
   expect(within(list).getAllByRole("listitem")).toHaveLength(4);
   expect(
-    within(list).getByRole("button", { name: /已删除文档/ }),
+    within(list).getByRole("button", { name: "来源不可用 8" }),
   ).toBeDisabled();
   await userEvent.click(
     within(list).getByRole("button", { name: /查看来源 10：附件10/ }),
@@ -140,7 +145,7 @@ it("来源默认单行预览，展开后显示全部真实引用且失效来源�
   expect(screen.queryByText("附件10.pdf")).not.toBeInTheDocument();
 });
 
-it("过程只显示实际查询与工具字段，常规检索实现文案隐藏而必要降级保留", () => {
+it("旧查询过程只保留搜索词和结果，工具字段、耗时与实现说明均隐藏", async () => {
   const message = {
     id: "m",
     role: "assistant",
@@ -163,8 +168,12 @@ it("过程只显示实际查询与工具字段，常规检索实现文案隐藏�
     },
   };
   const mounted = render(<ChatProgress message={message} />);
+  expect(screen.getByText("推免名额")).not.toBeVisible();
+  expect(screen.getByText("1 轮查阅")).toBeVisible();
+  await userEvent.click(screen.getByText("正在查找资料"));
   expect(screen.getByText("推免名额")).toBeVisible();
-  expect(screen.getByText("搜索知识库 · 第 2 轮")).toBeVisible();
+  expect(screen.getByText("已检索到 4 条信息")).toBeVisible();
+  expect(screen.queryByText("搜索知识库 · 第 2 轮")).not.toBeInTheDocument();
   expect(screen.queryByText(/cosine/)).not.toBeInTheDocument();
   mounted.rerender(
     <ChatProgress
@@ -177,5 +186,7 @@ it("过程只显示实际查询与工具字段，常规检索实现文案隐藏�
       }}
     />,
   );
-  expect(screen.getByText("尚未配置向量模型，可前往设置连接。")).toBeVisible();
+  expect(
+    screen.queryByText("尚未配置向量模型，可前往设置连接。"),
+  ).not.toBeInTheDocument();
 });

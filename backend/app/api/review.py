@@ -93,5 +93,6 @@ def create_organization_plan(body: OrganizationRequest, db: Session = Depends(ge
     db.add(run)
     db.flush()
     db.add(IngestionJob(kb_id=body.kb_id, kind="organize", payload={"run_id": run.id,
-        "document_ids": [doc["id"] for doc in source["documents"]]}))
+        "document_ids": [doc["id"] for doc in source["documents"]], "mode": body.mode,
+        "cleanup_empty_folders": body.cleanup_empty_folders and body.mode != "tags"}))
     return library.snapshot(run)

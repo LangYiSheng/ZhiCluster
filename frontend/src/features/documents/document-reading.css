@@ -1,0 +1,34 @@
+.document-text-preview-note {
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: var(--text-caption);
+}
+.document-section-pagination {
+  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 8px;
+  background: var(--background);
+  border-bottom: 1px solid var(--border);
+}
+.structured-text-section > summary {
+  cursor: pointer;
+}
+.structured-text-section > summary .section-anchor {
+  display: inline-flex;
+  width: calc(100% - 20px);
+  vertical-align: top;
+}
+.document-reader .section-anchor {
+  align-items: flex-start;
+}
+.document-reader .section-anchor strong,
+.document-reader .section-anchor small {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.document-reader .section-anchor small {
+  white-space: normal;
+  text-align: right;
+}

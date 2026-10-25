@@ -57,11 +57,21 @@ def check_tag_links(db, data):
                            {"resource": f"document:{document_id}"})
 
 
-def require_empty_folder(db, kb_id, folder_id):
+def require_empty_folder(db, kb_id, folder_id, *, strict=False):
     has_docs = db.scalar(select(Document.id).where(Document.kb_id == kb_id, Document.folder_id == folder_id,
                                                   Document.deleted_at.is_(None)).limit(1))
     has_children = db.scalar(select(Folder.id).where(Folder.kb_id == kb_id, Folder.parent_id == folder_id,
                                                     Folder.deleted_at.is_(None)).limit(1))
+    if strict:
+        parents = dict(db.execute(select(Folder.id, Folder.parent_id).where(Folder.kb_id == kb_id)).all())
+        descendants = {folder_id}
+        while True:
+            expanded = descendants | {identifier for identifier, parent in parents.items() if parent in descendants}
+            if expanded == descendants:
+                break
+            descendants = expanded
+        has_docs = db.scalar(select(Document.id).where(Document.kb_id == kb_id,
+            Document.folder_id.in_(descendants)).limit(1))
     if has_docs or has_children:
         raise AppError("folder_not_empty", "文件夹中仍有文档或子文件夹，只能删除空文件夹", 409,
                        {"resource": f"folder:{folder_id}"})
@@ -82,9 +92,6 @@ def validate_deletions(db, data):
             if seen & keys:
                 raise AppError("conflicting_operations", "同一删除目标不能重复执行", 409)
             seen.update(keys)
-        if op.type == "trash_empty_folders":
-            for folder_id in op.target_ids:
-                require_empty_folder(db, data.kb_id, folder_id)
         if op.type == "update_document_tags" and deleted_tags & set(op.params.tag_ids):
             raise AppError("conflicting_operations", "不能在同一方案中分配并删除同一个标签", 409)
         if op.type == "update_document_tags" and deleted_tag_names & {library.normalized_name(name) for name in op.params.new_tag_names}:
@@ -94,6 +101,43 @@ def validate_deletions(db, data):
             raise AppError("conflicting_operations", "不能将文档或新目录放入将被删除的文件夹", 409)
         if op.type == "rename_folder" and set(op.target_ids) & deleted_folders:
             raise AppError("conflicting_operations", "不能在同一方案中重命名并删除同一文件夹", 409)
+    validate_folder_sequence(db, data)
+
+
+def validate_folder_sequence(db, data):
+    """Simulate only this reviewed sequence; never assume a future move occurred."""
+    if not any(op.enabled and op.type == "trash_empty_folders" for op in data.operations):
+        return
+    folders = list(db.scalars(select(Folder).where(Folder.kb_id == data.kb_id)))
+    parents = {folder.id: folder.parent_id for folder in folders}
+    active = {folder.id for folder in folders if not folder.deleted_at}
+    query = select(Document.id, Document.folder_id).where(Document.kb_id == data.kb_id)
+    if not data.organization:
+        query = query.where(Document.deleted_at.is_(None))
+    positions = dict(db.execute(query).all())
+    for op in data.operations:
+        if not op.enabled:
+            continue
+        if op.type == "move_documents":
+            for identifier in op.target_ids:
+                positions[identifier] = op.params.folder_id
+        elif op.type == "trash_documents":
+            for identifier in op.target_ids:
+                positions.pop(identifier, None)
+        elif op.type == "trash_empty_folders":
+            for identifier in op.target_ids:
+                descendants = {identifier}
+                if data.organization:
+                    while True:
+                        expanded = descendants | {child for child, parent in parents.items() if parent in descendants}
+                        if expanded == descendants:
+                            break
+                        descendants = expanded
+                if (identifier not in active or any(parent == identifier for child, parent in parents.items() if child in active)
+                        or any(folder_id in descendants for folder_id in positions.values())):
+                    raise AppError("folder_not_empty", "计划执行到清理步骤时文件夹仍不为空，请调整方案或取消清理", 409,
+                                   {"resource": f"folder:{identifier}"})
+                active.remove(identifier)
 
 
 def check_deleted_tag_restore(db, kb_id, records):

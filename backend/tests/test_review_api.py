@@ -61,7 +61,8 @@ def test_review_page_filters_versions_paths_and_document_scope(client, factory):
     selected = client.get("/api/review/suggestions", params={"kb_id": first, "document_id": doc_id}).json()
     item = selected["items"][0]
     assert item["id"] == suggestion_id and item["conflict"]
-    assert item["current_folder_path"] == "知识库根目录" and item["target_folder_path"] == "主题/研究"
+    assert item["current_folder_path"] == item["target_folder_path"] == "知识库根目录"
+    assert item["payload"]["proposed_folder_path"] is None
     assert item["can_edit"] and item["document_available"]
     wrong = client.get("/api/review/suggestions", params={"kb_id": second, "document_id": doc_id})
     assert wrong.status_code == 400 and wrong.json()["code"] == "scope_mismatch"
@@ -78,9 +79,10 @@ def test_single_apply_has_audited_plan_and_conflict_safe_undo(client, factory):
     run_id = approved.json()["run_id"]
     with factory() as db:
         doc = db.get(Document, doc_id)
-        assert db.get(Folder, doc.folder_id).name == "研究"
+        assert doc.folder_id is None
+        assert db.scalar(select(func.count()).select_from(Folder)) == 0
         assert db.scalar(select(Tag.name).join(DocumentTag, DocumentTag.tag_id == Tag.id).where(DocumentTag.document_id == doc_id)) == "研究"
-        assert db.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.run_id == run_id)) >= 3
+        assert db.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.run_id == run_id)) >= 2
     repeated = client.post(f"/api/review/suggestions/{suggestion_id}", json={"action": "apply", "document_version": version})
     assert repeated.status_code == 409 and repeated.json()["code"] == "not_pending"
     assert client.post(f"/api/agent/runs/{run_id}/undo").status_code == 200

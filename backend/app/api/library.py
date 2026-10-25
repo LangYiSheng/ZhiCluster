@@ -1,9 +1,10 @@
 import hashlib
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -11,6 +12,7 @@ from app.core.errors import AppError
 from app.db.models import (
     ClassificationSuggestion,
     Document,
+    DocumentChunk,
     DocumentSection,
     DocumentTag,
     Folder,
@@ -58,6 +60,18 @@ from app.services.permissions import assert_can_manage_kb, assert_can_read_kb, g
 router = APIRouter(prefix="/api")
 
 
+@router.get("/settings/file-formats")
+def file_formats(db: Session = Depends(get_db, scope="function")):
+    from app.ingestion.format_registry import get_registry
+
+    get_actor(db)
+    settings = get_settings()
+    return {"formats": [spec.public() for spec in get_registry().values()], "limits": {
+        "max_file_size_bytes": settings.max_upload_size_mb * 1024 * 1024,
+        "max_batch_size_bytes": settings.max_upload_batch_mb * 1024 * 1024,
+        "max_batch_files": settings.max_upload_batch_files}}
+
+
 @router.get("/knowledge-bases", response_model=list[KnowledgeBaseOut])
 def knowledge_bases(include_deleted: bool = False, db: Session = Depends(get_db, scope="function")):
     actor = get_actor(db)
@@ -70,7 +84,9 @@ def knowledge_bases(include_deleted: bool = False, db: Session = Depends(get_db,
 @router.post("/knowledge-bases", status_code=201, response_model=KnowledgeBaseOut)
 def create_kb(body: KBCreate, db: Session = Depends(get_db, scope="function")):
     actor = get_actor(db)
-    kb = KnowledgeBase(name=valid_name(body.name), description=body.description, owner_id=actor.id)
+    if body.embedding_model is not None:
+        body.embedding_model = valid_name(body.embedding_model, 512)
+    kb = KnowledgeBase(**{**body.model_dump(), "name": valid_name(body.name)}, owner_id=actor.id)
     db.add(kb)
     db.flush()
     db.add(KnowledgeBaseMember(kb_id=kb.id, user_id=actor.id, role="owner"))
@@ -98,6 +114,14 @@ def patch_kb(kb_id: str, body: KBUpdate, db: Session = Depends(get_db, scope="fu
         kb.name = valid_name(body.name)
     if body.description is not None:
         kb.description = body.description
+    for field in ("icon", "color", "embedding_model", "embedding_dimension"):
+        if field in body.model_fields_set:
+            value = getattr(body, field)
+            if field in {"icon", "color"} and value is None:
+                raise AppError("invalid_metadata", "图标和颜色不能为空", 422)
+            if field == "embedding_model" and value is not None:
+                value = valid_name(value, 512)
+            setattr(kb, field, value)
     kb.version += 1
     return kb
 
@@ -237,12 +261,12 @@ def delete_tag(tag_id: str, db: Session = Depends(get_db, scope="function")):
 
 
 @router.get("/knowledge-bases/{kb_id}/documents", response_model=DocumentPage)
-def documents(kb_id: str, folder_id: str | None = None, include_descendants: bool = False, tag_ids: str = "", ext: str | None = None, status: str | None = None, trash: bool = False, sort: str = "date", page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200), db: Session = Depends(get_db, scope="function")):
+def documents(kb_id: str, folder_id: str | None = None, include_descendants: bool = False, tag_ids: str = "", ext: str | None = None, status: str | None = None, trash: bool = False, sort: str = "date", q: str = Query("", max_length=2000), page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200), db: Session = Depends(get_db, scope="function")):
     assert_can_read_kb(db, get_actor(db), kb_id)
     stmt = select(Document).where(Document.kb_id == kb_id, Document.deleted_at.is_not(None) if trash else Document.deleted_at.is_(None))
-    if folder_id == "root":
+    if folder_id == "root" and not include_descendants:
         stmt = stmt.where(Document.folder_id.is_(None))
-    elif folder_id:
+    elif folder_id and folder_id != "root":
         ids = descendants(db, kb_id, [folder_id]) if include_descendants else {validate_folder(db, kb_id, folder_id).id}
         stmt = stmt.where(Document.folder_id.in_(ids))
     for tag_id in filter(None, tag_ids.split(",")):
@@ -254,14 +278,21 @@ def documents(kb_id: str, folder_id: str | None = None, include_descendants: boo
         stmt = stmt.where(Document.ext == ext.lstrip("."))
     if status:
         stmt = stmt.where(Document.parse_status == status)
+    if q.strip():
+        term = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        stmt = stmt.where(or_(Document.display_name.ilike(term, escape="\\"),
+            Document.id.in_(select(DocumentChunk.document_id).where(DocumentChunk.kb_id == kb_id,
+                DocumentChunk.content.ilike(term, escape="\\")))))
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
-    order = {"name": Document.display_name, "type": Document.ext, "date": Document.created_at.desc()}.get(sort, Document.created_at.desc())
+    order = {"name": Document.display_name, "type": Document.ext, "date": Document.created_at.desc(),
+        "created": Document.created_at.desc(), "updated": Document.updated_at.desc(), "size": Document.size_bytes.desc()}.get(sort, Document.created_at.desc())
     items = db.scalars(stmt.order_by(order, Document.id).offset((page - 1) * page_size).limit(page_size))
     return {"items": document_snapshots(db, items), "total": total, "page": page, "page_size": page_size}
 
 
 @router.post("/knowledge-bases/{kb_id}/uploads")
-def upload(kb_id: str, files: list[UploadFile] = File(...), folder_id: str | None = Form(None), duplicate_policy: str = Form("skip"), db: Session = Depends(get_db, scope="function")):
+def upload(kb_id: str, files: list[UploadFile] = File(...), folder_id: str | None = Form(None), duplicate_policy: str = Form("skip"), relative_paths: str | None = Form(None), db: Session = Depends(get_db, scope="function")):
+    from app.ingestion.format_registry import get_format
     from app.ingestion.parsers import validate_content
 
     settings, actor = get_settings(), get_actor(db)
@@ -269,24 +300,35 @@ def upload(kb_id: str, files: list[UploadFile] = File(...), folder_id: str | Non
     validate_folder(db, kb_id, folder_id or None)
     if len(files) > settings.max_upload_batch_files or duplicate_policy not in {"skip", "copy"}:
         raise AppError("invalid_batch", "批量数量超限或重复文件策略不合法")
+    paths = None
+    if relative_paths is not None:
+        try:
+            paths = json.loads(relative_paths)
+            if not isinstance(paths, list) or len(paths) != len(files) or any(not isinstance(path, str) for path in paths):
+                raise ValueError()
+            for path, file in zip(paths, files, strict=True):
+                parts = path.split("/")
+                if (len(path) > 2048 or len(parts) > 32 or "\\" in path or ":" in path
+                        or any(part in {"", ".", ".."} for part in parts) or parts[-1] != file.filename):
+                    raise ValueError()
+                for part in parts:
+                    valid_name(part, 255 if part == parts[-1] else 160)
+            if len(set(paths)) != len(paths):
+                raise ValueError()
+        except (ValueError, TypeError, AppError) as error:
+            raise AppError("invalid_relative_paths", "文件夹路径不合法，需与文件一一对应且不能包含绝对路径或上级目录", 422) from error
     items, jobs, total = [], [], 0
-    for file in files:
+    folder_cache = {}
+    for index, file in enumerate(files):
         name = file.filename or ""
         try:
             if any(c in name for c in ["/", "\\", "\x00"]) or name in {".", ".."}:
                 raise AppError("invalid_filename", "文件名包含危险路径")
             valid_name(name, 255)
             ext = Path(name).suffix.lower().lstrip(".")
-            if ext not in {"pdf", "docx", "md", "txt"}:
-                raise AppError("unsupported_type", "仅支持 PDF、DOCX、MD、TXT")
-            allowed_mime = {
-                "pdf": {"application/pdf"},
-                "docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip"},
-                "md": {"text/markdown", "text/plain", "text/x-markdown"},
-                "txt": {"text/plain"},
-            }
+            spec = get_format(ext)
             mime = (file.content_type or "application/octet-stream").split(";", 1)[0].strip().lower()
-            if mime not in allowed_mime[ext] | {"application/octet-stream"}:
+            if mime not in {spec.mime_type, *spec.accepted_mimes, "application/octet-stream"}:
                 raise AppError("invalid_content_type", "文件内容类型与扩展名不匹配")
             # A bounded read prevents unbounded memory use, including oversized batches.
             limit = settings.max_upload_size_mb * 1024 * 1024
@@ -300,12 +342,24 @@ def upload(kb_id: str, files: list[UploadFile] = File(...), folder_id: str | Non
             if existing and duplicate_policy == "skip":
                 items.append({"status": "duplicate", "filename": name, "document": document_snapshot(db, existing), "message": "同库已有相同文件；选择保留副本可再次上传"})
                 continue
+            target_folder_id = folder_id or None
+            if paths:
+                for part in paths[index].split("/")[:-1]:
+                    cache_key = (target_folder_id, normalized_name(part))
+                    if cache_key not in folder_cache:
+                        siblings = db.scalars(select(Folder).where(Folder.kb_id == kb_id,
+                            Folder.parent_id == target_folder_id, Folder.deleted_at.is_(None)))
+                        target = next((folder for folder in siblings if normalized_name(folder.name) == normalized_name(part)), None)
+                        if target is None:
+                            target = create_folder(db, actor, kb_id, {"parent_id": target_folder_id, "name": part})
+                        folder_cache[cache_key] = target.id
+                    target_folder_id = folder_cache[cache_key]
             doc_id = new_id()
             key = f"{kb_id}/{doc_id}/original"
             dest = settings.upload_root.resolve() / key
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
-            doc = Document(id=doc_id, kb_id=kb_id, folder_id=folder_id or None, owner_id=actor.id, display_name=name, original_filename=name, mime_type={"pdf": "application/pdf", "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "md": "text/markdown", "txt": "text/plain"}[ext], ext=ext, sha256=digest, size_bytes=len(data), storage_key=key)
+            doc = Document(id=doc_id, kb_id=kb_id, folder_id=target_folder_id, owner_id=actor.id, display_name=name, original_filename=name, mime_type=spec.mime_type, ext=ext, sha256=digest, size_bytes=len(data), storage_key=key)
             db.add(doc)
             db.flush()
             job = IngestionJob(document_id=doc_id, kb_id=kb_id)

@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import type { Dispatch, KeyboardEvent } from "react";
 import { api } from "../lib/api";
-import type { Document, Folder, Tag } from "../lib/api";
+import type { Document, Folder, KnowledgeBase, Tag } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Loading } from "../components/common";
 import { DocumentsPane } from "../features/documents/DocumentsPane";
@@ -28,6 +28,12 @@ function ReferenceContent({
   onReader: (reader: boolean) => void;
   onOpen: (doc: Document, reader?: boolean) => void;
 }) {
+  const bases = useQuery({
+    queryKey: ["knowledge-bases"],
+    queryFn: () => api<KnowledgeBase[]>("/knowledge-bases"),
+  });
+  const currentBase =
+    bases.data?.find((base) => base.id === tab.kb.id) || tab.kb;
   const folders = useQuery({
     queryKey: ["folders", tab.kb.id],
     queryFn: () =>
@@ -41,7 +47,7 @@ function ReferenceContent({
   });
   return tab.kind === "library" ? (
     <DocumentsPane
-      kb={tab.kb}
+      kb={currentBase}
       folders={folders.data || []}
       tags={tags.data || []}
       trash={false}
@@ -138,7 +144,7 @@ export function ReferencePane({
       ref={pane}
       data-focus-return-scope
       tabIndex={-1}
-      className={`reference-pane ${multiple ? "has-tabs" : ""} ${!active ? "is-collapsed" : ""}`}
+      className={`reference-pane ${multiple ? "has-tabs" : ""} ${selected.kind === "library" ? "is-library" : ""} ${!active ? "is-collapsed" : ""}`}
       aria-label="参考资料"
       aria-hidden={!active}
       inert={!active}

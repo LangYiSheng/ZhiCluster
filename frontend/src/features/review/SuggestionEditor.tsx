@@ -3,12 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Dialog } from "../../components/ui/dialog";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
-import { Select } from "../../components/ui/select";
 import { ErrorState, Loading } from "../../components/common";
 import { api } from "../../lib/api";
-import type { Folder, Tag } from "../../lib/api";
+import type { Tag } from "../../lib/api";
 import type { ReviewSuggestion, SuggestionPayload } from "./api";
-import { folderPath } from "./api";
 
 export function SuggestionEditor({
   item,
@@ -25,25 +23,25 @@ export function SuggestionEditor({
     tags: string[],
   ) => void;
 }) {
-  const [payload, setPayload] = useState(initial);
+  const [payload, setPayload] = useState({
+    ...initial,
+    existing_folder_id: null,
+    proposed_folder_path: null,
+  });
   const [newTags, setNewTags] = useState(initial.new_tag_names.join("，"));
   const metadata = useQuery({
-    queryKey: ["review", "metadata", item.kb_id],
+    queryKey: ["review", "suggestion-tags", item.kb_id],
     queryFn: async () => {
-      const [folders, tags] = await Promise.all([
-        api<Folder[]>(`/knowledge-bases/${item.kb_id}/folders`),
-        api<Tag[]>(`/knowledge-bases/${item.kb_id}/tags`),
-      ]);
-      return { folders, tags };
+      const tags = await api<Tag[]>(`/knowledge-bases/${item.kb_id}/tags`);
+      return { tags };
     },
   });
-  const folders = metadata.data?.folders || [];
   const tags = metadata.data?.tags || [];
   return (
     <Dialog
       open
       onOpenChange={(open) => !open && onClose()}
-      title="调整分类建议"
+      title="调整标签建议"
       description={item.document_name}
     >
       {metadata.isPending ? (
@@ -66,9 +64,7 @@ export function SuggestionEditor({
               ),
             ];
             const final = { ...payload, new_tag_names: names };
-            const destination = final.proposed_folder_path
-              ? `${final.proposed_folder_path}（新建）`
-              : folderPath(final.existing_folder_id, folders);
+            const destination = item.current_folder_path || "知识库根目录";
             const labels = [
               ...tags
                 .filter((tag) => final.existing_tag_ids.includes(tag.id))
@@ -78,43 +74,7 @@ export function SuggestionEditor({
             onSave(final, destination, labels);
           }}
         >
-          <label>
-            目标文件夹
-            <Select
-              aria-label="建议目标文件夹"
-              value={payload.existing_folder_id || ""}
-              onValueChange={(value) =>
-                setPayload({
-                  ...payload,
-                  existing_folder_id: value || null,
-                  proposed_folder_path: null,
-                })
-              }
-              options={[
-                { value: "", label: "未分类 / 使用新路径" },
-                ...folders
-                  .filter((folder) => !folder.deleted_at)
-                  .map((folder) => ({
-                    value: folder.id,
-                    label: folderPath(folder.id, folders),
-                  })),
-              ]}
-            />
-          </label>
-          <label>
-            新建文件夹路径
-            <input
-              value={payload.proposed_folder_path || ""}
-              placeholder="例如：研究 / 方法"
-              onChange={(event) =>
-                setPayload({
-                  ...payload,
-                  proposed_folder_path: event.target.value || null,
-                  existing_folder_id: null,
-                })
-              }
-            />
-          </label>
+          <p className="review-note">标签建议不改变文档所在文件夹。</p>
           {!!tags.length && (
             <fieldset className="review-tag-options">
               <legend>添加已有标签</legend>

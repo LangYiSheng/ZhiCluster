@@ -11,6 +11,7 @@ from app.agent.metadata_deletion import (
     restore_folder,
     validate_deletions,
 )
+from app.agent.organization_policy import validate_policy
 from app.agent.plans import AgentPlanData, PlanDraft, PlanEdit
 from app.core.errors import AppError
 from app.db.models import (
@@ -122,6 +123,7 @@ def capture_versions(db, kb_id, draft, observed=None, tag_links=None):
 
 
 def validate_parameters(db, data):
+    validate_policy(data)
     validate_deletions(db, data)
     namespace = set()
     for operation in data.operations:
@@ -156,7 +158,7 @@ def store_operations(db, plan):
                                   payload=operation, status="pending" if operation["enabled"] else "skipped"))
 
 
-def persist_plan(db, actor, run, draft: PlanDraft, observed=None, observed_tag_usage=None):
+def persist_plan(db, actor, run, draft: PlanDraft, observed=None, observed_tag_usage=None, organization=None):
     assert_can_edit_kb(db, actor, run.kb_id)
     if run.status == "cancelled":
         raise AppError("invalid_run_state", "已取消的整理任务不能生成或批准计划", 409)
@@ -166,7 +168,7 @@ def persist_plan(db, actor, run, draft: PlanDraft, observed=None, observed_tag_u
     tag_links = capture_tag_links(db, run.kb_id, draft)
     if observed_tag_usage is not None and any(len(ids) != observed_tag_usage.get(tag_id) for tag_id, ids in tag_links.items()):
         raise AppError("version_conflict", "规划期间标签使用数量已变化，请重新生成并审阅计划", 409)
-    data = AgentPlanData(kb_id=run.kb_id, goal=run.goal, **draft.model_dump(), base_tag_links=tag_links,
+    data = AgentPlanData(kb_id=run.kb_id, goal=run.goal, **draft.model_dump(), base_tag_links=tag_links, organization=organization,
                          base_versions=capture_versions(db, run.kb_id, draft, observed, tag_links))
     validate_parameters(db, data)
     plan = AgentPlan(id=data.plan_id, run_id=run.id, kb_id=run.kb_id,
@@ -279,7 +281,7 @@ def execute_plan(db, actor, plan_id, plan_version, confirm_high_risk=False):
             for folder_id in operation.target_ids:
                 folder = entity(db, f"folder:{folder_id}", plan.kb_id, lock=True)
                 # Fresh final check under the namespace lock, never recursive.
-                require_empty_folder(db, plan.kb_id, folder.id)
+                require_empty_folder(db, plan.kb_id, folder.id, strict=bool(data.organization))
                 before = _snapshot(db, "folder", folder)
                 remember("folder", folder)
                 folder.deleted_at, folder.version = utcnow(), folder.version + 1
@@ -388,6 +390,8 @@ def undo_run(db, actor, run_id):
     values = {}
     deleted_tags = check_deleted_tag_restore(db, run.kb_id, records)
     restoring_tag_ids = {record.entity_id for record in deleted_tags}
+    restoring_folder_ids = {record.entity_id for record in records if record.entity_type == "folder"
+                            and not record.before.get("created") and not record.before.get("deleted_at")}
     for record in records:
         key = f"{record.entity_type}:{record.entity_id}"
         if record in deleted_tags:
@@ -397,7 +401,8 @@ def undo_run(db, actor, run_id):
             raise AppError("undo_conflict", "整理后已有人工修改，无法安全撤销；未覆盖任何后续更改", 409,
                            {"resource": key})
         if record.entity_type == "document":
-            if record.before.get("folder_id") and not record.before.get("tags_only"):
+            if (record.before.get("folder_id") and not record.before.get("tags_only")
+                    and record.before["folder_id"] not in restoring_folder_ids):
                 library.validate_folder(db, run.kb_id, record.before["folder_id"])
             for tag_id in record.before.get("tag_ids", []):
                 if tag_id not in restoring_tag_ids:
@@ -408,9 +413,21 @@ def undo_run(db, actor, run_id):
         record.status = "used"
         db.add(AuditLog(actor_id=actor.id, kb_id=run.kb_id, run_id=run.id, action="undo",
                         entity_id=record.entity_id, before={"removed": True}, after=library.snapshot(tag)))
-    # Restore documents before removing tags/folders created by this plan.
+    folder_before = {record.entity_id: record.before for record in records if record.entity_type == "folder"}
+
+    def restore_order(record):
+        # Original folders (parents first) must exist before their documents
+        # return. Newly created metadata is removed only after documents return.
+        depth, current, seen = 0, record.before.get("parent_id"), set()
+        while current in folder_before and current not in seen:
+            seen.add(current)
+            depth += 1
+            current = folder_before[current].get("parent_id")
+        return (record.before.get("created", False),
+                0 if record.entity_type == "folder" else 1 if record.entity_type == "document" else 2, depth)
+
     ordered = sorted([record for record in records if record not in deleted_tags],
-                     key=lambda r: (r.before.get("created", False), r.entity_type != "document"))
+                     key=restore_order)
     for record in ordered:
         value = values[f"{record.entity_type}:{record.entity_id}"]
         before_undo = _snapshot(db, record.entity_type, value)

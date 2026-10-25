@@ -21,7 +21,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightOpen,
-  Search,
   Settings2,
   Trash2,
   X,
@@ -488,18 +487,6 @@ export function App() {
                 <span>历史</span>
               </Button>
             )}
-            {view !== "settings" && (
-              <Button
-                className="workspace-search"
-                variant="ghost"
-                size="icon"
-                aria-label="搜索知识"
-                title="搜索知识 Ctrl+K"
-                onClick={() => setSearchOpen(true)}
-              >
-                <Search size={17} />
-              </Button>
-            )}
             {view === "chat" && kb && (
               <div className="browse-actions">
                 <Button
@@ -669,6 +656,7 @@ export function App() {
         open={searchOpen}
         onOpenChange={setSearchOpen}
         kbId={actualKbId}
+        tags={tags.data || []}
         onOpen={openCitation}
       />
     </div>

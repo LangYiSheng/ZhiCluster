@@ -3,6 +3,7 @@ import { useBlocker, useLocation, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
+  ChartNoAxesCombined,
   Database,
   Palette,
   Plug,
@@ -34,8 +35,14 @@ import {
   SettingsSection,
 } from "./SettingsFields";
 import "./settings.css";
+import { Statistics } from "./Statistics";
 
-type Section = "appearance" | "models" | "processing" | "maintenance";
+type Section =
+  | "appearance"
+  | "models"
+  | "processing"
+  | "maintenance"
+  | "statistics";
 const sections = [
   {
     id: "appearance",
@@ -60,6 +67,12 @@ const sections = [
     label: "索引维护",
     icon: Database,
     description: "查看向量配置，重建知识库索引。",
+  },
+  {
+    id: "statistics",
+    label: "用量与统计",
+    icon: ChartNoAxesCombined,
+    description: "了解资料规模、存储用量与处理情况。",
   },
 ] as const;
 const equal = (a: unknown, b: unknown) =>
@@ -133,11 +146,18 @@ function SettingsEditor({
       embedding: false,
     },
   );
+  const [connectionTab, setConnectionTab] = useState<ModelScope>("llm");
+  const [appearanceTab, setAppearanceTab] = useState<"display" | "reading">(
+    "display",
+  );
   const focusTarget = useRef("");
   const client = useQueryClient();
   const status = useQuery({
-    queryKey: ["models"],
-    queryFn: () => api<ModelStatus>("/settings/model-status"),
+    queryKey: ["models", maintenanceKb],
+    queryFn: () =>
+      api<ModelStatus>(
+        `/settings/model-status${maintenanceKb ? `?kb_id=${encodeURIComponent(maintenanceKb)}` : ""}`,
+      ),
   });
   const bases = useQuery({
     queryKey: ["knowledge-bases"],
@@ -195,7 +215,7 @@ function SettingsEditor({
   function change(
     group: keyof RuntimeDraft,
     key: string,
-    value: string | number | boolean,
+    value: string | number | boolean | string[],
   ) {
     setDraft((previous) => {
       const fields = { ...previous[group], [key]: value };
@@ -272,7 +292,10 @@ function SettingsEditor({
       focusTarget.current = first;
       if (first.includes("processing") || first.includes("batch_size"))
         setSection("processing");
-      else setSection("models");
+      else {
+        setSection("models");
+        setConnectionTab(first.includes("embedding") ? "embedding" : "llm");
+      }
       return false;
     }
     return true;
@@ -285,6 +308,13 @@ function SettingsEditor({
       if (!clean[group].api_key) delete clean[group].api_key;
       if (!clean[group].clear_api_key) delete clean[group].clear_api_key;
     }
+    clean.llm.models = [
+      ...new Set(
+        [clean.llm.model, ...(clean.llm.models || [])]
+          .map((model) => model.trim())
+          .filter(Boolean),
+      ),
+    ];
     return clean;
   }
   const save = useMutation({
@@ -306,6 +336,7 @@ function SettingsEditor({
       setConflict(false);
       setErrors({});
       void status.refetch();
+      void client.invalidateQueries({ queryKey: ["chat-models"] });
     },
     onError: (error) => {
       setConflict(error instanceof ApiError && error.status === 409);
@@ -418,8 +449,14 @@ function SettingsEditor({
   }
   const activeSection = sections.find((item) => item.id === section)!;
   const selectedBase = bases.data?.find((base) => base.id === maintenanceKb);
+  const maintenanceConfigured = Boolean(
+    loaded.embedding.base_url &&
+      loaded.embedding.api_key_configured &&
+      (selectedBase?.embedding_model || loaded.embedding.model) &&
+      (selectedBase?.embedding_dimension || loaded.embedding.dimension),
+  );
   return (
-    <div className="zc-settings-page">
+    <div className="zc-settings-page" data-section={section}>
       <nav className="zc-settings-nav" aria-label="设置分类">
         <span className="zc-settings-nav-title">偏好与连接</span>
         {sections.map(({ id, label, icon: Icon }) => (
@@ -476,6 +513,8 @@ function SettingsEditor({
             {section === "appearance" && (
               <AppearanceForm
                 appearance={appearance}
+                activeTab={appearanceTab}
+                onTabChange={setAppearanceTab}
                 onChange={(value) => {
                   setAppearance(value);
                   setMessage("");
@@ -491,6 +530,8 @@ function SettingsEditor({
                 embeddingChanged={embeddingChanged}
                 probeButton={probeButton}
                 manualModels={manualModels}
+                activeScope={connectionTab}
+                onScopeChange={setConnectionTab}
                 onManualModelChange={(group, manual) =>
                   setManualModels((previous) => ({
                     ...previous,
@@ -501,6 +542,9 @@ function SettingsEditor({
             )}
             {section === "processing" && (
               <ProcessingForm draft={draft} errors={errors} change={change} />
+            )}
+            {section === "statistics" && (
+              <Statistics kbId={kbId} bases={bases.data || []} />
             )}
             {section === "maintenance" && (
               <SettingsSection
@@ -537,19 +581,22 @@ function SettingsEditor({
                   </div>
                   <div>
                     <dt>已保存的向量模型</dt>
-                    <dd>{loaded.embedding.model || "尚未设置"}</dd>
+                    <dd>
+                      {selectedBase?.embedding_model ||
+                        loaded.embedding.model ||
+                        "尚未设置"}
+                    </dd>
                   </div>
                   <div>
                     <dt>向量维度</dt>
-                    <dd>{loaded.embedding.dimension}</dd>
+                    <dd>
+                      {selectedBase?.embedding_dimension ||
+                        loaded.embedding.dimension}
+                    </dd>
                   </div>
                   <div>
                     <dt>配置状态</dt>
-                    <dd>
-                      {status.data?.embedding?.configured
-                        ? "已配置"
-                        : "尚未就绪"}
-                    </dd>
+                    <dd>{maintenanceConfigured ? "已配置" : "尚未就绪"}</dd>
                   </div>
                 </dl>
                 {status.isError && (
@@ -574,7 +621,7 @@ function SettingsEditor({
                     !selectedBase ||
                     rebuild.isPending ||
                     runtimeDirty ||
-                    !status.data?.embedding?.configured
+                    !maintenanceConfigured
                   }
                   onClick={() => {
                     setRebuildNotice("");
@@ -645,7 +692,7 @@ function SettingsEditor({
         open={confirmRebuild}
         onOpenChange={setConfirmRebuild}
         title="确认重建向量索引"
-        description={`将使用已保存的 ${loaded.embedding.model || "向量模型"} 为「${selectedBase?.name || "所选知识库"}」重新向量化。此操作可能产生模型费用，正文和手动分类会保留。`}
+        description={`将使用已保存的 ${selectedBase?.embedding_model || loaded.embedding.model || "向量模型"} 为「${selectedBase?.name || "所选知识库"}」重新向量化。此操作可能产生模型费用，正文和手动分类会保留。`}
       >
         <div className="dialog-actions">
           <Button

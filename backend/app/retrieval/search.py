@@ -23,6 +23,7 @@ from app.db.models import (
 from app.retrieval.evidence import MAX_CANDIDATES, rerank_evidence
 from app.retrieval.ranking import diversify, document_purpose_weight, fuse_rankings, lexical_scores, snippet
 from app.retrieval.terms import escape_like, plan_query, semantic_queries, term_weight
+from app.services.knowledge_settings import settings_for_knowledge_base
 from app.services.library import descendants
 from app.services.permissions import accessible_kb_ids, assert_can_read_kb
 from app.services.runtime_config import get_runtime_settings
@@ -86,6 +87,13 @@ def scoped_query(db, actor, request):
                 stmt = stmt.where(operator(datetime.fromisoformat(request[key])))
             except ValueError as exc:
                 raise AppError("invalid_date", "日期需要 ISO 8601 格式") from exc
+    # Trusted chat tools add intersections rather than replacing user filters.
+    # This key is not accepted by the public Search input schema.
+    for constraint in request.get("_scope_constraints", []):
+        fixed_stmt, fixed_kb_ids = scoped_query(db, actor, constraint)
+        fixed_chunks = fixed_stmt.with_only_columns(DocumentChunk.id).subquery()
+        stmt = stmt.where(DocumentChunk.id.in_(select(fixed_chunks.c.id)))
+        kb_ids = [kb_id for kb_id in kb_ids if kb_id in fixed_kb_ids]
     return stmt, kb_ids
 
 
@@ -174,19 +182,32 @@ def search_knowledge(db, actor, request: dict, settings=None, *, on_progress=Non
     vector_rankings = []
     mode, notice = "keyword", "仅关键词搜索：未配置 Embedding 服务"
     gateway = ModelGateway(settings)
-    if request.get("mode", "hybrid") == "hybrid" and gateway.embeddings_configured:
-        profile = db.scalar(select(EmbeddingProfile).where(EmbeddingProfile.fingerprint == gateway.profile_fingerprint, EmbeddingProfile.status == "active"))
-        if not profile:
-            notice = "仅关键词搜索：当前模型尚未向量化，请在设置中重建索引"
-        else:
+    if request.get("mode", "hybrid") == "hybrid":
+        groups = {}
+        failures = []
+        for kb in db.scalars(select(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids))):
+            configured = settings_for_knowledge_base(settings, kb)
+            group_gateway = ModelGateway(configured)
+            if not group_gateway.embeddings_configured:
+                failures.append("部分知识库未配置 Embedding 服务")
+                continue
+            fingerprint = group_gateway.profile_fingerprint
+            if fingerprint not in groups:
+                groups[fingerprint] = (group_gateway, [])
+            groups[fingerprint][1].append(kb.id)
+        for fingerprint, (group_gateway, group_ids) in groups.items():
+            profile = db.scalar(select(EmbeddingProfile).where(EmbeddingProfile.fingerprint == fingerprint, EmbeddingProfile.status == "active"))
+            if not profile:
+                failures.append("部分知识库当前模型尚未向量化，请重建索引")
+                continue
             try:
                 queries = semantic_queries(query)
                 if on_progress:
-                    on_progress("embedding", {"queries": len(queries)})
-                query_vectors = gateway.embed(queries)
+                    on_progress("embedding", {"query_count": len(queries), "knowledge_bases": len(group_ids)})
+                query_vectors = group_gateway.embed(queries)
                 if len(query_vectors) != len(queries) or any(len(vector) != profile.dimension for vector in query_vectors):
                     raise ProviderError("当前向量维度与索引不兼容，请重建索引")
-                vector_stmt = stmt.join(ChunkEmbedding, ChunkEmbedding.chunk_id == DocumentChunk.id).where(ChunkEmbedding.profile_id == profile.id, ChunkEmbedding.kb_id.in_(kb_ids), Document.index_status == "ready")
+                vector_stmt = stmt.join(ChunkEmbedding, ChunkEmbedding.chunk_id == DocumentChunk.id).where(ChunkEmbedding.profile_id == profile.id, ChunkEmbedding.kb_id.in_(group_ids), Document.index_status == "ready")
                 rows = list(db.execute(vector_stmt.add_columns(ChunkEmbedding.embedding))) if not postgres else []
                 for vector in query_vectors:
                     if postgres:
@@ -195,9 +216,11 @@ def search_knowledge(db, actor, request: dict, settings=None, *, on_progress=Non
                         vectors = sorted(rows, key=lambda row: -cosine(row[2], vector))[:candidate_limit]
                     vector_rankings.append([row[0].id for row in vectors])
                     by_id.update({row[0].id: row for row in vectors})
-                mode, notice = "hybrid", "关键词 + 当前模型精确 cosine 检索，复合问题分路融合"
+                mode, notice = "hybrid", "关键词 + 各知识库绑定模型的精确 cosine 检索，按排名融合"
             except (AIUnavailable, ProviderError) as exc:
-                notice = f"仅关键词搜索：{exc}"
+                failures.append(str(exc))
+        if failures:
+            notice = (notice + "；" if mode == "hybrid" else "仅关键词搜索：") + "；".join(dict.fromkeys(failures))
     elif request.get("mode") == "keyword":
         notice = "关键词搜索"
     if on_progress:
@@ -229,9 +252,13 @@ def search_knowledge(db, actor, request: dict, settings=None, *, on_progress=Non
         if reranking["status"] == "fallback":
             notice += "；证据重排暂不可用，已沿用本地排序"
     offset, limit = request.get("offset", 0), request.get("limit", 30)
+    kb_names = {kb.id: kb.name for kb in db.scalars(select(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids))
+        .execution_options(populate_existing=True))}
     items = []
     for key in ranked[offset:offset + limit]:
         chunk, doc = by_id[key][:2]
         content = chunk.content
-        items.append({"document_id": doc.id, "document_name": doc.display_name, "kb_id": doc.kb_id, "chunk_id": chunk.id, "section_id": chunk.section_id, "snippet": snippet(content, plan), "content": content, "anchors": chunk.anchors, "score": scores[key]})
+        items.append({"document_id": doc.id, "document_name": doc.display_name, "kb_id": doc.kb_id,
+            "kb_name": kb_names.get(doc.kb_id), "ext": doc.ext, "chunk_id": chunk.id, "section_id": chunk.section_id,
+            "snippet": snippet(content, plan), "content": content, "anchors": chunk.anchors, "score": scores[key]})
     return {"items": items, "total": len(ranked), "mode": mode, "notice": notice, "elapsed_ms": round((time.monotonic() - started)*1000, 1), "kb_ids": kb_ids, "reranking": reranking}

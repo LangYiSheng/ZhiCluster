@@ -11,6 +11,18 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+OrganizationMode = Literal["tags", "folders", "both"]
+
+
+class OrganizationPolicy(StrictModel):
+    """Server-owned authority, never accepted from model drafts or plan edits."""
+
+    mode: OrganizationMode
+    document_ids: list[str] = Field(max_length=500)
+    cleanup_folder_ids: list[str] = Field(default_factory=list, max_length=1000)
+    cleanup_scope: Literal["knowledge_base", "source_folders"] = "source_folders"
+
+
 class CreateFolderParams(StrictModel):
     name: str = Field(min_length=1, max_length=160)
     parent_id: str | None = None
@@ -143,6 +155,7 @@ class AgentPlanData(PlanDraft):
     base_versions: dict[str, int] = Field(default_factory=dict)
     # Server-owned review snapshot. PlanDraft/PlanEdit cannot supply these links.
     base_tag_links: dict[str, list[str]] = Field(default_factory=dict)
+    organization: OrganizationPolicy | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @model_validator(mode="after")
@@ -161,6 +174,9 @@ class AgentPlanData(PlanDraft):
 class RunRequest(StrictModel):
     kb_id: str
     goal: str = Field(min_length=1, max_length=4000)
+    mode: OrganizationMode | None = None
+    document_ids: list[str] = Field(default_factory=list, max_length=50)
+    cleanup_empty_folders: bool = True
 
 
 class PlanEdit(StrictModel):

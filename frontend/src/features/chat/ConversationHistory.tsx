@@ -60,7 +60,7 @@ export function ConversationHistory({
           <ErrorState error={error} retry={onRetry} />
         ) : !conversations.length ? (
           <Empty title="还没有历史对话" icon={<MessageSquare size={24} />}>
-            开始提问后，对话会保存在这里。
+            这个知识库的对话会保存在这里。
           </Empty>
         ) : (
           <div className="history-list">

@@ -64,6 +64,32 @@ select {
   padding: 8px 10px;
   max-width: 100%;
 }
+input:not(:where([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"], [type="hidden"])),
+textarea,
+select {
+  background: var(--color-surface);
+  padding: 9px 11px;
+  font-size: var(--text-control);
+  line-height: 1.5;
+  transition: border-color 120ms, box-shadow 120ms, background-color 120ms;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-muted);
+  opacity: 0.75;
+}
+input:not(:disabled):hover,
+textarea:not(:disabled):hover,
+select:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--color-border-strong) 45%, var(--color-border));
+}
+input:disabled,
+textarea:disabled,
+select:disabled {
+  cursor: not-allowed;
+  color: var(--color-muted);
+  opacity: 0.6;
+}
 input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
 textarea,
 select {
@@ -88,7 +114,8 @@ textarea {
 input:focus,
 textarea:focus,
 select:focus {
-  outline: 2px solid color-mix(in srgb, var(--primary) 36%, transparent);
+  border-color: var(--color-accent);
+  outline: 2px solid var(--color-accent-soft);
   outline-offset: 1px;
 }
 button:focus-visible,

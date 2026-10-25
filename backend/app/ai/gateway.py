@@ -5,13 +5,21 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import time
+from collections import OrderedDict
 from collections.abc import Iterator
+from threading import Lock
 from typing import Any
 
 import httpx
 
 from app.ai.concurrency import provider_limiter
+
+_EMBEDDING_BATCH_LIMITS: OrderedDict[str, int] = OrderedDict()
+_EMBEDDING_BATCH_LIMIT_LOCK = Lock()
+_MAX_BATCH_LIMIT_ENTRIES = 128
+_MAX_BATCH_ADAPTATIONS = 4
 
 
 class AIUnavailable(RuntimeError):
@@ -19,10 +27,53 @@ class AIUnavailable(RuntimeError):
 
 
 class ProviderError(RuntimeError):
-    def __init__(self, message: str, *, retryable: bool = False, code: str = "provider_error"):
+    def __init__(self, message: str, *, retryable: bool = False, code: str = "provider_error",
+            http_status: int | None = None, batch_limit: int | None = None):
         super().__init__(message)
         self.retryable = retryable
         self.code = code
+        self.http_status = http_status
+        self.batch_limit = batch_limit
+
+
+def _embedding_request_error(response: httpx.Response, payload: dict) -> ProviderError:
+    """Interpret known parameter failures; never expose provider bodies or source text."""
+    message = ""
+    if len(response.content) <= 64 * 1024:
+        try:
+            body = response.json()
+            error = body.get("error", body) if isinstance(body, dict) else None
+            if isinstance(error, dict) and isinstance(error.get("message"), str):
+                message = error["message"][:4000]
+        except (ValueError, TypeError):
+            pass
+    inputs = payload.get("input")
+    count = len(inputs) if isinstance(inputs, list) else 0
+    if response.status_code in {400, 413, 422}:
+        # Adapt only an explicit numeric batch-size bound. Invalid models,
+        # dimensions and input text must never trigger speculative paid calls.
+        patterns = (
+            r"\bbatch[\s_-]*size\b[^.;:\n]{0,180}?\b(?:not(?:\s+be)?\s+(?:larger|greater|more)\s+than|at\s+most|less\s+than\s+or\s+equal\s+to)\s*(\d+)\b",
+            r"\bmax(?:imum)?(?:\s+allowed)?[\s_-]*batch(?:[\s_-]*size)?\s*(?:is|of|=|:)?\s*(\d+)\b",
+            r"\bbatch[\s_-]*size\b[^.;:\n]{0,80}?(?:<=|≤)\s*(\d+)\b",
+        )
+        for pattern in patterns:
+            matched = re.search(pattern, message, re.IGNORECASE)
+            if matched:
+                limit = int(matched[1])
+                if 1 <= limit < count:
+                    return ProviderError(f"向量服务单批最多接受 {limit} 条文本，当前请求为 {count} 条；请降低 Embedding 批次大小",
+                        code="embedding_batch_limit", http_status=response.status_code, batch_limit=limit)
+        if re.search(r"\b(?:dimensions?|dimensionality)\b", message, re.IGNORECASE):
+            return ProviderError("向量服务拒绝了维度参数，请核对所选模型支持的向量维度后重新测试连接",
+                code="embedding_dimension_rejected", http_status=response.status_code)
+        if re.search(r"\b(?:tokens?|sequence|input)\b.{0,100}\b(?:too\s+long|exceeds?|maximum|limit)\b", message, re.IGNORECASE):
+            return ProviderError("向量服务拒绝了过长的输入文本，请降低分块大小并重新解析文档",
+                code="embedding_input_too_long", http_status=response.status_code)
+        return ProviderError(f"向量服务返回 HTTP {response.status_code}：请求参数不被接受，请检查模型、输入长度、批次及维度限制",
+            code="embedding_invalid_request", http_status=response.status_code)
+    return ProviderError(f"embedding 服务返回 HTTP {response.status_code}；请检查模型名称、服务地址和权限",
+        retryable=response.status_code == 429 or response.status_code >= 500, http_status=response.status_code)
 
 
 def transport_error(prefix: str, error: httpx.TransportError, timeout: float) -> ProviderError:
@@ -163,6 +214,8 @@ class ModelGateway:
                         if retryable and attempt < retries:
                             time.sleep(min(2 ** attempt, 8))
                             continue
+                        if prefix == "embedding":
+                            raise _embedding_request_error(response, payload)
                         raise ProviderError(f"{prefix} 服务返回 HTTP {response.status_code}；请检查模型名称、服务地址和权限", retryable=retryable)
                     result = response.json()
                     if not isinstance(result, dict):
@@ -193,19 +246,20 @@ class ModelGateway:
         except (KeyError, IndexError, TypeError, ValueError) as error:
             raise ProviderError("聊天模型没有返回可用文本") from error
 
-    def chat_tools(self, messages: list[dict], *, tools: list[dict], max_tokens: int = 600) -> dict:
+    def chat_tools(self, messages: list[dict], *, tools: list[dict], max_tokens: int = 600, on_content=None) -> dict:
         """Return an assistant tool turn without executing any model-provided call."""
         if not getattr(self.settings, "llm_supports_tools", False):
             raise AIUnavailable("当前模型未声明支持工具调用")
-        result = self._request("llm", "chat/completions", {
-            "messages": messages, "tools": tools, "tool_choice": "auto", "max_tokens": max_tokens,
-            "temperature": 0.2,
-        })
+        payload = {"messages": messages, "tools": tools, "tool_choice": "auto", "max_tokens": max_tokens, "temperature": 0.2}
+        result = self._stream_tools(payload, on_content) if on_content else self._request("llm", "chat/completions", payload)
         try:
             choice = result["choices"][0]
             if choice.get("finish_reason") == "length":
                 raise ProviderError("检索工具规划输出不完整，已停止执行工具", code="output_truncated")
             message = choice["message"]
+            content = message.get("content") or ""
+            if not isinstance(content, str):
+                raise ValueError("invalid content")
             calls = message.get("tool_calls") or []
             if not isinstance(calls, list) or len(calls) > 3:
                 raise ValueError("invalid tool count")
@@ -220,9 +274,76 @@ class ModelGateway:
                 normalized.append({"id": identifier, "type": "function", "function": {
                     "name": function["name"], "arguments": function["arguments"],
                 }})
-            return {"role": "assistant", "content": None, "tool_calls": normalized} if normalized else {"role": "assistant", "content": ""}
+            return {"role": "assistant", "content": content or None, "tool_calls": normalized} if normalized else {"role": "assistant", "content": content}
         except (KeyError, IndexError, TypeError, ValueError, AttributeError) as error:
             raise ProviderError("模型服务返回了无效的工具调用数据", code="invalid_tool_response") from error
+
+    def _stream_tools(self, payload, on_content):
+        """Stream only public content and assemble bounded tool argument fragments."""
+        base_url, key, model, timeout, retries = self._config("llm")
+        if not self.llm_configured:
+            raise AIUnavailable("需要配置模型服务")
+        emitted = False
+        with self._limiter.slot(background=self._background), httpx.Client(timeout=timeout, transport=self.transport) as client:
+            for attempt in range(retries + 1):
+                content, calls, finish_reason, received = [], {}, None, False
+                try:
+                    with client.stream("POST", f"{base_url}/chat/completions", headers={"Authorization": f"Bearer {key}"},
+                            json={"model": model, **payload, "stream": True}) as response:
+                        if response.is_error:
+                            retryable = response.status_code == 429 or response.status_code >= 500
+                            if retryable and not emitted and attempt < retries:
+                                time.sleep(min(2 ** attempt, 8))
+                                continue
+                            raise ProviderError(f"聊天服务返回 HTTP {response.status_code}", retryable=retryable)
+                        for line in response.iter_lines():
+                            if not line.startswith("data:"):
+                                continue
+                            data = line[5:].strip()
+                            if data == "[DONE]":
+                                break
+                            if not data:
+                                continue
+                            try:
+                                chunk = json.loads(data)
+                                if chunk.get("error"):
+                                    raise ProviderError("模型服务在生成过程中返回错误")
+                                choices = chunk.get("choices", [])
+                                if not choices:
+                                    continue
+                                received = True
+                                choice = choices[0]
+                                finish_reason = choice.get("finish_reason") or finish_reason
+                                delta = choice.get("delta", {})
+                                token = delta.get("content")
+                                if isinstance(token, str) and token:
+                                    content.append(token)
+                                    on_content(token)
+                                    emitted = True
+                                for fragment in delta.get("tool_calls") or []:
+                                    index = fragment["index"]
+                                    if not isinstance(index, int) or not 0 <= index < 3:
+                                        raise ValueError("invalid tool index")
+                                    call = calls.setdefault(index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                                    call["id"] += fragment.get("id") or ""
+                                    if fragment.get("type") not in {None, "function"}:
+                                        raise ValueError("invalid tool type")
+                                    function = fragment.get("function") or {}
+                                    for field in ("name", "arguments"):
+                                        call["function"][field] += function.get(field) or ""
+                                    if len(call["id"]) > 200 or len(call["function"]["arguments"]) > 5000 or len(call["function"]["name"]) > 200:
+                                        raise ValueError("tool fragment too large")
+                            except (KeyError, ValueError, TypeError, AttributeError) as error:
+                                raise ProviderError("模型服务返回了无效的工具流", code="invalid_tool_response") from error
+                        if not received or (not content and not calls and finish_reason is None):
+                            raise ProviderError("聊天模型返回了空的工具流", code="invalid_tool_response")
+                        return {"choices": [{"finish_reason": finish_reason,
+                            "message": {"content": "".join(content), "tool_calls": [calls[index] for index in sorted(calls)]}}]}
+                except httpx.TransportError as error:
+                    if not emitted and attempt < retries:
+                        time.sleep(min(2 ** attempt, 8))
+                        continue
+                    raise transport_error("llm", error, timeout) from error
 
     def stream_chat(self, messages: list[dict], *, max_tokens: int = 1800) -> Iterator[str]:
         base_url, key, model, timeout, retries = self._config("llm")
@@ -275,13 +396,43 @@ class ModelGateway:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        payload: dict = {"input": texts}
+        if any(not isinstance(text, str) or not text.strip() for text in texts):
+            raise ProviderError("向量输入必须为非空文本", code="embedding_invalid_input")
+        base_url, key, model, _, _ = self._config("embedding")
+        cache_key = hashlib.sha256(f"{base_url}|{model}|{key}".encode()).hexdigest()
+        limit = max(1, min(256, int(getattr(self.settings, "embedding_batch_size", len(texts)))))
+        with _EMBEDDING_BATCH_LIMIT_LOCK:
+            learned = _EMBEDDING_BATCH_LIMITS.get(cache_key)
+            if learned:
+                limit = min(limit, learned)
+        vectors, offset, adaptations = [], 0, 0
+        while offset < len(texts):
+            batch = texts[offset:offset + limit]
+            try:
+                result = self._request("embedding", "embeddings", {"input": batch})
+            except ProviderError as error:
+                if (error.code != "embedding_batch_limit" or error.batch_limit is None
+                        or not 1 <= error.batch_limit < len(batch) or adaptations >= _MAX_BATCH_ADAPTATIONS):
+                    raise
+                limit = min(limit, error.batch_limit)
+                adaptations += 1
+                with _EMBEDDING_BATCH_LIMIT_LOCK:
+                    limit = min(limit, _EMBEDDING_BATCH_LIMITS.get(cache_key, limit))
+                    _EMBEDDING_BATCH_LIMITS[cache_key] = limit
+                    _EMBEDDING_BATCH_LIMITS.move_to_end(cache_key)
+                    while len(_EMBEDDING_BATCH_LIMITS) > _MAX_BATCH_LIMIT_ENTRIES:
+                        _EMBEDDING_BATCH_LIMITS.popitem(last=False)
+                continue
+            vectors.extend(self._embedding_vectors(result, len(batch)))
+            offset += len(batch)
+        return vectors
+
+    def _embedding_vectors(self, result: dict, count: int) -> list[list[float]]:
         # Some compatible providers reject the optional dimensions field. Validate
         # returned dimensions locally instead of assuming that parameter is supported.
-        result = self._request("embedding", "embeddings", payload)
         try:
             data = sorted(result["data"], key=lambda item: item["index"])
-            if len(data) != len(texts) or [item["index"] for item in data] != list(range(len(texts))):
+            if len(data) != count or [item["index"] for item in data] != list(range(count)):
                 raise ValueError("embedding count/index mismatch")
             vectors = [item["embedding"] for item in data]
             dimension = int(getattr(self.settings, "embedding_dimension", 0)) or len(vectors[0])

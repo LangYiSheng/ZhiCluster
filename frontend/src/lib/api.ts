@@ -1,11 +1,21 @@
+import { anchorNumber } from "./sourceAnchors";
+import type { SourceAnchors } from "./sourceAnchors";
+
 export type Entity = {
   id: string;
   name: string;
   version: number;
   deleted_at?: string | null;
   created_at?: string;
+  updated_at?: string;
 };
-export type KnowledgeBase = Entity & { description: string };
+export type KnowledgeBase = Entity & {
+  description: string;
+  icon?: string;
+  color?: string;
+  embedding_model?: string | null;
+  embedding_dimension?: number | null;
+};
 export type Folder = Entity & { kb_id: string; parent_id: string | null };
 export type Tag = Entity & { color: string; aliases?: string[] };
 export type Document = {
@@ -15,6 +25,7 @@ export type Document = {
   display_name: string;
   original_filename: string;
   ext: string;
+  preview_type?: "pdf" | "text";
   size_bytes: number;
   version: number;
   parse_status: string;
@@ -35,7 +46,7 @@ export type Section = {
   heading: string;
   plain_text: string;
   section_summary?: string;
-  anchors?: Record<string, number>;
+  anchors?: SourceAnchors;
   page_start?: number;
   page_end?: number;
   paragraph_start?: number;
@@ -45,7 +56,9 @@ export type Section = {
   order?: number;
 };
 export type Citation = {
-  kb_id?: string;
+  kb_id?: string | null;
+  kb_name?: string | null;
+  ext?: string | null;
   ordinal?: number;
   available?: boolean;
   document_id: string;
@@ -56,8 +69,8 @@ export type Citation = {
   page_start?: number;
   line_start?: number;
   paragraph_start?: number;
-  anchors?: Record<string, number>;
-  anchor?: Record<string, number>;
+  anchors?: SourceAnchors;
+  anchor?: SourceAnchors;
   number?: number;
 };
 export type SearchResult = Citation & {
@@ -84,6 +97,11 @@ export type ChatStep = {
   tool_name?: string;
   call_id?: string;
   round?: number;
+  scope_key?: string;
+  scope_label?: string;
+  // Earlier embedding progress used this field for a numeric query count.
+  queries?: string[] | number;
+  query_count?: number;
 };
 export type Message = {
   id: string;
@@ -101,9 +119,15 @@ export type Message = {
 };
 export type Conversation = {
   id: string;
+  kb_id?: string;
   title: string;
   scope?: Record<string, unknown>;
   created_at?: string;
+};
+export type ChatModelCatalog = {
+  models: string[];
+  default_model: string;
+  supports_tools: boolean;
 };
 export type Operation = {
   operation_id: string;
@@ -253,9 +277,35 @@ export const errorText = (error: unknown) =>
       : "操作失败，请重试";
 export function anchorText(c: Citation | Section) {
   const a = c.anchors || ("anchor" in c ? c.anchor : undefined) || {};
-  const page = c.page_start || a.page_start || a.page;
-  const line = c.line_start || a.line_start;
-  const paragraph = c.paragraph_start || a.paragraph_start;
+  const span = (kind: string, label: string) => {
+    const start = anchorNumber(a, `${kind}_start`);
+    const end = anchorNumber(a, `${kind}_end`);
+    return start
+      ? `第 ${start}${end && end !== start ? `–${end}` : ""} ${label}`
+      : "";
+  };
+  const sheet =
+    typeof a.sheet_name === "string"
+      ? `工作表「${a.sheet_name}」`
+      : anchorNumber(a, "sheet_index")
+        ? `第 ${a.sheet_index} 张工作表`
+        : "";
+  const chapter =
+    typeof a.chapter_title === "string"
+      ? `章节「${a.chapter_title}」`
+      : anchorNumber(a, "chapter_index")
+        ? `第 ${a.chapter_index} 章`
+        : "";
+  if (sheet) return [sheet, span("row", "行")].filter(Boolean).join(" · ");
+  if (anchorNumber(a, "slide_start")) return span("slide", "张幻灯片");
+  if (chapter)
+    return [chapter, span("paragraph", "段")].filter(Boolean).join(" · ");
+  if (anchorNumber(a, "record_start")) return span("record", "条记录");
+  if (anchorNumber(a, "row_start")) return span("row", "行");
+  const page =
+    c.page_start || anchorNumber(a, "page_start") || anchorNumber(a, "page");
+  const line = c.line_start || anchorNumber(a, "line_start");
+  const paragraph = c.paragraph_start || anchorNumber(a, "paragraph_start");
   return page
     ? `第 ${page} 页`
     : paragraph
